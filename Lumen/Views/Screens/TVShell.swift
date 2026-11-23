@@ -577,8 +577,8 @@ struct BannerPage<Content: View>: View {
     @State private var infoRoute: DetailRoute?
 
     static var pageColor: Color { Color(red: 0x1F / 255, green: 0x20 / 255, blue: 0x20 / 255) }
-    private static let firstRowY: CGFloat = 230
-    private static let laterRowY: CGFloat = 300
+    private static var firstRowY: CGFloat { 230 }
+    private static var laterRowY: CGFloat { 300 }
 
     var body: some View {
         ScrollViewReader { proxy in
