@@ -276,6 +276,7 @@ private struct TVSidebar: View {
     let onProfile: () -> Void
     let onSelect: (TVDestination) -> Void
 
+    /// Full panel while focus is in the sidebar; a slim pill of four icons otherwise (Plex style).
     private var expanded: Bool { focus.wrappedValue != nil }
     private var hasLibraries: Bool { !pinned.isEmpty || hasMore }
 
@@ -284,101 +285,128 @@ private struct TVSidebar: View {
         return !pinned.contains { $0.id == id }
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Button(action: onProfile) {
-                HStack(spacing: 16) {
-                    Text(String(profile.name.prefix(1)))
-                        .font(.system(size: 24, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 46, height: 46)
-                        .background(Circle().fill(Color(hex: profile.colorHex)))
-                    if expanded {
-                        Text(profile.name)
-                            .font(.system(size: 26, weight: .semibold))
-                            .lineLimit(1)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 16, weight: .bold))
-                            .opacity(0.6)
-                        Spacer(minLength: 0)
-                    }
-                }
-            }
-            .buttonStyle(SidebarButtonStyle(selected: false, expanded: expanded))
-            .focused(focus, equals: .profile)
-            .padding(.bottom, 10)
+    /// Width of the open panel (about a quarter of the screen).
+    static let panelWidth: CGFloat = 480
+    /// Equal top / bottom margin of the open panel.
+    static let panelMargin: CGFloat = 50
+    static let panelColor = Color(red: 0.07, green: 0.1, blue: 0.17)
 
-            row(.myList, "قائمتي", "bookmark")
+    var body: some View {
+        // One view tree for both states, so the row that takes focus keeps it while the pill
+        // turns into the panel. Rows only in the panel are added around the shared ones.
+        VStack(alignment: .leading, spacing: expanded ? 8 : 6) {
+            profileRow
+                .padding(.bottom, expanded ? 18 : 4)
+
+            if expanded { row(.myList, "قائمتي", "bookmark") }
             row(.search, "بحث", "magnifyingglass")
             row(.home, "الرئيسية", "house")
 
-            // The header and its spacing only when there are library rows to show under it.
-            if !hasLibraries {
-                EmptyView()
-            } else if expanded {
-                HStack(spacing: 12) {
-                    Text("المكتبات")
-                        .font(.system(size: 19, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.5))
-                    Rectangle()
-                        .fill(Color.white.opacity(0.18))
-                        .frame(height: 1)
+            if expanded {
+                if hasLibraries {
+                    HStack(spacing: 14) {
+                        Text("المكتبات")
+                            .font(.system(size: 21, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.45))
+                        Rectangle()
+                            .fill(Color.white.opacity(0.15))
+                            .frame(height: 1)
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.top, 26)
+                    .padding(.bottom, 6)
+
+                    ForEach(pinned) { scope in
+                        row(.library(scope.id), scope.title, scope.icon)
+                    }
+                    if hasMore {
+                        row(.more, "المزيد", "ellipsis", selected: selection == .more || selectedIsUnpinnedLibrary)
+                    }
                 }
-                .padding(.horizontal, 14)
-                .padding(.top, 14)
-                .padding(.bottom, 4)
+
+                Spacer(minLength: 20)
+                row(.settings, "الإعدادات", "gearshape")
             } else {
-                Color.clear.frame(height: 18)
+                // Opens the full panel (any move into the pill does).
+                Image(systemName: "line.3.horizontal")
+                    .font(.system(size: 26, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .frame(width: 46, height: 46)
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 13)
+                    .accessibilityHidden(true)
             }
-
-            ForEach(pinned) { scope in
-                row(.library(scope.id), scope.title, scope.icon)
-            }
-            if hasMore {
-                row(.more, "المزيد", "ellipsis", selected: selection == .more || selectedIsUnpinnedLibrary)
-            }
-
-            if hasLibraries {
-                Rectangle()
-                    .fill(Color.white.opacity(expanded ? 0.18 : 0))
-                    .frame(height: 1)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-            }
-
-            row(.settings, "الإعدادات", "gearshape")
         }
-        .padding(12)
-        .frame(width: expanded ? 400 : MainTabView.railWidth, alignment: .leading)
-        .fixedSize(horizontal: false, vertical: true)
+        .padding(.vertical, expanded ? 34 : 14)
+        .padding(.horizontal, expanded ? 18 : 12)
+        .frame(width: expanded ? Self.panelWidth : MainTabView.railWidth, alignment: .leading)
+        .frame(maxHeight: expanded ? .infinity : nil, alignment: .top)
+        .fixedSize(horizontal: false, vertical: !expanded)
         .background {
-            // Floating translucent panel (no solid colour behind it): a slim capsule of icons,
-            // the same panel with names while it has focus.
-            let shape = RoundedRectangle(cornerRadius: expanded ? 34 : MainTabView.railWidth / 2, style: .continuous)
-            shape
-                .fill(.ultraThinMaterial)
-                .overlay(shape.fill(Color.black.opacity(expanded ? 0.5 : 0.4)))
-                .overlay(shape.strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
-                .shadow(color: .black.opacity(0.35), radius: 18, y: 6)
+            let shape = RoundedRectangle(cornerRadius: expanded ? 36 : MainTabView.railWidth / 2, style: .continuous)
+            ZStack {
+                if expanded {
+                    // Dark navy, semi-transparent.
+                    shape.fill(Self.panelColor.opacity(0.9))
+                } else {
+                    shape.fill(.ultraThinMaterial)
+                    shape.fill(Color.black.opacity(0.45))
+                }
+                shape.strokeBorder(Color.white.opacity(0.07), lineWidth: 1)
+            }
+            .shadow(color: .black.opacity(0.4), radius: 20, y: 6)
         }
-        // Centred vertically. The focus section spans the full height of the screen, so Right
-        // from the first item of any row or grid (top or bottom) reaches the sidebar.
+        // Tall panel with equal top / bottom margins; the pill is centred vertically.
+        .padding(.vertical, expanded ? Self.panelMargin : 0)
         .frame(maxHeight: .infinity, alignment: .center)
-        .contentShape(Rectangle())
+        // The focus section spans the full height of the screen, so Right from the first item
+        // of any row or grid (top or bottom) reaches the sidebar.
         .focusSection()
         .defaultFocus(focus, selection)
+        .onChange(of: focus.wrappedValue) { old, new in
+            // Entering from the content lands on the current page (it may be a library that
+            // the pill doesn't show).
+            guard old == nil, let new, new != selection else { return }
+            DispatchQueue.main.async { focus.wrappedValue = selection }
+        }
+        .animation(.easeOut(duration: 0.2), value: expanded)
         // Menu on the sidebar leaves the app (the system handles it: no handler here).
+    }
+
+    /// Coloured circle with the initial, then (open) the name and a small chevron. No pill
+    /// unless it has focus.
+    private var profileRow: some View {
+        Button(action: onProfile) {
+            HStack(spacing: 18) {
+                Text(String(profile.name.prefix(1)))
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 46, height: 46)
+                    .background(Circle().fill(Color(hex: profile.colorHex)))
+                if expanded {
+                    Text(profile.name)
+                        .font(.system(size: 30, weight: .semibold))
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 17, weight: .bold))
+                        .opacity(0.6)
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .buttonStyle(SidebarButtonStyle(selected: false, expanded: expanded))
+        .focused(focus, equals: .profile)
     }
 
     private func row(_ destination: TVDestination, _ title: String, _ icon: String, selected: Bool? = nil) -> some View {
         Button { onSelect(destination) } label: {
-            HStack(spacing: 18) {
+            HStack(spacing: 20) {
                 Image(systemName: icon)
-                    .font(.system(size: 24, weight: .semibold))
+                    .font(.system(size: 27, weight: .semibold))
                     .frame(width: 46)
                 if expanded {
                     Text(title)
-                        .font(.system(size: 25, weight: .semibold))
+                        .font(.system(size: 30, weight: .semibold))
                         .lineLimit(1)
                     Spacer(minLength: 0)
                 }
@@ -389,6 +417,8 @@ private struct TVSidebar: View {
     }
 }
 
+/// Only the focused row gets the light pill (black text and icon). The current page is
+/// marked by full-white text and a small accent bar, without a pill; other rows are dimmed.
 private struct SidebarButtonStyle: ButtonStyle {
     let selected: Bool
     let expanded: Bool
@@ -404,19 +434,25 @@ private struct SidebarButtonStyle: ButtonStyle {
         @Environment(\.isFocused) private var isFocused
 
         var body: some View {
-            // Focused: white pill with black text and icon. Selected: light pill, dark text. Otherwise plain.
-            let onPill = isFocused || selected
-            let pill: Color = isFocused ? .white : (selected ? Color.white.opacity(0.78) : .clear)
-            let text: Color = onPill ? .black : Color.white.opacity(0.7)
+            let text: Color = isFocused ? .black : (selected ? .white : Color.white.opacity(0.6))
             configuration.label
                 .foregroundStyle(text)
                 // Light scheme on the pill so nothing adapts to a grey tone.
-                .environment(\.colorScheme, onPill ? .light : .dark)
-                .padding(.vertical, 8)
-                .padding(.horizontal, 12)
+                .environment(\.colorScheme, isFocused ? .light : .dark)
+                .padding(.vertical, expanded ? 12 : 8)
+                .padding(.horizontal, expanded ? 18 : 13)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Capsule().fill(pill))
+                .background(Capsule().fill(isFocused ? Color.white : Color.clear))
+                .overlay(alignment: .leading) {
+                    // Current page indicator on the reading edge.
+                    if selected && !isFocused {
+                        Capsule()
+                            .fill(Color.accentColor)
+                            .frame(width: 4, height: expanded ? 26 : 20)
+                    }
+                }
                 .scaleEffect(configuration.isPressed ? 0.97 : (isFocused && expanded ? 1.03 : 1))
+                .animation(.easeOut(duration: 0.12), value: isFocused)
         }
     }
 }

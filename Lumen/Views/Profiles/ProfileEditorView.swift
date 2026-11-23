@@ -135,7 +135,7 @@ struct ProfileEditorView: View {
     }
 
     private var librariesSummary: String {
-        let count = draft.scopes.count
+        let count = Set(draft.scopes.compactMap { ScopeID(raw: $0)?.sectionKey }).count
         return count == 0 ? "لا شيء" : "\(ArabicFormat.digits(count)) مفتوحة"
     }
 
@@ -250,7 +250,8 @@ struct TabOrderPage: View {
 
     private func title(_ raw: String) -> String {
         guard let id = ScopeID(raw: raw), let section = sections.first(where: { $0.key == id.sectionKey }) else { return raw }
-        return LibraryScope.defaultTitles(kind: id.kind, section: section).title
+        // Real library names only (an older anime / non-anime choice shows as its library).
+        return LibraryScope.defaultTitles(kind: .all, section: section).title
     }
 
     private func move(_ index: Int, by delta: Int) {

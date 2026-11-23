@@ -72,8 +72,15 @@ struct ContentFilter {
         var scopes: [LibraryScope] = []
         var kinds: [String: Set<ScopeID.Kind>] = [:]
         for raw in profile.scopes {
-            guard let id = ScopeID(raw: raw), let section = byKey[id.sectionKey],
-                  !scopes.contains(where: { $0.id == raw }) else { continue }
+            #if os(tvOS)
+            // Apple TV shows only the real Plex libraries: an anime / non-anime scope of a
+            // library counts as the whole library (never split). The saved profile is unchanged.
+            guard let parsed = ScopeID(raw: raw) else { continue }
+            let id = ScopeID(.all, parsed.sectionKey)
+            #else
+            guard let id = ScopeID(raw: raw) else { continue }
+            #endif
+            guard let section = byKey[id.sectionKey], !scopes.contains(where: { $0.id == id.raw }) else { continue }
             let names = LibraryScope.defaultTitles(kind: id.kind, section: section)
             scopes.append(LibraryScope(kind: id.kind, section: section, title: names.title, rowName: names.rowName))
             kinds[section.key, default: []].insert(id.kind)

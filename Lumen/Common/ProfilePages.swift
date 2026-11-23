@@ -4,8 +4,9 @@ import SwiftUI
 
 // MARK: - Libraries
 
-/// Every Plex library on the server by its real name, each with a switch; libraries that mix
-/// anime with other titles also offer «أنمي» and «بدون أنمي» scopes.
+/// Every Plex library on the server by its real name, each with a switch. On iPhone, libraries
+/// that mix anime with other titles also offer «أنمي» and «بدون أنمي» scopes; Apple TV shows
+/// only the real libraries (no virtual split, no explanation).
 struct LibrariesPage: View {
     let client: PlexServerClient
     let sections: [PlexDirectory]
@@ -17,6 +18,11 @@ struct LibrariesPage: View {
     var body: some View {
         List {
             ForEach(sections) { section in
+                #if os(tvOS)
+                Toggle(isOn: libraryBinding(section)) {
+                    Label(section.title, systemImage: section.type == "show" ? "tv" : "film")
+                }
+                #else
                 Section {
                     Toggle(isOn: binding(.all, section)) {
                         Label(section.title, systemImage: section.type == "show" ? "tv" : "film")
@@ -34,16 +40,20 @@ struct LibrariesPage: View {
                         Text("هذه المكتبة فيها أنمي مخلوط. «أنمي» يعرض العناصر اللي نوعها Anime، أو Animation من اليابان، أو عليها تصنيف أو مجموعة Anime. «بدون أنمي» يعرض الباقي.")
                     }
                 }
+                #endif
             }
+            #if !os(tvOS)
             if checking {
                 HStack(spacing: 20) {
                     ProgressView()
                     Text("جارٍ البحث عن الأنمي في المكتبات…").foregroundStyle(.secondary)
                 }
             }
+            #endif
         }
         .frame(maxWidth: 1200)
         .navigationTitle("المكتبات")
+        #if !os(tvOS)
         .task {
             await withTaskGroup(of: (String, Bool).self) { group in
                 for section in sections {
@@ -52,6 +62,33 @@ struct LibrariesPage: View {
                 for await (key, hasAnime) in group where hasAnime { animeSections.insert(key) }
             }
             checking = false
+        }
+        #endif
+    }
+
+    /// Apple TV: the whole library on / off. An older anime / non-anime choice counts as on;
+    /// turning it off removes every scope of that library, turning it on keeps one plain entry.
+    private func libraryBinding(_ section: PlexDirectory) -> Binding<Bool> {
+        let all = ScopeID(.all, section.key).raw
+        let ofSection = { (raw: String) in ScopeID(raw: raw)?.sectionKey == section.key }
+        return Binding {
+            scopes.contains(where: ofSection)
+        } set: { on in
+            if on {
+                if let i = scopes.firstIndex(where: ofSection) {
+                    scopes[i] = all
+                    var seen = false
+                    scopes.removeAll { raw in
+                        guard ofSection(raw) else { return false }
+                        if !seen { seen = true; return false }
+                        return true
+                    }
+                } else {
+                    scopes.append(all)
+                }
+            } else {
+                scopes.removeAll(where: ofSection)
+            }
         }
     }
 
