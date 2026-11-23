@@ -3,24 +3,18 @@ import CoreImage.CIFilterBuiltins
 
 // MARK: - Full-screen backdrop
 
+/// Behind grids (search, my list, listings): the focused item's artwork, darkened. No
+/// per-item colour tint.
 struct BackdropView: View {
     let url: URL?
-    var colors: PlexUltraBlurColors? = nil
-    /// Movie / show to look the UltraBlur colours up for, when `colors` is nil.
-    var colorsKey: String? = nil
-    var client: PlexServerClient? = nil
     /// Follows `url` only once focus rests briefly, so scrolling a grid loads no images.
     @State private var shown: URL?
-    @State private var shownColors: PlexUltraBlurColors?
 
     var body: some View {
         ZStack {
-            // The focused item's artwork melting into its UltraBlur colours (Plex style), or
-            // the darkened artwork when it has none.
-            ArtworkBackdrop(url: shown, colors: shownColors)
-            BackdropScrim(hasColors: shownColors != nil)
+            ArtworkBackdrop(url: shown, colors: nil)
+            BackdropScrim(hasColors: false)
         }
-        .animation(.easeInOut(duration: 0.4), value: shownColors)
         .ignoresSafeArea()
         .task(id: url) {
             if shown != nil {
@@ -28,12 +22,6 @@ struct BackdropView: View {
                 guard !Task.isCancelled else { return }
             }
             shown = url
-            var found = colors
-            if found == nil, let colorsKey, let client {
-                found = await UltraBlurCache.shared.colors(for: colorsKey, client: client)
-            }
-            guard !Task.isCancelled else { return }
-            shownColors = found
         }
     }
 }

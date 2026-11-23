@@ -167,6 +167,14 @@ struct PlexDirectory: Codable, Identifiable, Hashable {
 
     enum CodingKeys: String, CodingKey { case key, title, type, art, thumb }
 
+    init(key: String, title: String, type: String) {
+        self.key = key
+        self.title = title
+        self.type = type
+        art = nil
+        thumb = nil
+    }
+
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         key = c.lenientString(forKey: .key) ?? ""
@@ -181,17 +189,25 @@ struct PlexHub: Decodable, Identifiable {
     let hubIdentifier: String
     let title: String
     let type: String
+    /// e.g. "hub.movie.recentlyadded" (more specific than the identifier on some servers).
+    let context: String?
+    /// Path of the full hub, for paging ("/hubs/sections/1/…").
+    let hubKey: String?
+    let more: Bool
     var items: [PlexItem]
 
     var id: String { hubIdentifier }
 
-    enum CodingKeys: String, CodingKey { case hubIdentifier, title, type, items = "Metadata" }
+    enum CodingKeys: String, CodingKey { case hubIdentifier, title, type, context, hubKey, key, more, items = "Metadata" }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         title = c.lenientString(forKey: .title) ?? ""
         hubIdentifier = c.lenientString(forKey: .hubIdentifier) ?? title
         type = c.lenientString(forKey: .type) ?? ""
+        context = c.lenientString(forKey: .context)
+        hubKey = c.lenientString(forKey: .key) ?? c.lenientString(forKey: .hubKey)
+        more = c.lenientBool(forKey: .more) ?? false
         items = c.lossyArray(PlexItem.self, forKey: .items) ?? []
     }
 }
@@ -410,6 +426,9 @@ struct PlexItem: Codable, Identifiable, Hashable {
     let contentRating: String?
     let audienceRating: Double?
     let rating: Double?
+    /// Where the ratings come from, e.g. "imdb://image.rating", "themoviedb://image.rating".
+    let audienceRatingImage: String?
+    let ratingImage: String?
     let studio: String?
     let originallyAvailableAt: String?
     let media: [PlexMedia]
@@ -445,7 +464,7 @@ struct PlexItem: Codable, Identifiable, Hashable {
         case ratingKey, key, type, title, summary, tagline, year, thumb, art, parentThumb, grandparentThumb,
              grandparentArt, duration, viewOffset, viewCount, leafCount, viewedLeafCount, childCount, index,
              parentIndex, parentTitle, grandparentTitle, parentRatingKey, grandparentRatingKey, contentRating,
-             audienceRating, rating, studio, originallyAvailableAt, guid, addedAt, updatedAt, subtype, lastViewedAt, librarySectionID
+             audienceRating, rating, audienceRatingImage, ratingImage, studio, originallyAvailableAt, guid, addedAt, updatedAt, subtype, lastViewedAt, librarySectionID
         case media = "Media", genres = "Genre", directors = "Director", roles = "Role", markers = "Marker", images = "Image"
         case countries = "Country", labels = "Label", collections = "Collection", chapters = "Chapter", guids = "Guid"
         case ultraBlurColors = "UltraBlurColors"
@@ -484,6 +503,8 @@ struct PlexItem: Codable, Identifiable, Hashable {
         contentRating = c.lenientString(forKey: .contentRating)
         audienceRating = c.lenientDouble(forKey: .audienceRating)
         rating = c.lenientDouble(forKey: .rating)
+        audienceRatingImage = c.lenientString(forKey: .audienceRatingImage)
+        ratingImage = c.lenientString(forKey: .ratingImage)
         studio = c.lenientString(forKey: .studio)
         originallyAvailableAt = c.lenientString(forKey: .originallyAvailableAt)
         media = c.lossyArray(PlexMedia.self, forKey: .media) ?? []
@@ -623,6 +644,23 @@ extension PlexItem {
 
     static func format(ms: Int) -> String {
         ArabicFormat.duration(ms: ms)
+    }
+
+    /// Rating with its source (IMDb, TMDB, MAL…) as the server's agent provided it.
+    var ratingDisplay: (source: String, value: Double)? {
+        func source(_ image: String?) -> String {
+            let s = (image ?? "").lowercased()
+            if s.contains("imdb") { return "IMDb" }
+            if s.contains("themoviedb") || s.contains("tmdb") { return "TMDB" }
+            if s.contains("myanimelist") || s.hasPrefix("mal") { return "MAL" }
+            if s.contains("anidb") { return "AniDB" }
+            if s.contains("tvdb") { return "TVDB" }
+            if s.contains("rottentomatoes") { return "RT" }
+            return ""
+        }
+        if let v = audienceRating, v > 0 { return (source(audienceRatingImage), v) }
+        if let v = rating, v > 0 { return (source(ratingImage), v) }
+        return nil
     }
 
     var primaryPart: PlexPart? { media.first?.parts.first }

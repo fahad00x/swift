@@ -39,6 +39,12 @@ struct ArtworkStatusOverlay: View {
     @Environment(ProfileStore.self) private var store
 
     static let orange = Color(red: 1.0, green: 0.58, blue: 0.0)
+    #if os(tvOS)
+    /// Apple TV: no unwatched triangle (posters show a count / ✓ box instead).
+    static let showsTriangle = false
+    #else
+    static let showsTriangle = true
+    #endif
 
     var body: some View {
         let progress = store.progress(of: item)
@@ -47,7 +53,7 @@ struct ArtworkStatusOverlay: View {
         GeometryReader { geo in
             ZStack(alignment: .topTrailing) {
                 Color.clear
-                if unwatched {
+                if unwatched && Self.showsTriangle {
                     let side = max(12, geo.size.width * triangleFraction)
                     CornerTriangle()
                         .fill(Self.orange)

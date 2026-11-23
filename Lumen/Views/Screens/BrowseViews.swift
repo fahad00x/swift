@@ -16,7 +16,7 @@ struct BrowseContainer<Content: View>: View {
             ZStack {
                 // Full screen, under the sidebar too.
                 if showsBackdrop {
-                    BackdropView(url: backdrop.url, colors: backdrop.colors, colorsKey: backdrop.colorsKey, client: client)
+                    BackdropView(url: backdrop.url)
                 }
                 content()
             }
@@ -29,17 +29,150 @@ struct BrowseContainer<Content: View>: View {
             .navigationDestination(for: PlexItem.self) { item in
                 ItemRouter(item: item, client: client)
             }
+            .navigationDestination(for: BrowseRoute.self) { route in
+                ItemListPage(client: client, route: route)
+            }
         }
         .environment(\.detailNamespace, detailNamespace)
         .environment(returnState)
     }
 }
 
-// MARK: - Library grid
+// MARK: - Library page
 
+/// A library like a page of Apple's TV app: its banner, a glass tab bar
+/// (مقترح / تصفح / المجموعات / قوائم التشغيل / الفئات), then the chosen tab. The bar scrolls
+/// away with the page when moving into the rows.
 struct LibraryView: View {
     let client: PlexServerClient
     let scope: LibraryScope
+
+    enum Tab: String, CaseIterable, Identifiable {
+        case suggested, browse, collections, playlists, categories
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .suggested: return "مقترح"
+            case .browse: return "تصفح"
+            case .collections: return "المجموعات"
+            case .playlists: return "قوائم التشغيل"
+            case .categories: return "الفئات"
+            }
+        }
+    }
+
+    @Environment(ProfileStore.self) private var store
+    @Environment(\.contentFilter) private var filter
+    @State private var tab: Tab = .suggested
+    @State private var banner: [BannerItem] = []
+    @State private var rows: [Shelf] = []
+    @State private var loaded = false
+    @FocusState private var bannerFocus: HeroBanner.Control?
+
+    var body: some View {
+        BrowseContainer(client: client, showsBackdrop: false) {
+            ScrollViewReader { proxy in
+                BannerPage(banner: banner, chipTitle: scope.title, client: client, bannerFocus: $bannerFocus) {
+                    LibraryTabBar(selection: $tab)
+                        .id(BannerPageID.firstRow)
+                        .padding(.top, banner.isEmpty ? 20 : 0)
+                        .padding(.bottom, 40)
+
+                    switch tab {
+                    case .suggested:
+                        if rows.isEmpty && loaded {
+                            ContentUnavailableView("لا توجد عناصر", systemImage: "tray").frame(maxWidth: .infinity)
+                        }
+                        ForEach(rows) { shelf in ShelfView(shelf: shelf, client: client) }
+                    case .browse:
+                        LibraryBrowseGrid(client: client, scope: scope, scrollProxy: proxy)
+                    case .collections:
+                        ListingGrid(client: client, path: "/library/sections/\(scope.section.key)/collections")
+                    case .playlists:
+                        ListingGrid(client: client, path: "/playlists", query: [("playlistType", "video")])
+                    case .categories:
+                        CategoryGrid(client: client, section: scope.section)
+                    }
+                }
+            }
+        }
+        .task { await load() }
+        .onAppear { if loaded { Task { await load(cached: false) } } }
+        .onReceive(NotificationCenter.default.publisher(for: .plexPlaybackDidEnd)) { _ in
+            Task { await load(cached: false) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .libraryShouldRefresh)) { _ in
+            Task { await load(cached: false) }
+        }
+    }
+
+    private func load(cached: Bool = true) async {
+        defer { loaded = true }
+        if cached && rows.isEmpty {
+            await PlexResponseCache.$policy.withValue(.cacheOnly) { await fetch() }
+        }
+        await fetch()
+    }
+
+    private func fetch() async {
+        async let bannerTask = TVFeed.banner(client: client, store: store, filter: filter, sections: [scope.section])
+        async let rowsTask = TVFeed.rows(client: client, store: store, filter: filter, section: scope.section)
+        let (newBanner, newRows) = await (bannerTask, rowsTask)
+        if !newBanner.isEmpty, newBanner.map(\.id) != banner.map(\.id) { banner = newBanner }
+        if !newRows.isEmpty { rows = newRows }
+    }
+}
+
+/// Glass segmented pill bar under a library's banner.
+private struct LibraryTabBar: View {
+    @Binding var selection: LibraryView.Tab
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(LibraryView.Tab.allCases) { tab in
+                Button { selection = tab } label: { Text(tab.title) }
+                    .buttonStyle(TabPillStyle(selected: tab == selection))
+            }
+        }
+        .padding(7)
+        .background {
+            Capsule().fill(.ultraThinMaterial)
+            Capsule().strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+        }
+        .frame(maxWidth: .infinity)
+        .focusSection()
+    }
+}
+
+private struct TabPillStyle: ButtonStyle {
+    let selected: Bool
+
+    func makeBody(configuration: Configuration) -> some View { PillBody(configuration: configuration, selected: selected) }
+
+    private struct PillBody: View {
+        let configuration: ButtonStyleConfiguration
+        let selected: Bool
+        @Environment(\.isFocused) private var isFocused
+
+        var body: some View {
+            configuration.label
+                .font(.system(size: 26, weight: selected ? .semibold : .regular))
+                .foregroundStyle(isFocused ? Color.black : (selected ? Color.white : Color.white.opacity(0.7)))
+                .environment(\.colorScheme, isFocused ? .light : .dark)
+                .padding(.horizontal, 30)
+                .frame(height: 60)
+                .background(Capsule().fill(isFocused ? Color.white : (selected ? Color.white.opacity(0.18) : Color.clear)))
+                .scaleEffect(isFocused ? 1.05 : 1)
+                .animation(.easeOut(duration: 0.15), value: isFocused)
+        }
+    }
+}
+
+/// «تصفح»: every title of the library as a poster grid, with sort / filter.
+private struct LibraryBrowseGrid: View {
+    let client: PlexServerClient
+    let scope: LibraryScope
+    let scrollProxy: ScrollViewProxy
 
     @Environment(\.contentFilter) private var filter
     @State private var items: [PlexItem] = []
@@ -51,56 +184,32 @@ struct LibraryView: View {
     @State private var serverOffset = 0
     @State private var exhausted = false
 
-
-
     var body: some View {
-        BrowseContainer(client: client) {
-            ScrollViewReader { proxy in
-            ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 30) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(scope.title).font(.title2.weight(.bold))
-                            if let total, total > 0 {
-                                Text("\(ArabicFormat.digits(total)) عنصر").font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                        Spacer(minLength: 40)
-                        Picker("الترتيب", selection: $sort) {
-                            ForEach(LibrarySort.allCases) { Text($0.title).tag($0) }
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(maxWidth: 1000)
-                        // Room for the focus lift, so the picker never touches the screen edge.
-                        .padding(.trailing, 20)
-                    }
-                    .padding(.horizontal, CardKind.inset)
-
-                    if items.isEmpty && loadedOnce && !isLoading {
-                        ContentUnavailableView("لا توجد عناصر", systemImage: "tray")
-                            .frame(maxWidth: .infinity)
-                    }
-
-                    PosterGrid(items: items, client: client, scrollProxy: proxy) { item in
-                        if item.id == items.last?.id { Task { await loadMore() } }
-                    }
-
-                    if isLoading { ProgressView().frame(maxWidth: .infinity) }
+        VStack(alignment: .leading, spacing: 24) {
+            HStack(spacing: 30) {
+                if let total, total > 0 {
+                    Text("\(ArabicFormat.digits(total)) عنصر").font(.callout).foregroundStyle(.secondary)
                 }
-                .padding(.vertical, 30)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                Spacer(minLength: 40)
+                Picker("الترتيب", selection: $sort) {
+                    ForEach(LibrarySort.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 1000)
             }
-            // The grid starts after the sidebar (the backdrop still fills the screen).
-            .sidebarSafeArea()
+            .padding(.horizontal, CardKind.inset)
+
+            if items.isEmpty && loadedOnce && !isLoading {
+                ContentUnavailableView("لا توجد عناصر", systemImage: "tray").frame(maxWidth: .infinity)
             }
+
+            PosterGrid(items: items, client: client, scrollProxy: scrollProxy) { item in
+                if item.id == items.last?.id { Task { await loadMore() } }
+            }
+
+            if isLoading { ProgressView().frame(maxWidth: .infinity) }
         }
         .task(id: sort) { await reload() }
-        .onReceive(NotificationCenter.default.publisher(for: .plexPlaybackDidEnd)) { _ in
-            Task { await reload() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .libraryShouldRefresh)) { _ in
-            Task { await reload() }
-        }
         .onReceive(NotificationCenter.default.publisher(for: .localLibraryDidChange)) { _ in
             Task { await reload() }
         }
@@ -146,6 +255,113 @@ struct LibraryView: View {
         serverOffset = page.nextOffset
         exhausted = page.exhausted
         total = page.total ?? (page.exhausted ? items.count : nil)
+    }
+}
+
+/// «المجموعات» / «قوائم التشغيل»: a grid of collections or playlists (each opens its listing).
+private struct ListingGrid: View {
+    let client: PlexServerClient
+    let path: String
+    var query: [(String, String)] = []
+
+    @State private var items: [PlexItem] = []
+    @State private var loaded = false
+
+    var body: some View {
+        VStack(alignment: .leading) {
+            if items.isEmpty && loaded {
+                ContentUnavailableView("لا توجد عناصر", systemImage: "square.stack").frame(maxWidth: .infinity)
+            }
+            PosterGrid(items: items, client: client)
+        }
+        .task {
+            items = await client.listing(path, query)
+            loaded = true
+        }
+    }
+}
+
+/// «الفئات»: the library's genres; each opens the library filtered by it.
+private struct CategoryGrid: View {
+    let client: PlexServerClient
+    let section: PlexDirectory
+
+    @State private var genres: [PlexDirectory] = []
+    @State private var loaded = false
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: 30)], alignment: .leading, spacing: 30) {
+            ForEach(genres) { genre in
+                NavigationLink(value: BrowseRoute(title: ArabicFormat.genre(genre.title),
+                                                  path: "/library/sections/\(section.key)/all",
+                                                  query: ["genre": Self.genreID(genre.key)])) {
+                    Text(ArabicFormat.genre(genre.title))
+                        .font(.system(size: 28, weight: .semibold))
+                        .lineLimit(1)
+                        .frame(width: 340, height: 120)
+                        .background(RoundedRectangle(cornerRadius: CardKind.cornerRadius, style: .continuous)
+                            .fill(Color.white.opacity(0.1)))
+                }
+                .buttonStyle(PosterButtonStyle())
+            }
+        }
+        .padding(.horizontal, CardKind.inset)
+        .overlay {
+            if genres.isEmpty && loaded {
+                ContentUnavailableView("لا توجد فئات", systemImage: "square.grid.2x2")
+            }
+        }
+        .task {
+            genres = await client.genreDirectories(section: section.key)
+            loaded = true
+        }
+    }
+
+    /// The genre's id: Plex gives it alone ("123") or inside a filter path ("…/all?genre=123").
+    static func genreID(_ key: String) -> String {
+        if let range = key.range(of: "genre=") {
+            return String(key[range.upperBound...].prefix { $0 != "&" })
+        }
+        return key.split(separator: "/").last.map(String.init) ?? key
+    }
+}
+
+/// A plain listing pushed from a collection, a playlist or a category.
+struct ItemListPage: View {
+    let client: PlexServerClient
+    let route: BrowseRoute
+
+    @Environment(\.contentFilter) private var filter
+    @State private var items: [PlexItem] = []
+    @State private var loaded = false
+
+    var body: some View {
+        ZStack {
+            BackdropView(url: nil)
+            ScrollViewReader { proxy in
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 20) {
+                        Text(route.title)
+                            .font(.system(size: 44, weight: .bold))
+                            .padding(.horizontal, CardKind.inset)
+                        if items.isEmpty && loaded {
+                            ContentUnavailableView("لا توجد عناصر", systemImage: "tray").frame(maxWidth: .infinity)
+                        }
+                        PosterGrid(items: items, client: client, scrollProxy: proxy)
+                    }
+                    .padding(.vertical, 60)
+                }
+            }
+        }
+        .ignoresSafeArea()
+        .task {
+            let query = route.query.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
+            let found = await client.listing(route.path, query)
+            let containers = found.filter { $0.type == "collection" || $0.type == "playlist" }
+            let plain = found.filter { $0.type != "collection" && $0.type != "playlist" }
+            items = containers + (await filter.resolve(plain, client: client))
+            loaded = true
+        }
     }
 }
 

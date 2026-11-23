@@ -126,18 +126,17 @@ struct MainTabView: View {
     let sections: [PlexDirectory]
     let profile: UserProfile
 
-    /// Distance of the floating sidebar from the screen edge (the right, in Arabic).
-    static let railMargin: CGFloat = 30
-    /// Width of the collapsed sidebar capsule.
-    static let railWidth: CGFloat = 96
-    /// Where scrolling content starts: past the collapsed capsule plus a small gap.
-    static let railInset: CGFloat = railMargin + railWidth + 24
+    /// Content uses the full width; the sidebar floats over it only while open.
+    static let railInset: CGFloat = 0
 
     @Environment(ProfileStore.self) private var store
     @State private var newSections: [PlexDirectory] = []
     @State private var selection: TVDestination = .home
     @State private var prefs: SidebarPrefs
+    /// The sidebar is on screen (hidden completely while closed).
+    @State private var sidebarVisible = false
     @FocusState private var sidebarFocus: TVDestination?
+    @FocusState private var edgeFocused: Bool
     @Namespace private var shellNamespace
 
     init(client: PlexServerClient, sections: [PlexDirectory], profile: UserProfile) {
@@ -147,63 +146,63 @@ struct MainTabView: View {
         _prefs = State(initialValue: SidebarPrefs(profileID: profile.id))
     }
 
-    private var sidebarOpen: Bool { sidebarFocus != nil }
-
     var body: some View {
         let filter = ContentFilter(profile: profile, sections: sections)
         let pinned = prefs.pinned(from: filter.scopes)
         let rest = filter.scopes.filter { scope in !pinned.contains { $0.id == scope.id } }
 
-        // Arabic layout: the sidebar floats on the leading side, which is the right. Screens
-        // fill the whole screen (their backgrounds run under the sidebar); the inset reaches
-        // only their scrolling content, through the environment.
+        // Arabic layout: the sidebar floats on the leading side, which is the right. No rail,
+        // no dimming: the content never moves.
         ZStack(alignment: .leading) {
             Color.black.ignoresSafeArea()
 
             content(filter: filter, rest: rest)
-                .environment(\.focusSidebar, { sidebarFocus = selection })
+                .environment(\.focusSidebar, { openSidebar() })
                 .environment(\.sidebarInset, Self.railInset)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .prefersDefaultFocus(true, in: shellNamespace)
 
-            // Darkens the right edge, so the sidebar icons read over light artwork and rows
-            // fade out as they scroll under it.
-            HStack(spacing: 0) {
-                Spacer(minLength: 0)
-                LinearGradient(colors: [.clear, .black.opacity(0.55)], startPoint: .leading, endPoint: .trailing)
-                    .frame(width: Self.railInset + 200)
-            }
-            .environment(\.layoutDirection, .leftToRight)
-            .ignoresSafeArea()
-            .allowsHitTesting(false)
+            // Pressing toward the right edge from the first item of a row opens the sidebar.
+            Color.clear
+                .frame(width: 12)
+                .frame(maxHeight: .infinity)
+                .focusable(!sidebarVisible)
+                .focused($edgeFocused)
+                .focusSection()
 
-            // The content dims while the menu is open.
-            Color.black
-                .opacity(sidebarOpen ? 0.5 : 0)
-                .ignoresSafeArea()
-                .allowsHitTesting(false)
-
-            TVSidebar(selection: $selection, focus: $sidebarFocus, profile: profile,
-                      pinned: pinned, hasMore: !rest.isEmpty) {
-                store.deactivate()
-            } onSelect: { destination in
-                selection = destination
-                // Hand focus to the chosen screen; the panel collapses to the rail.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { sidebarFocus = nil }
+            if sidebarVisible {
+                TVSidebar(selection: $selection, focus: $sidebarFocus, profile: profile,
+                          pinned: pinned, hasMore: !rest.isEmpty) {
+                    store.deactivate()
+                } onSelect: { destination in
+                    selection = destination
+                    // Hand focus to the chosen screen; the sidebar closes.
+                    DispatchQueue.main.async { sidebarFocus = nil }
+                }
+                .padding(.leading, TVSidebar.margin)
+                .padding(.vertical, TVSidebar.margin)
+                .transition(.asymmetric(
+                    // Grows out of the edge with its items fading in (~0.22 s); closes at once.
+                    insertion: .scale(scale: 0.86, anchor: .trailing).combined(with: .opacity),
+                    removal: .opacity))
             }
-            .padding(.leading, Self.railMargin)
         }
-        .animation(.easeOut(duration: 0.2), value: sidebarOpen)
         .focusScope(shellNamespace)
         .overlay(alignment: .topTrailing) {
-            // Opposite corner from the sidebar: the clock, and under it the first-sync progress.
-            VStack(alignment: .trailing, spacing: 14) {
-                ClockView()
-                LibrarySyncBanner()
+            // First library download only (the clock lives in the sidebar).
+            LibrarySyncBanner()
+                .padding(.top, 30)
+                .padding(.trailing, 60)
+                .allowsHitTesting(false)
+        }
+        .onChange(of: edgeFocused) { _, focused in
+            if focused { openSidebar() }
+        }
+        .onChange(of: sidebarFocus) { _, focus in
+            // Focus left the sidebar: it closes.
+            if focus == nil, sidebarVisible {
+                withAnimation(.linear(duration: 0.05)) { sidebarVisible = false }
             }
-            .padding(.top, 4)
-            .padding(.trailing, 64)
-            .allowsHitTesting(false)
         }
         .environment(\.contentFilter, filter)
         .environment(prefs)
@@ -215,6 +214,14 @@ struct MainTabView: View {
         } message: {
             Text("«\(newSections.map { ArabicFormat.isolated($0.title) }.joined(separator: "»، «"))» — تبي تضيفها لمكتباتك؟")
         }
+    }
+
+    /// Back / Menu on a top-level screen, or Right at the edge: shows the sidebar on the
+    /// current page's row.
+    private func openSidebar() {
+        guard !sidebarVisible else { sidebarFocus = selection; return }
+        withAnimation(.timingCurve(0.2, 0.8, 0.2, 1, duration: 0.22)) { sidebarVisible = true }
+        DispatchQueue.main.async { sidebarFocus = selection }
     }
 
     @ViewBuilder
@@ -234,7 +241,7 @@ struct MainTabView: View {
             }
         case .more:
             MoreLibrariesView(scopes: rest) { scope in selection = .library(scope.id) }
-                .onExitCommand { sidebarFocus = selection }
+                .onExitCommand { openSidebar() }
         case .settings:
             SettingsView(client: client, sections: sections)
         }
@@ -265,8 +272,9 @@ struct MainTabView: View {
 
 // MARK: - Sidebar
 
-/// Floating rounded menu (blue-grey, semi-transparent) that fits its content; a slim icon rail
-/// while it doesn't have focus.
+/// Apple TV app–style sidebar (mirrored to the right): a floating translucent glass card,
+/// shown only while it has focus. Header with the profile and the clock, filled-symbol rows,
+/// one white pill on the focused row, Settings at the bottom.
 private struct TVSidebar: View {
     @Binding var selection: TVDestination
     var focus: FocusState<TVDestination?>.Binding
@@ -276,125 +284,77 @@ private struct TVSidebar: View {
     let onProfile: () -> Void
     let onSelect: (TVDestination) -> Void
 
-    /// Full panel while focus is in the sidebar; a slim pill of four icons otherwise (Plex style).
-    private var expanded: Bool { focus.wrappedValue != nil }
-    private var hasLibraries: Bool { !pinned.isEmpty || hasMore }
+    static let width: CGFloat = 340
+    static let margin: CGFloat = 36
+    static let cornerRadius: CGFloat = 40
+    /// Row pitch 78: a 72 pt row (the focused pill) + 6 pt gap.
+    static let rowHeight: CGFloat = 72
 
     private var selectedIsUnpinnedLibrary: Bool {
         guard case .library(let id) = selection else { return false }
         return !pinned.contains { $0.id == id }
     }
 
-    /// Width of the open panel (about a quarter of the screen).
-    static let panelWidth: CGFloat = 480
-    /// Equal top / bottom margin of the open panel.
-    static let panelMargin: CGFloat = 50
-    static let panelColor = Color(red: 0.07, green: 0.1, blue: 0.17)
-
     var body: some View {
-        // One view tree for both states, so the row that takes focus keeps it while the pill
-        // turns into the panel. Rows only in the panel are added around the shared ones.
-        VStack(alignment: .leading, spacing: expanded ? 8 : 6) {
-            profileRow
-                .padding(.bottom, expanded ? 18 : 4)
+        VStack(alignment: .leading, spacing: 6) {
+            header
+                .padding(.bottom, 14)
 
-            if expanded { row(.myList, "قائمتي", "bookmark") }
             row(.search, "بحث", "magnifyingglass")
-            row(.home, "الرئيسية", "house")
-
-            if expanded {
-                if hasLibraries {
-                    HStack(spacing: 14) {
-                        Text("المكتبات")
-                            .font(.system(size: 21, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.45))
-                        Rectangle()
-                            .fill(Color.white.opacity(0.15))
-                            .frame(height: 1)
-                    }
-                    .padding(.horizontal, 18)
-                    .padding(.top, 26)
-                    .padding(.bottom, 6)
-
-                    ForEach(pinned) { scope in
-                        row(.library(scope.id), scope.title, scope.icon)
-                    }
-                    if hasMore {
-                        row(.more, "المزيد", "ellipsis", selected: selection == .more || selectedIsUnpinnedLibrary)
-                    }
-                }
-
-                Spacer(minLength: 20)
-                row(.settings, "الإعدادات", "gearshape")
-            } else {
-                // Opens the full panel (any move into the pill does).
-                Image(systemName: "line.3.horizontal")
-                    .font(.system(size: 26, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.7))
-                    .frame(width: 46, height: 46)
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 13)
-                    .accessibilityHidden(true)
+            row(.home, "الرئيسية", "house.fill")
+            row(.myList, "قائمتي", "bookmark.fill")
+            ForEach(pinned) { scope in
+                row(.library(scope.id), scope.title, Self.filledIcon(scope.icon))
             }
+            if hasMore {
+                row(.more, "المزيد", "ellipsis.circle.fill", selected: selection == .more || selectedIsUnpinnedLibrary)
+            }
+
+            Spacer(minLength: 12)
+            row(.settings, "الإعدادات", "gearshape.fill")
         }
-        .padding(.vertical, expanded ? 34 : 14)
-        .padding(.horizontal, expanded ? 18 : 12)
-        .frame(width: expanded ? Self.panelWidth : MainTabView.railWidth, alignment: .leading)
-        .frame(maxHeight: expanded ? .infinity : nil, alignment: .top)
-        .fixedSize(horizontal: false, vertical: !expanded)
+        .padding(9)
+        .padding(.top, 14)
+        .frame(width: Self.width)
+        .frame(maxHeight: .infinity, alignment: .top)
         .background {
-            let shape = RoundedRectangle(cornerRadius: expanded ? 36 : MainTabView.railWidth / 2, style: .continuous)
-            ZStack {
-                if expanded {
-                    // Dark navy, semi-transparent.
-                    shape.fill(Self.panelColor.opacity(0.9))
-                } else {
-                    shape.fill(.ultraThinMaterial)
-                    shape.fill(Color.black.opacity(0.45))
-                }
-                shape.strokeBorder(Color.white.opacity(0.07), lineWidth: 1)
-            }
-            .shadow(color: .black.opacity(0.4), radius: 20, y: 6)
+            // Liquid Glass look: translucent with a strong blur and a subtle light rim.
+            let shape = RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
+            shape.fill(.ultraThinMaterial)
+            shape.fill(Color.white.opacity(0.04))
+            shape.strokeBorder(
+                LinearGradient(colors: [.white.opacity(0.35), .white.opacity(0.06), .white.opacity(0.18)],
+                               startPoint: .top, endPoint: .bottom),
+                lineWidth: 1.2)
         }
-        // Tall panel with equal top / bottom margins; the pill is centred vertically.
-        .padding(.vertical, expanded ? Self.panelMargin : 0)
-        .frame(maxHeight: .infinity, alignment: .center)
-        // The focus section spans the full height of the screen, so Right from the first item
-        // of any row or grid (top or bottom) reaches the sidebar.
+        .shadow(color: .black.opacity(0.35), radius: 30, y: 10)
         .focusSection()
         .defaultFocus(focus, selection)
         .onChange(of: focus.wrappedValue) { old, new in
-            // Entering from the content lands on the current page (it may be a library that
-            // the pill doesn't show).
+            // Entering from the content lands on the current page.
             guard old == nil, let new, new != selection else { return }
             DispatchQueue.main.async { focus.wrappedValue = selection }
         }
-        .animation(.easeOut(duration: 0.2), value: expanded)
         // Menu on the sidebar leaves the app (the system handles it: no handler here).
     }
 
-    /// Coloured circle with the initial, then (open) the name and a small chevron. No pill
-    /// unless it has focus.
-    private var profileRow: some View {
+    /// Avatar with the initial, the profile name, and the clock on the far side.
+    private var header: some View {
         Button(action: onProfile) {
-            HStack(spacing: 18) {
+            HStack(spacing: 14) {
                 Text(String(profile.name.prefix(1)))
                     .font(.system(size: 24, weight: .bold))
                     .foregroundStyle(.white)
-                    .frame(width: 46, height: 46)
+                    .frame(width: 50, height: 50)
                     .background(Circle().fill(Color(hex: profile.colorHex)))
-                if expanded {
-                    Text(profile.name)
-                        .font(.system(size: 30, weight: .semibold))
-                        .lineLimit(1)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 17, weight: .bold))
-                        .opacity(0.6)
-                    Spacer(minLength: 0)
-                }
+                Text(profile.name)
+                    .font(.system(size: 26, weight: .regular))
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                ClockView()
             }
         }
-        .buttonStyle(SidebarButtonStyle(selected: false, expanded: expanded))
+        .buttonStyle(SidebarButtonStyle(selected: false, dimText: true))
         .focused(focus, equals: .profile)
     }
 
@@ -402,56 +362,54 @@ private struct TVSidebar: View {
         Button { onSelect(destination) } label: {
             HStack(spacing: 20) {
                 Image(systemName: icon)
-                    .font(.system(size: 27, weight: .semibold))
-                    .frame(width: 46)
-                if expanded {
-                    Text(title)
-                        .font(.system(size: 30, weight: .semibold))
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                }
+                    .font(.system(size: 26, weight: .regular))
+                    .frame(width: 40)
+                Text(title)
+                    .font(.system(size: 27, weight: .regular))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
             }
         }
-        .buttonStyle(SidebarButtonStyle(selected: selected ?? (selection == destination), expanded: expanded))
+        .buttonStyle(SidebarButtonStyle(selected: selected ?? (selection == destination), dimText: false))
         .focused(focus, equals: destination)
+    }
+
+    /// Filled SF Symbol for a library icon.
+    static func filledIcon(_ name: String) -> String {
+        switch name {
+        case "tv": return "tv.fill"
+        case "film": return "film.fill"
+        default: return name
+        }
     }
 }
 
-/// Only the focused row gets the light pill (black text and icon). The current page is
-/// marked by full-white text and a small accent bar, without a pill; other rows are dimmed.
+/// Only the focused row gets the (single) white pill, with dark text; the rest is white at
+/// ~85%, the current page full white.
 private struct SidebarButtonStyle: ButtonStyle {
     let selected: Bool
-    let expanded: Bool
+    /// Header: light grey name.
+    let dimText: Bool
 
     func makeBody(configuration: Configuration) -> some View {
-        StyleBody(configuration: configuration, selected: selected, expanded: expanded)
+        StyleBody(configuration: configuration, selected: selected, dimText: dimText)
     }
 
     private struct StyleBody: View {
         let configuration: ButtonStyleConfiguration
         let selected: Bool
-        let expanded: Bool
+        let dimText: Bool
         @Environment(\.isFocused) private var isFocused
 
         var body: some View {
-            let text: Color = isFocused ? .black : (selected ? .white : Color.white.opacity(0.6))
+            let text: Color = isFocused ? .black : (dimText ? Color.white.opacity(0.7) : (selected ? .white : Color.white.opacity(0.85)))
             configuration.label
                 .foregroundStyle(text)
-                // Light scheme on the pill so nothing adapts to a grey tone.
                 .environment(\.colorScheme, isFocused ? .light : .dark)
-                .padding(.vertical, expanded ? 12 : 8)
-                .padding(.horizontal, expanded ? 18 : 13)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .frame(maxWidth: .infinity, minHeight: TVSidebar.rowHeight, alignment: .leading)
                 .background(Capsule().fill(isFocused ? Color.white : Color.clear))
-                .overlay(alignment: .leading) {
-                    // Current page indicator on the reading edge.
-                    if selected && !isFocused {
-                        Capsule()
-                            .fill(Color.accentColor)
-                            .frame(width: 4, height: expanded ? 26 : 20)
-                    }
-                }
-                .scaleEffect(configuration.isPressed ? 0.97 : (isFocused && expanded ? 1.03 : 1))
+                .scaleEffect(configuration.isPressed ? 0.97 : 1)
                 .animation(.easeOut(duration: 0.12), value: isFocused)
         }
     }
@@ -461,8 +419,8 @@ private struct ClockView: View {
     var body: some View {
         TimelineView(.everyMinute) { context in
             Text(ArabicFormat.time(context.date))
-                .font(.system(size: 30, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.85))
+                .font(.system(size: 22, weight: .regular))
+                .opacity(0.75)
                 .monospacedDigit()
         }
     }
@@ -470,268 +428,130 @@ private struct ClockView: View {
 
 // MARK: - Home
 
-/// The card that has focus on Home (drives the details panel and backdrop).
+/// Kept for cards that report focus; Home no longer follows the focused poster.
 @MainActor
 @Observable
 final class HomeFocus {
     var item: PlexItem?
 }
 
+/// Apple TV app–style Home: the banner (per profile, every enabled library), then every row
+/// (Plex's hubs merged with the profile's own rows). Up from the first row scrolls the whole
+/// page back to the banner's primary button.
 struct HomeView: View {
     let client: PlexServerClient
 
     @Environment(ProfileStore.self) private var store
     @Environment(\.contentFilter) private var filter
-    @State private var focus = HomeFocus()
-    @State private var continueWatching: [PlexItem] = []
-    @State private var shelves: [Shelf] = []
+    @State private var banner: [BannerItem] = []
+    @State private var rows: [Shelf] = []
     @State private var isLoading = true
+    @FocusState private var bannerFocus: HeroBanner.Control?
 
-    private var isEmpty: Bool { continueWatching.isEmpty && shelves.isEmpty }
-
-    /// Height of the focused item's details above the rows (was 440: the second row ended
-    /// up below the bottom of the screen).
-    static let detailsHeight: CGFloat = 370
+    private var isEmpty: Bool { banner.isEmpty && rows.isEmpty }
 
     var body: some View {
         BrowseContainer(client: client, showsBackdrop: false) {
-            ZStack(alignment: .top) {
-                HomeBackdrop(item: focus.item, client: client)
-
-                if isLoading && isEmpty {
-                    LoadingView()
-                } else if isEmpty {
-                    ContentUnavailableView("لا يوجد محتوى", systemImage: "film.stack",
-                                           description: Text(filter.scopes.isEmpty
-                                                             ? "لا توجد مكتبات مفتوحة لهذا المستخدم. افتحها من الإعدادات ← إعدادات المستخدم."
-                                                             : "أضف أفلاماً ومسلسلات إلى خادم Plex لتظهر هنا."))
-                } else {
-                    VStack(alignment: .leading, spacing: 0) {
-                        // Short enough that a good part of the second row shows under the first.
-                        FocusedDetails(item: focus.item, client: client)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .frame(height: Self.detailsHeight, alignment: .bottomLeading)
-                            .padding(.horizontal, CardKind.inset)
-                            .sidebarPadding()
-                            .padding(.bottom, 8)
-
-                        ScrollView(.vertical) {
-                            LazyVStack(alignment: .leading, spacing: 4) {
-                                if !continueWatching.isEmpty {
-                                    ShelfView(shelf: Shelf(id: "continue", title: "متابعة المشاهدة",
-                                                           kind: .landscape, items: continueWatching),
-                                              client: client)
-                                }
-                                ForEach(shelves) { shelf in
-                                    ShelfView(shelf: shelf, client: client)
-                                }
-                            }
-                            .padding(.bottom, 80)
-                        }
+            if isLoading && isEmpty {
+                LoadingView()
+            } else if isEmpty {
+                ContentUnavailableView("لا يوجد محتوى", systemImage: "film.stack",
+                                       description: Text(filter.scopes.isEmpty
+                                                         ? "لا توجد مكتبات مفتوحة لهذا المستخدم. افتحها من الإعدادات ← إعدادات المستخدم."
+                                                         : "أضف أفلاماً ومسلسلات إلى خادم Plex لتظهر هنا."))
+            } else {
+                BannerPage(banner: banner, chipTitle: "الرئيسية", client: client, bannerFocus: $bannerFocus) {
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { i, shelf in
+                        ShelfView(shelf: shelf, client: client)
+                            .id(i == 0 ? BannerPageID.firstRow : shelf.id)
                     }
                 }
             }
-            .environment(focus)
         }
         .task(id: filter.signature) {
             // A library just enabled starts downloading in the background.
             LibrarySync.shared.start(client: client, force: true)
             await load()
         }
+        .onAppear { if !isEmpty { Task { await load(cached: false) } } }
         .onReceive(NotificationCenter.default.publisher(for: .plexPlaybackDidEnd)) { _ in
-            Task { await load() }
+            Task { await load(cached: false) }
         }
         .onReceive(NotificationCenter.default.publisher(for: .libraryShouldRefresh)) { _ in
-            Task { await load(showCached: false) }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .localLibraryDidChange)) { _ in
-            Task { await load(showCached: false) }
+            Task { await load(cached: false) }
         }
         .onReceive(NotificationCenter.default.publisher(for: .profileDataDidChangeRemotely)) { _ in
             guard !PlaybackManager.shared.isPlaying else { return }
-            Task { await load() }
+            Task { await load(cached: false) }
         }
     }
 
-    /// Saved Home first (no spinner), then rebuilt from the on-device library.
-    private func load(showCached: Bool = true) async {
+    /// Saved server responses first (instant), then the server.
+    private func load(cached: Bool = true) async {
         defer { isLoading = false }
-        await HomeFeed.loadCacheFirst(client: client, store: store, filter: filter,
-                                      showCached: showCached && isEmpty) { apply($0) }
+        if cached && isEmpty {
+            await PlexResponseCache.$policy.withValue(.cacheOnly) { await fetch() }
+        }
+        await fetch()
     }
 
-    private func apply(_ feed: HomeFeed) {
-        continueWatching = feed.continueWatching
-        shelves = feed.rows
-            .filter { $0.id.hasPrefix("recent-") }
-            .map { Shelf(id: $0.id, title: $0.title, kind: .poster, items: $0.items) }
-        if focus.item == nil { focus.item = continueWatching.first ?? shelves.first?.items.first }
+    private func fetch() async {
+        async let bannerTask = TVFeed.banner(client: client, store: store, filter: filter, sections: filter.sections)
+        async let rowsTask = TVFeed.rows(client: client, store: store, filter: filter, section: nil)
+        let (newBanner, newRows) = await (bannerTask, rowsTask)
+        // A failed refresh (offline) keeps what's on screen.
+        if !newBanner.isEmpty, newBanner.map(\.id) != banner.map(\.id) { banner = newBanner }
+        if !newRows.isEmpty { rows = newRows }
     }
 }
 
-/// Backdrop of the focused item, changed only after focus rests briefly (no work while
-/// scrolling fast): its artwork at the top melting into its Plex UltraBlur colours, on which
-/// the rows sit (the darkened artwork when the item has no colours). Full screen, under the sidebar too.
-private struct HomeBackdrop: View {
-    let item: PlexItem?
+/// A banner page (Home, a library): the banner, then `content` (rows, a tab bar…), in one
+/// vertical scroll. Focus moving between the banner and the content scrolls the whole page
+/// as one piece with the Apple curve; entering the banner lands on its primary button.
+enum BannerPageID {
+    /// Scroll target: the first row (or tab bar) under the banner.
+    static let firstRow = "banner-page-first-row"
+}
+
+struct BannerPage<Content: View>: View {
+    let banner: [BannerItem]
+    let chipTitle: String
     let client: PlexServerClient
-    @State private var url: URL?
-    @State private var colors: PlexUltraBlurColors?
+    var bannerFocus: FocusState<HeroBanner.Control?>.Binding
+    @ViewBuilder let content: () -> Content
 
     var body: some View {
-        ZStack {
-            ArtworkBackdrop(url: url, colors: colors, fadeStart: 0.3, fadeEnd: 0.68)
-            BackdropScrim(hasColors: colors != nil)
-        }
-        .animation(.easeInOut(duration: 0.4), value: colors)
-        .ignoresSafeArea()
-        .task(id: item?.ratingKey) {
-            guard let item else { return }
-            try? await Task.sleep(for: .milliseconds(250))
-            guard !Task.isCancelled else { return }
-            url = client.imageURL(item.backdropPath, width: 1280, height: 720)
-            colors = await Self.colors(for: item, client: client)
-        }
-    }
-
-    /// The artwork shown is the movie's / show's, so are the colours (episodes and seasons use
-    /// their show's). Listings may not carry them: the item's full metadata (cached) is asked once.
-    static func colors(for item: PlexItem, client: PlexServerClient) async -> PlexUltraBlurColors? {
-        let ownerKey = item.isEpisode ? (item.grandparentRatingKey ?? item.ratingKey)
-            : (item.isSeason ? (item.parentRatingKey ?? item.ratingKey) : item.ratingKey)
-        if ownerKey == item.ratingKey, let own = item.ultraBlurColors { return own }
-        return await UltraBlurCache.shared.colors(for: ownerKey, client: client) ?? item.ultraBlurColors
-    }
-}
-
-/// UltraBlur colours per movie / show for the session (nil = it has none). The on-device
-/// library may predate the field: the server's metadata is asked once per title.
-@MainActor
-final class UltraBlurCache {
-    static let shared = UltraBlurCache()
-    private var colors: [String: PlexUltraBlurColors?] = [:]
-
-    func colors(for key: String, client: PlexServerClient) async -> PlexUltraBlurColors? {
-        if let known = colors[key] { return known }
-        var found = await client.cachedMetadata(key)?.ultraBlurColors
-        if found == nil { found = (try? await client.metadata(key))?.ultraBlurColors }
-        colors[key] = .some(found)
-        return found
-    }
-}
-
-/// Logo (or title), episode, date, runtime, rating, synopsis and cast of the focused item.
-private struct FocusedDetails: View {
-    let item: PlexItem?
-    let client: PlexServerClient
-
-    @State private var owner: PlexItem?
-    @State private var logo: URL?
-
-    var body: some View {
-        if let item {
-            VStack(alignment: .leading, spacing: 14) {
-                title(item)
-                    .frame(height: 120, alignment: .bottomLeading)
-
-                if item.isEpisode {
-                    Text(episodeLine(item))
-                        .font(.system(size: 28, weight: .semibold))
-                        .lineLimit(1)
-                }
-
-                Text(metaLine(item))
-                    .font(.system(size: 22, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.7))
-                    .lineLimit(1)
-
-                if let summary = (item.summary?.isEmpty == false ? item.summary : owner?.summary) {
-                    Text(summary)
-                        .font(.system(size: 22))
-                        .foregroundStyle(.white.opacity(0.85))
-                        .lineLimit(2)
-                        .frame(maxWidth: 1000, alignment: .leading)
-                }
-
-                let cast = (item.roles.isEmpty ? owner?.roles ?? [] : item.roles).prefix(4).map(\.tag)
-                if !cast.isEmpty {
-                    Text("بطولة: " + ArabicFormat.list(cast))
-                        .font(.system(size: 20))
-                        .foregroundStyle(.white.opacity(0.55))
-                        .lineLimit(1)
-                        .frame(maxWidth: 1000, alignment: .leading)
+        ScrollViewReader { proxy in
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 0) {
+                    if banner.isEmpty {
+                        Color.clear.frame(height: 80)
+                    } else {
+                        HeroBanner(items: banner, client: client, chipTitle: chipTitle, focus: bannerFocus)
+                            .id("banner")
+                    }
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        content()
+                    }
+                    .padding(.bottom, 80)
                 }
             }
-            .task(id: item.ratingKey) { await resolve(item) }
+            .scrollClipDisabled()
+            .ignoresSafeArea()
+            .onChange(of: bannerFocus.wrappedValue) { old, new in
+                if old == nil, new != nil {
+                    // Rows → banner: the whole page back to the top, focus on the primary button.
+                    withAnimation(.appleScroll) { proxy.scrollTo("banner", anchor: .top) }
+                    if new != .play { DispatchQueue.main.async { bannerFocus.wrappedValue = .play } }
+                } else if old != nil, new == nil, !banner.isEmpty {
+                    // Banner → rows: ~680 pt up, the first row near the top.
+                    withAnimation(.appleScroll) {
+                        proxy.scrollTo(BannerPageID.firstRow, anchor: UnitPoint(x: 0.5, y: 0.17))
+                    }
+                }
+            }
         }
     }
-
-    @ViewBuilder
-    private func title(_ item: PlexItem) -> some View {
-        if let logo {
-            RemoteImage(url: logo, contentMode: .fit)
-                .frame(maxWidth: 520, maxHeight: 120, alignment: .bottomLeading)
-        } else {
-            Text(item.cardTitle)
-                .font(.system(size: 56, weight: .bold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-        }
-    }
-
-    private func episodeLine(_ item: PlexItem) -> String {
-        ArabicFormat.episodeLine(season: item.parentIndex, episode: item.index, title: item.title)
-    }
-
-    private func metaLine(_ item: PlexItem) -> String {
-        var parts: [String] = []
-        if item.isEpisode, let date = ArabicFormat.date(plex: item.originallyAvailableAt) {
-            parts.append(date)
-        } else if let year = item.year {
-            parts.append(ArabicFormat.digits(year))
-        }
-        if item.isShow, let leaves = item.leafCount {
-            parts.append("\(ArabicFormat.digits(leaves)) حلقة")
-        }
-        if let duration = item.duration, item.isPlayable { parts.append(ArabicFormat.duration(ms: duration)) }
-        if let rating = item.normalizedContentRating ?? owner?.normalizedContentRating { parts.append(rating) }
-        if let score = item.audienceRating ?? item.rating, score > 0 { parts.append(ArabicFormat.score(score)) }
-        let genres = ArabicFormat.genres((item.genres.isEmpty ? owner?.genres ?? [] : item.genres).map(\.tag), limit: 2)
-        if !genres.isEmpty { parts.append(ArabicFormat.list(genres)) }
-        return ArabicFormat.joined(parts)
-    }
-
-    /// The show (for episodes) and the clear logo, after focus rests briefly.
-    private func resolve(_ item: PlexItem) async {
-        let ownerKey = item.isEpisode ? (item.grandparentRatingKey ?? item.ratingKey)
-            : (item.isSeason ? (item.parentRatingKey ?? item.ratingKey) : item.ratingKey)
-        if owner?.ratingKey != ownerKey { owner = nil }
-        if let cached = LogoCache.shared.path(for: ownerKey) {
-            logo = cached.flatMap { client.imageURL($0, width: 1040, height: 240, png: true) }
-        } else {
-            logo = nil
-        }
-        try? await Task.sleep(for: .milliseconds(200))
-        guard !Task.isCancelled else { return }
-        if ownerKey != item.ratingKey { owner = await client.cachedMetadata(ownerKey) }
-        guard LogoCache.shared.path(for: ownerKey) == nil else { return }
-        // The synced listing may not carry logos: one request per title, remembered.
-        var path = (owner ?? item).clearLogoPath
-        if path == nil { path = (try? await client.metadata(ownerKey))?.clearLogoPath }
-        LogoCache.shared.set(path, for: ownerKey)
-        guard !Task.isCancelled else { return }
-        logo = path.flatMap { client.imageURL($0, width: 1040, height: 240, png: true) }
-    }
-}
-
-/// Clear-logo path per movie / show (nil = it has none), for the session.
-@MainActor
-private final class LogoCache {
-    static let shared = LogoCache()
-    private var paths: [String: String?] = [:]
-
-    func path(for key: String) -> String?? { paths[key] }
-    func set(_ path: String?, for key: String) { paths[key] = .some(path) }
 }
 
 // MARK: - My List

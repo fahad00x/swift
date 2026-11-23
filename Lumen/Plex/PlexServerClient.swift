@@ -216,6 +216,27 @@ final class PlexServerClient: Sendable {
         return all[(index + 1)...].first { !$0.isWatched }
     }
 
+    // MARK: Hubs and browsing (Apple TV rows, collections, playlists, categories)
+
+    /// Plex's hubs: Home (`section` nil) or one library, in the server's order.
+    func hubs(section: String?, count: Int = 20) async -> [PlexHub] {
+        let path = section.map { "/hubs/sections/\($0)" } ?? "/hubs"
+        let c = try? await container(path, [("count", "\(count)"), ("includeLibraryPlaylists", "1")])
+        return (c?.hubs ?? []).filter { !$0.items.isEmpty }
+    }
+
+    /// Any listing as items (collections, playlists, a collection's or playlist's contents,
+    /// a filtered library), paged.
+    func listing(_ path: String, _ query: [(String, String)] = [], start: Int = 0, size: Int = 120) async -> [PlexItem] {
+        let q = query + [("X-Plex-Container-Start", "\(start)"), ("X-Plex-Container-Size", "\(size)")]
+        return (try? await container(path, q).metadata) ?? []
+    }
+
+    /// A library's categories (genres) with the key to filter by.
+    func genreDirectories(section: String) async -> [PlexDirectory] {
+        ((try? await container("/library/sections/\(section)/genre").directories) ?? []).filter { !$0.title.isEmpty }
+    }
+
     /// Genre names used in a library.
     func genres(section: PlexDirectory) async -> [String] {
         ((try? await container("/library/sections/\(section.key)/genre").directories) ?? []).map(\.title).filter { !$0.isEmpty }
@@ -382,9 +403,9 @@ final class PlexServerClient: Sendable {
 /// Pixel size of the poster artwork requested from Plex's photo transcoder.
 enum ArtworkSize {
     #if os(tvOS)
-    // 2× the 210 × 315 pt Apple TV poster card.
-    static let posterWidth = 420
-    static let posterHeight = 630
+    // 2× the 260 × 390 pt Apple TV poster card.
+    static let posterWidth = 520
+    static let posterHeight = 780
     #else
     static let posterWidth = 360
     static let posterHeight = 540

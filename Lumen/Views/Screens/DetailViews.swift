@@ -98,7 +98,7 @@ struct DetailPage: View {
         ZStack(alignment: .top) {
             DetailBackdrop(key: displayKey(current), image: backdrops[displayKey(current)], url: backdropURL(current),
                            expanded: expanded, entrySign: entrySign, generation: generation,
-                           colors: metadataCache[displayKey(current)]?.ultraBlurColors ?? current.ultraBlurColors)
+                           colors: nil)
 
             if let item {
                 ScrollViewReader { proxy in
