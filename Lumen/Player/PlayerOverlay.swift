@@ -132,8 +132,9 @@ struct PlayerOverlay: View {
                     Image(systemName: action.icon)
                     Text(action.title)
                 }
-                .font(.headline)
-                .foregroundStyle(.black)
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(Color.black)
+                .environment(\.colorScheme, .light)
                 .padding(.horizontal, 36)
                 .padding(.vertical, 20)
                 .background(Capsule().fill(.white))

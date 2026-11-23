@@ -31,9 +31,18 @@ final class SidebarPrefs {
     }
 
     /// Pinned libraries in order (the first four by default).
+    ///
+    /// Saved ids can go stale (a library removed or renamed on the server, a scope split into
+    /// anime / non-anime, or a choice synced from another device with other libraries). When
+    /// none of the saved ids match an open library any more, the sidebar used to show the
+    /// «المكتبات» header with nothing under it; it now falls back to the default first four.
+    /// An explicitly empty choice (everything under «المزيد») is kept.
     func pinned(from scopes: [LibraryScope]) -> [LibraryScope] {
-        guard let pinnedIDs else { return Array(scopes.prefix(Self.maxPinned)) }
+        guard let pinnedIDs, !pinnedIDs.isEmpty else {
+            return pinnedIDs == nil ? Array(scopes.prefix(Self.maxPinned)) : []
+        }
         let chosen = pinnedIDs.compactMap { id in scopes.first { $0.id == id } }
+        if chosen.isEmpty { return Array(scopes.prefix(Self.maxPinned)) }
         return Array(chosen.prefix(Self.maxPinned))
     }
 
@@ -119,7 +128,7 @@ struct MainTabView: View {
 
             // The content dims while the menu is open.
             Color.black
-                .opacity(sidebarOpen ? 0.55 : 0)
+                .opacity(sidebarOpen ? 0.5 : 0)
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
 
@@ -218,6 +227,7 @@ private struct TVSidebar: View {
     let onSelect: (TVDestination) -> Void
 
     private var expanded: Bool { focus.wrappedValue != nil }
+    private var hasLibraries: Bool { !pinned.isEmpty || hasMore }
 
     private var selectedIsUnpinnedLibrary: Bool {
         guard case .library(let id) = selection else { return false }
@@ -254,7 +264,10 @@ private struct TVSidebar: View {
             row(.search, "بحث", "magnifyingglass")
             row(.home, "الرئيسية", "house")
 
-            if expanded {
+            // The header and its spacing only when there are library rows to show under it.
+            if !hasLibraries {
+                EmptyView()
+            } else if expanded {
                 HStack(spacing: 12) {
                     Text("المكتبات")
                         .font(.system(size: 19, weight: .semibold))
@@ -277,11 +290,13 @@ private struct TVSidebar: View {
                 row(.more, "المزيد", "ellipsis", selected: selection == .more || selectedIsUnpinnedLibrary)
             }
 
-            Rectangle()
-                .fill(Color.white.opacity(expanded ? 0.18 : 0))
-                .frame(height: 1)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
+            if hasLibraries {
+                Rectangle()
+                    .fill(Color.white.opacity(expanded ? 0.18 : 0))
+                    .frame(height: 1)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+            }
 
             row(.settings, "الإعدادات", "gearshape")
         }
@@ -331,11 +346,14 @@ private struct SidebarButtonStyle: ButtonStyle {
         @Environment(\.isFocused) private var isFocused
 
         var body: some View {
-            // Focused: white pill. Selected: light pill with dark text. Otherwise plain.
+            // Focused: white pill with black text and icon. Selected: light pill, dark text. Otherwise plain.
+            let onPill = isFocused || selected
             let pill: Color = isFocused ? .white : (selected ? Color.white.opacity(0.78) : .clear)
-            let text: Color = (isFocused || selected) ? Color(red: 0.08, green: 0.1, blue: 0.13) : Color.white.opacity(0.7)
+            let text: Color = onPill ? .black : Color.white.opacity(0.7)
             configuration.label
                 .foregroundStyle(text)
+                // Light scheme on the pill so nothing adapts to a grey tone.
+                .environment(\.colorScheme, onPill ? .light : .dark)
                 .padding(.vertical, 8)
                 .padding(.horizontal, 12)
                 .frame(maxWidth: .infinity, alignment: .leading)

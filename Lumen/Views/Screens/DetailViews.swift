@@ -84,7 +84,13 @@ struct DetailPage: View {
 
     enum HeroButton: Hashable { case play, watchlist, more, edgeStart, edgeEnd, backToTop }
 
-    private let width: CGFloat = 1920
+    /// The page fills the content area next to the collapsed sidebar rail (not the whole
+    /// screen), so nothing starts under the rail; only the artwork extends beneath it.
+    private let width: CGFloat = DetailPage.pageWidth
+    static let pageWidth: CGFloat = 1920 - MainTabView.railInset
+    /// One side inset for the hero text, section titles and every horizontal row, so they
+    /// all start on the same line.
+    static let sideInset: CGFloat = 80
     private let height: CGFloat = 1080
     /// Hero height in state 1; the rest of the screen shows the next row ("peek").
     private let heroHeight: CGFloat = 930
@@ -93,6 +99,8 @@ struct DetailPage: View {
         ZStack(alignment: .top) {
             DetailBackdrop(key: displayKey(current), image: backdrops[displayKey(current)], url: backdropURL(current),
                            expanded: expanded, entrySign: entrySign, generation: generation)
+                // Full-screen artwork: its far edge lines up with the page, the rest runs under the rail.
+                .frame(width: width, height: height, alignment: .trailing)
 
             if let item {
                 ScrollViewReader { proxy in
@@ -237,6 +245,15 @@ struct DetailPage: View {
                         .frame(maxWidth: 980, alignment: .leading)
                 }
 
+                // Cast with the rest of the information, under the summary.
+                if !item.roles.isEmpty {
+                    Text("بطولة: " + ArabicFormat.list(item.roles.prefix(4).map(\.tag)))
+                        .font(.callout)
+                        .foregroundStyle(.white.opacity(0.7))
+                        .lineLimit(1)
+                        .frame(maxWidth: 980, alignment: .leading)
+                }
+
                 HStack(spacing: 14) {
                     Text(infoLine(item))
                         .font(.callout)
@@ -250,18 +267,8 @@ struct DetailPage: View {
             .frame(width: 1020, alignment: .leading)
 
             Spacer(minLength: 0)
-
-            if !item.roles.isEmpty {
-                Text("بطولة: " + ArabicFormat.list(item.roles.prefix(3).map(\.tag)))
-                    .font(.callout)
-                    .foregroundStyle(.white.opacity(0.75))
-                    .lineLimit(2)
-                    .multilineTextAlignment(.trailing)
-                    .frame(maxWidth: 560, alignment: .trailing)
-                    .padding(.bottom, 20)
-            }
         }
-        .padding(.horizontal, 110)
+        .padding(.horizontal, Self.sideInset)
         .padding(.bottom, 60)
         .shadow(color: .black.opacity(0.35), radius: 10)
         .opacity(revealed && !expanded ? 1 : 0)
@@ -442,7 +449,7 @@ struct DetailPage: View {
                     .focused($seasonFocus, equals: season.ratingKey)
                 }
             }
-            .padding(.horizontal, 80)
+            .padding(.horizontal, DetailPage.sideInset)
             .padding(.vertical, 24)
         }
         .scrollClipDisabled()
@@ -479,7 +486,7 @@ struct DetailPage: View {
                     }
                 }
             }
-            .padding(.horizontal, 80)
+            .padding(.horizontal, DetailPage.sideInset)
             .padding(.top, 30)
             .padding(.bottom, 40)
         }
@@ -509,7 +516,7 @@ struct DetailPage: View {
                         .focused($lowerFocus, equals: "extra-\(extra.id)")
                     }
                 }
-                .padding(.horizontal, 80)
+                .padding(.horizontal, DetailPage.sideInset)
                 .padding(.top, 30)
                 .padding(.bottom, 40)
             }
@@ -527,11 +534,12 @@ struct DetailPage: View {
                         Button {} label: {
                             CastTile(role: role, client: client)
                         }
-                        .buttonStyle(.borderless)
+                        // Circular focus drawn by the tile itself (no rectangular card / highlight).
+                        .buttonStyle(CastButtonStyle())
                         .focused($lowerFocus, equals: "cast-\(role.id)")
                     }
                 }
-                .padding(.horizontal, 80)
+                .padding(.horizontal, DetailPage.sideInset)
                 .padding(.top, 30)
                 .padding(.bottom, 40)
             }
@@ -563,7 +571,7 @@ struct DetailPage: View {
                 InfoTile(title: "الترجمات", lines: subs.isEmpty ? ["لا توجد"] : Array(subs.prefix(5)))
                 InfoTile(title: "الملف", lines: (file.isEmpty ? ["—"] : file) + (target.isEpisode ? [target.introSkipSourceText] : []))
             }
-            .padding(.horizontal, 80)
+            .padding(.horizontal, DetailPage.sideInset)
             .padding(.top, 26)
             .focusSection()
         }
@@ -879,7 +887,7 @@ private struct SectionTitle: View {
         Text(text)
             .font(.title3.weight(.semibold))
             .foregroundStyle(.white.opacity(0.78))
-            .padding(.horizontal, 80)
+            .padding(.horizontal, DetailPage.sideInset)
     }
 }
 
@@ -975,9 +983,20 @@ private struct ExtraTile: View {
     }
 }
 
+/// No system focus effect: `CastTile` draws a circular one around the photo.
+private struct CastButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
+    }
+}
+
 private struct CastTile: View {
     let role: PlexTag
     let client: PlexServerClient
+    /// Focus of the enclosing button.
+    @Environment(\.isFocused) private var isFocused
 
     var body: some View {
         VStack(spacing: 10) {
@@ -988,7 +1007,11 @@ private struct CastTile: View {
             }
             .frame(width: 170, height: 170)
             .clipShape(Circle())
-            .hoverEffect(.highlight)
+            .contentShape(Circle())
+            .overlay(Circle().strokeBorder(Color.white, lineWidth: isFocused ? 5 : 0))
+            .scaleEffect(isFocused ? 1.1 : 1)
+            .shadow(color: .black.opacity(isFocused ? 0.5 : 0), radius: 16, y: 8)
+            .animation(.easeOut(duration: 0.15), value: isFocused)
 
             Text(role.tag)
                 .font(.caption.weight(.semibold))

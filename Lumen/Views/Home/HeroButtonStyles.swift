@@ -16,7 +16,9 @@ struct HeroPillButtonStyle: ButtonStyle {
         var body: some View {
             configuration.label
                 .font(.headline)
-                .foregroundStyle(.black)
+                // Pure black on the white pill (light scheme so no symbol/text adapts to grey).
+                .foregroundStyle(Color.black)
+                .environment(\.colorScheme, .light)
                 .padding(.horizontal, 46)
                 .frame(height: 76)
                 .background(Capsule().fill(Color.white.opacity(isFocused ? 1 : 0.88)))
@@ -44,6 +46,7 @@ struct HeroCircleButtonStyle: ButtonStyle {
             configuration.label
                 .font(.system(size: 30, weight: .semibold))
                 .foregroundStyle(isFocused ? Color.black : Color.white)
+                .environment(\.colorScheme, isFocused ? .light : .dark)
                 .frame(width: 76, height: 76)
                 .background(Circle().fill(isFocused ? Color.white : Color.white.opacity(0.2)))
                 .opacity(dimmed && !isFocused ? 0.45 : 1)
