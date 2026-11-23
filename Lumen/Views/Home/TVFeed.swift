@@ -177,13 +177,13 @@ enum TVFeed {
             let browsable = hub.items.filter { ["movie", "show", "season", "episode", "collection", "playlist"].contains($0.type) }
             guard !browsable.isEmpty else { continue }
             let plain = browsable.filter { $0.type != "collection" && $0.type != "playlist" }
-            let containers = browsable.filter { $0.type == "collection" || $0.type == "playlist" }
+            // Collections / playlists with artwork only (no grey placeholders).
+            let containers = browsable.filter { ($0.type == "collection" || $0.type == "playlist") && $0.posterPath != nil }
             let visible = await filter.resolve(plain, client: client, scope: scope)
             let items = visible + containers
             guard !items.isEmpty else { continue }
-            let landscape = hub.type == "episode" || hub.type == "clip"
             serverRows.append(Shelf(id: "hub-\(hub.hubIdentifier)", title: title(for: hub, sectionTitles: sectionTitles),
-                                    kind: landscape ? .landscape : .poster, items: items))
+                                    kind: .poster, items: items))
         }
 
         // The profile's own rows.
@@ -195,7 +195,8 @@ enum TVFeed {
 
         var rows: [Shelf] = []
         if !continueItems.isEmpty {
-            rows.append(Shelf(id: "continue", title: "متابعة المشاهدة", kind: .landscape, items: continueItems))
+            // Portrait posters like every row, with the progress bar on the poster.
+            rows.append(Shelf(id: "continue", title: "متابعة المشاهدة", kind: .poster, items: continueItems))
         }
         rows += serverRows.prefix(2)
         if let because { rows.append(because) }

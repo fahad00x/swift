@@ -62,12 +62,16 @@ struct RootView: View {
                         // screens reload from the new content filter instead.
                         MainTabView(client: client, sections: session.sections, profile: profile)
                             .id("\(client.machineIdentifier)|\(profile.id)")
+                            .transition(.opacity)
                     } else {
                         ProfilePickerView(client: client, sections: session.sections)
+                            .transition(.opacity)
                     }
                 }
             }
         }
+        // «مين يشاهد؟» ↔ Home cross-fade (~0.4 s).
+        .animation(.easeInOut(duration: 0.4), value: profiles.activeProfile?.id)
         .task { await session.bootstrap() }
     }
 }

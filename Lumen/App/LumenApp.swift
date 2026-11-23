@@ -52,12 +52,16 @@ struct RootView: View {
                         // in Settings must not tear down the screen that is presenting the editor.
                         MainTabView(client: client, sections: session.sections, profile: profile)
                             .id("\(client.machineIdentifier)|\(profile.id)")
+                            .transition(.opacity)
                     } else {
                         ProfilePickerView(client: client, sections: session.sections)
+                            .transition(.opacity)
                     }
                 }
             }
         }
+        // «مين يشاهد؟» ↔ Home cross-fade (~0.4 s).
+        .animation(.easeInOut(duration: 0.4), value: profiles.activeProfile?.id)
         .task { await session.bootstrap() }
     }
 }

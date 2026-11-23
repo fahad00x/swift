@@ -138,6 +138,7 @@ struct MainTabView: View {
     @FocusState private var sidebarFocus: TVDestination?
     @FocusState private var edgeFocused: Bool
     @Namespace private var shellNamespace
+    @Environment(\.resetFocus) private var resetFocus
 
     init(client: PlexServerClient, sections: [PlexDirectory], profile: UserProfile) {
         self.client = client
@@ -178,6 +179,8 @@ struct MainTabView: View {
                     selection = destination
                     // Hand focus to the chosen screen; the sidebar closes.
                     DispatchQueue.main.async { sidebarFocus = nil }
+                } onClose: {
+                    closeSidebar()
                 }
                 .padding(.leading, TVSidebar.margin)
                 .padding(.vertical, TVSidebar.margin)
@@ -214,6 +217,14 @@ struct MainTabView: View {
         } message: {
             Text("«\(newSections.map { ArabicFormat.isolated($0.title) }.joined(separator: "»، «"))» — تبي تضيفها لمكتباتك؟")
         }
+    }
+
+    /// Left (toward the content) or a left swipe: the panel closes at once and focus goes back
+    /// to the content (the item it had, else the screen's default: the banner's Play).
+    private func closeSidebar() {
+        withAnimation(.linear(duration: 0.05)) { sidebarVisible = false }
+        sidebarFocus = nil
+        DispatchQueue.main.async { resetFocus(in: shellNamespace) }
     }
 
     /// Back / Menu on a top-level screen, or Right at the edge: shows the sidebar on the
@@ -283,6 +294,7 @@ private struct TVSidebar: View {
     let hasMore: Bool
     let onProfile: () -> Void
     let onSelect: (TVDestination) -> Void
+    let onClose: () -> Void
 
     static let width: CGFloat = 340
     static let margin: CGFloat = 36
@@ -330,6 +342,10 @@ private struct TVSidebar: View {
         .shadow(color: .black.opacity(0.35), radius: 30, y: 10)
         .focusSection()
         .defaultFocus(focus, selection)
+        // Left (physical; the sidebar is on the right) closes it, also from a swipe.
+        .onMoveCommand { direction in
+            if direction == .left { onClose() }
+        }
         .onChange(of: focus.wrappedValue) { old, new in
             // Entering from the content lands on the current page.
             guard old == nil, let new, new != selection else { return }
@@ -364,9 +380,13 @@ private struct TVSidebar: View {
                 Image(systemName: icon)
                     .font(.system(size: 26, weight: .regular))
                     .frame(width: 40)
+                // Long library names wrap (or shrink a little); never truncated.
                 Text(title)
                     .font(.system(size: 27, weight: .regular))
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.leading)
                 Spacer(minLength: 0)
             }
         }
@@ -407,6 +427,7 @@ private struct SidebarButtonStyle: ButtonStyle {
                 .foregroundStyle(text)
                 .environment(\.colorScheme, isFocused ? .light : .dark)
                 .padding(.horizontal, 20)
+                .padding(.vertical, 6)
                 .frame(maxWidth: .infinity, minHeight: TVSidebar.rowHeight, alignment: .leading)
                 .background(Capsule().fill(isFocused ? Color.white : Color.clear))
                 .scaleEffect(configuration.isPressed ? 0.97 : 1)
@@ -499,20 +520,39 @@ struct HomeView: View {
         async let bannerTask = TVFeed.banner(client: client, store: store, filter: filter, sections: filter.sections)
         async let rowsTask = TVFeed.rows(client: client, store: store, filter: filter, section: nil)
         let (newBanner, newRows) = await (bannerTask, rowsTask)
-        // A failed refresh (offline) keeps what's on screen.
-        if !newBanner.isEmpty, newBanner.map(\.id) != banner.map(\.id) { banner = newBanner }
+        // A failed refresh (offline) keeps what's on screen. Artwork first: no text on black.
+        if !newBanner.isEmpty, newBanner.map(\.id) != banner.map(\.id) {
+            await HeroBanner.preload(newBanner, client: client)
+            banner = newBanner
+        }
         if !newRows.isEmpty { rows = newRows }
     }
 }
 
-/// A banner page (Home, a library): the banner, then `content` (rows, a tab bar…), in one
-/// vertical scroll. Focus moving between the banner and the content scrolls the whole page
-/// as one piece with the Apple curve; entering the banner lands on its primary button.
 enum BannerPageID {
-    /// Scroll target: the first row (or tab bar) under the banner.
+    /// The first row (or tab bar) under the banner.
     static let firstRow = "banner-page-first-row"
 }
 
+/// Lets cards, tabs and tiles under a banner tell the page that focus moved into its rows.
+private struct PageFocusKey: EnvironmentKey {
+    static let defaultValue: (() -> Void)? = nil
+}
+
+extension EnvironmentValues {
+    var pageContentFocused: (() -> Void)? {
+        get { self[PageFocusKey.self] }
+        set { self[PageFocusKey.self] = newValue }
+    }
+}
+
+/// A banner page (Home, a library): the banner, then `content` (rows, a tab bar…).
+///
+/// The page moves as one piece: with focus on the banner it shows full screen (the first row
+/// peeking at the bottom); with focus in the rows the whole page (banner included, no
+/// parallax) moves up ~660 pt with the Apple curve, and Up from the first row brings it back.
+/// The banner artwork bleeds under the rows and fades into a dark tint of itself, never
+/// into black.
 struct BannerPage<Content: View>: View {
     let banner: [BannerItem]
     let chipTitle: String
@@ -520,37 +560,92 @@ struct BannerPage<Content: View>: View {
     var bannerFocus: FocusState<HeroBanner.Control?>.Binding
     @ViewBuilder let content: () -> Content
 
+    @State private var index = 0
+    @State private var atRows = false
+    @State private var chipVisible = false
+    @State private var infoRoute: DetailRoute?
+
+    /// How far the page moves up for the rows.
+    private static var shift: CGFloat { 660 }
+
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 0) {
-                    if banner.isEmpty {
-                        Color.clear.frame(height: 80)
-                    } else {
-                        HeroBanner(items: banner, client: client, chipTitle: chipTitle, focus: bannerFocus)
-                            .id("banner")
+        ZStack(alignment: .top) {
+            PageTint(url: banner.isEmpty ? nil : HeroBanner.lowResURL(banner[min(index, banner.count - 1)], client: client))
+
+            VStack(alignment: .leading, spacing: 0) {
+                if banner.isEmpty {
+                    Color.clear.frame(height: 90)
+                } else {
+                    HeroBanner(items: banner, client: client, chipTitle: chipTitle, focus: bannerFocus,
+                               index: $index, chipVisible: chipVisible) { item in
+                        infoRoute = DetailRoute(item: item.display, sourceID: "banner|\(item.id)",
+                                                context: BrowseContext(rowID: "banner-\(chipTitle)", items: banner.map(\.display)))
                     }
+                }
+
+                ScrollView(.vertical) {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         content()
                     }
-                    .padding(.bottom, 80)
+                    .padding(.top, 24)
+                    // The last row stays fully visible with its focus lift.
+                    .padding(.bottom, 120)
                 }
+                .frame(height: banner.isEmpty ? 990 : 1080 - (HeroBanner.height - Self.shift) + 24)
+                .padding(.top, -24)
             }
-            .scrollClipDisabled()
-            .ignoresSafeArea()
-            .onChange(of: bannerFocus.wrappedValue) { old, new in
-                if old == nil, new != nil {
-                    // Rows → banner: the whole page back to the top, focus on the primary button.
-                    withAnimation(.appleScroll) { proxy.scrollTo("banner", anchor: .top) }
-                    if new != .play { DispatchQueue.main.async { bannerFocus.wrappedValue = .play } }
-                } else if old != nil, new == nil, !banner.isEmpty {
-                    // Banner → rows: ~680 pt up, the first row near the top.
-                    withAnimation(.appleScroll) {
-                        proxy.scrollTo(BannerPageID.firstRow, anchor: UnitPoint(x: 0.5, y: 0.17))
-                    }
+            .offset(y: atRows && !banner.isEmpty ? -Self.shift : 0)
+            .environment(\.pageContentFocused, {
+                guard !atRows else { return }
+                chipVisible = false
+                withAnimation(.appleScroll) { atRows = true }
+            })
+        }
+        .frame(width: 1920, height: 1080, alignment: .top)
+        .ignoresSafeArea()
+        .onChange(of: bannerFocus.wrappedValue) { old, new in
+            if new != nil {
+                if atRows {
+                    // Rows → banner: the whole page back down, focus on the primary button.
+                    withAnimation(.appleScroll) { atRows = false }
+                    if old == nil, new != .play { DispatchQueue.main.async { bannerFocus.wrappedValue = .play } }
                 }
+                // The chip fades in once the scroll has settled.
+                DispatchQueue.main.asyncAfter(deadline: .now() + (old == nil ? 0.85 : 0)) {
+                    guard bannerFocus.wrappedValue != nil, !atRows else { return }
+                    withAnimation(.easeOut(duration: 0.3)) { chipVisible = true }
+                }
+            } else {
+                withAnimation(.easeOut(duration: 0.15)) { chipVisible = false }
             }
         }
+        .navigationDestination(item: $infoRoute) { route in
+            DetailPage(client: client, entry: route.item, context: route.context, sourceID: route.sourceID)
+        }
+    }
+}
+
+/// The page background under a banner: a dark, blurred tint of the current artwork.
+private struct PageTint: View {
+    let url: URL?
+
+    var body: some View {
+        ZStack {
+            Color(white: 0.06)
+            if let url {
+                RemoteImage(url: url)
+                    .blur(radius: 80, opaque: true)
+                    .scaleEffect(1.2)
+                    .id(url)
+                    .transition(.opacity)
+            }
+            Color.black.opacity(0.6)
+        }
+        .frame(width: 1920, height: 1080)
+        .clipped()
+        .animation(.easeInOut(duration: 0.5), value: url)
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
     }
 }
 

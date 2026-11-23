@@ -26,31 +26,58 @@ struct ProfilePickerView: View {
         }
     }
 
-    private let columns = [GridItem(.adaptive(minimum: 120, maximum: 150), spacing: 24, alignment: .top)]
+    @State private var chosenID: String?
+    @State private var choosingToEdit = false
+
+    private let circle: CGFloat = 104
+
+    /// One centred row while it fits; a 3-column grid beyond that.
+    private var columns: [GridItem] {
+        let count = min(3, store.profiles.count + 1)
+        return Array(repeating: GridItem(.fixed(circle + 12), spacing: 18, alignment: .top), count: max(1, count))
+    }
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 36) {
-                Text("مين يشاهد؟")
-                    .font(.system(size: 34, weight: .bold))
-                    .padding(.top, 60)
+        ZStack {
+            // Like the system user picker: a blurred image, the circles centred, nothing else.
+            ProfilePickerBackdrop(client: client, sections: sections)
 
-                LazyVGrid(columns: columns, spacing: 28) {
-                    ForEach(store.profiles) { profile in tile(profile) }
-                    addTile
+            GeometryReader { geo in
+                ScrollView {
+                    LazyVGrid(columns: columns, spacing: 26) {
+                        ForEach(store.profiles) { profile in tile(profile) }
+                        addTile
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 40)
+                    // Centred vertically on the screen while it fits.
+                    .frame(maxWidth: .infinity, minHeight: geo.size.height)
                 }
-                .padding(.horizontal, 24)
+                .scrollBounceBehavior(.basedOnSize)
+            }
 
-                Text("اضغط مطوّلاً على أي مستخدم لتعديله أو حذفه")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+            VStack {
+                Spacer()
+                Button("تعديل") { choosingToEdit = true }
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 10)
+                    .background(Capsule().fill(.ultraThinMaterial))
+                    .overlay(Capsule().strokeBorder(Color.white.opacity(0.2), lineWidth: 1))
+                    .padding(.bottom, 24)
             }
         }
-        .background(LinearGradient(colors: [Color(white: 0.1), .black], startPoint: .top, endPoint: .bottom).ignoresSafeArea())
         .sheet(item: $editor) { target in
             ProfileEditorView(client: client, sections: sections, existing: target.profile)
         }
         .pinRequest($pin)
+        .confirmationDialog("تعديل مستخدم", isPresented: $choosingToEdit) {
+            ForEach(store.profiles) { profile in
+                Button(profile.name) { authorize(profile) { editor = .edit(profile) } }
+            }
+            Button("إلغاء", role: .cancel) {}
+        }
         .alert("حذف «\(pendingDelete?.name ?? "")»؟", isPresented: Binding(
             get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }
         )) {
@@ -67,17 +94,14 @@ struct ProfilePickerView: View {
     private func tile(_ profile: UserProfile) -> some View {
         Button { choose(profile) } label: {
             VStack(spacing: 10) {
-                ProfileAvatar(profile: profile, size: 110)
-                HStack(spacing: 4) {
-                    if profile.hasPIN { Image(systemName: "lock.fill").font(.caption2) }
-                    Text(profile.name).font(.headline).lineLimit(1)
-                }
-                if profile.isKids {
-                    Text("أطفال")
-                        .font(.caption2.weight(.bold))
-                        .padding(.horizontal, 8).padding(.vertical, 2)
-                        .background(Capsule().fill(Color.white.opacity(0.15)))
-                }
+                ProfileInitialsCircle(profile: profile, size: circle)
+                    .clipShape(Circle())
+                    .shadow(color: .black.opacity(0.35), radius: 10, y: 6)
+                    .scaleEffect(chosenID == profile.id ? 1.12 : 1)
+                Text(profile.name)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(1)
             }
         }
         .buttonStyle(.plain)
@@ -97,19 +121,28 @@ struct ProfilePickerView: View {
         Button { editor = .create } label: {
             VStack(spacing: 10) {
                 ZStack {
-                    Circle().fill(Color.white.opacity(0.12))
-                    Image(systemName: "plus").font(.system(size: 40, weight: .semibold))
+                    Circle().fill(.ultraThinMaterial)
+                    Circle().strokeBorder(Color.white.opacity(0.22), lineWidth: 1)
+                    Image(systemName: "plus").font(.system(size: 36, weight: .medium)).foregroundStyle(.white)
                 }
-                .frame(width: 110, height: 110)
-                Text("إضافة مستخدم").font(.headline)
+                .frame(width: circle, height: circle)
+                Text("إضافة").font(.system(size: 15, weight: .medium)).foregroundStyle(.white.opacity(0.6))
             }
         }
         .buttonStyle(.plain)
     }
 
     private func choose(_ profile: UserProfile) {
-        guard profile.hasPIN else { store.activate(profile); return }
-        pin = PinRequest(title: "أدخل رمز «\(profile.name)»", profiles: [profile]) { store.activate(profile) }
+        guard profile.hasPIN else { enter(profile); return }
+        pin = PinRequest(title: "أدخل رمز «\(profile.name)»", profiles: [profile]) { enter(profile) }
+    }
+
+    /// The chosen circle zooms slightly, then the screen cross-fades into Home.
+    private func enter(_ profile: UserProfile) {
+        withAnimation(.easeOut(duration: 0.2)) { chosenID = profile.id }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            withAnimation(.easeInOut(duration: 0.4)) { store.activate(profile) }
+        }
     }
 
     private func authorize(_ profile: UserProfile, then action: @escaping () -> Void) {

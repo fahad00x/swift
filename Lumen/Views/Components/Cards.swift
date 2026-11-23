@@ -205,6 +205,7 @@ struct PosterButtonStyle: ButtonStyle {
     private struct StyleBody: View {
         let configuration: ButtonStyleConfiguration
         @Environment(\.isFocused) private var isFocused
+        @Environment(\.pageContentFocused) private var pageContentFocused
 
         var body: some View {
             // Apple TV app focus: scale + lift + soft shadow + a light glass rim. No border.
@@ -221,6 +222,8 @@ struct PosterButtonStyle: ButtonStyle {
                 .offset(y: isFocused ? -6 : 0)
                 .shadow(color: .black.opacity(isFocused ? 0.5 : 0), radius: isFocused ? 24 : 0, y: isFocused ? 18 : 0)
                 .animation(.spring(response: 0.3, dampingFraction: 0.9), value: isFocused)
+                // Under a banner: focus in the rows moves the page up.
+                .onChange(of: isFocused) { _, focused in if focused { pageContentFocused?() } }
         }
     }
 }

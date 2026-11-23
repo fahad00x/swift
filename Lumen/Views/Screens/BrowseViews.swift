@@ -118,7 +118,10 @@ struct LibraryView: View {
         async let bannerTask = TVFeed.banner(client: client, store: store, filter: filter, sections: [scope.section])
         async let rowsTask = TVFeed.rows(client: client, store: store, filter: filter, section: scope.section)
         let (newBanner, newRows) = await (bannerTask, rowsTask)
-        if !newBanner.isEmpty, newBanner.map(\.id) != banner.map(\.id) { banner = newBanner }
+        if !newBanner.isEmpty, newBanner.map(\.id) != banner.map(\.id) {
+            await HeroBanner.preload(newBanner, client: client)
+            banner = newBanner
+        }
         if !newRows.isEmpty { rows = newRows }
     }
 }
@@ -153,9 +156,11 @@ private struct TabPillStyle: ButtonStyle {
         let configuration: ButtonStyleConfiguration
         let selected: Bool
         @Environment(\.isFocused) private var isFocused
+        @Environment(\.pageContentFocused) private var pageContentFocused
 
         var body: some View {
             configuration.label
+                .onChange(of: isFocused) { _, focused in if focused { pageContentFocused?() } }
                 .font(.system(size: 26, weight: selected ? .semibold : .regular))
                 .foregroundStyle(isFocused ? Color.black : (selected ? Color.white : Color.white.opacity(0.7)))
                 .environment(\.colorScheme, isFocused ? .light : .dark)

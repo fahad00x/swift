@@ -1,83 +1,127 @@
 import SwiftUI
 
 /// Apple TV app–style banner at the top of Home and of every library page (mirrored for
-/// Arabic): full-screen artwork, the text block on the reading side (bottom-right), the rating
-/// between laurels on the other side, page dots above the rows, and a glass chip with the page
-/// name while the banner has focus. Auto-advances every 8 s while idle; loops.
+/// Arabic): full-screen artwork that bleeds under the first rows and fades into the page's
+/// tint, the text block on the reading side (bottom-right), the rating between laurels on the
+/// other side, page dots, and a glass chip with the page name (shown by `BannerPage` while the
+/// banner has focus). Left / Right page (the next item comes from the left); auto-advances
+/// every 8 s while idle; loops. Text never shows before the artwork.
 struct HeroBanner: View {
-    enum Control: Hashable { case play, add, info, next }
+    enum Control: Hashable { case play, add, info, next, edgeStart, edgeEnd }
 
     let items: [BannerItem]
     let client: PlexServerClient
     /// «الرئيسية» on Home, the library name on a library page.
     let chipTitle: String
     var focus: FocusState<Control?>.Binding
+    @Binding var index: Int
+    var chipVisible: Bool
+    var onInfo: (BannerItem) -> Void
+
     /// Height of the banner block in the page (the first row peeks under it); the artwork
-    /// itself always covers the whole screen.
+    /// runs further, under the rows.
     static let height: CGFloat = 860
+    static let artHeight: CGFloat = 1200
 
     @Environment(ProfileStore.self) private var store
-    @State private var index = 0
     @State private var step = 1
     @State private var generation = 0
     @State private var textVisible = true
     @State private var interactions = 0
     @State private var playTargets: [String: PlexItem] = [:]
     @State private var isStartingPlayback = false
+    /// Items whose low-res artwork is in memory (their text may show).
+    @State private var ready: Set<String> = []
 
-    private var current: BannerItem { items[min(index, items.count - 1)] }
-    private var hasFocus: Bool { focus.wrappedValue != nil }
+    private var current: BannerItem { items[min(max(index, 0), items.count - 1)] }
+
+    nonisolated static func lowResURL(_ item: BannerItem, client: PlexServerClient) -> URL? {
+        client.imageURL(item.display.backdropPath, width: 480, height: 270)
+    }
+    nonisolated static func fullResURL(_ item: BannerItem, client: PlexServerClient) -> URL? {
+        client.imageURL(item.display.backdropPath, width: 1920, height: 1080)
+    }
+
+    /// Before the banner first shows: the low-res artwork of the first three slides and the
+    /// full-res one of the first, so the text never appears on black.
+    nonisolated static func preload(_ items: [BannerItem], client: PlexServerClient) async {
+        await withTaskGroup(of: Void.self) { group in
+            for item in items.prefix(3) {
+                group.addTask { if let url = lowResURL(item, client: client) { _ = await ImageLoader.shared.image(for: url) } }
+            }
+            if let first = items.first {
+                group.addTask { if let url = fullResURL(first, client: client) { _ = await ImageLoader.shared.image(for: url) } }
+            }
+        }
+    }
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
             backdrop
-            textBlock
-                .padding(.leading, CardKind.inset)
-                .padding(.bottom, 110)
-                .opacity(textVisible ? 1 : 0)
-            rating
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .padding(.trailing, CardKind.inset)
-                .padding(.bottom, 130)
-                .opacity(textVisible ? 1 : 0)
+            Group {
+                textBlock
+                    .padding(.leading, CardKind.inset)
+                    .padding(.bottom, 110)
+                rating
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.trailing, CardKind.inset)
+                    .padding(.bottom, 130)
+            }
+            .opacity(textVisible && ready.contains(current.id) ? 1 : 0)
             pageDots
                 .frame(maxWidth: .infinity)
                 .padding(.bottom, 36)
         }
         .frame(width: 1920, height: Self.height, alignment: .bottom)
         .overlay(alignment: .topLeading) { chip }
-        .onChange(of: focus.wrappedValue) { _, _ in interactions += 1 }
+        .onChange(of: focus.wrappedValue) { old, new in
+            interactions += 1
+            handleEdges(from: old, to: new)
+        }
         .onChange(of: items.map(\.id)) { _, ids in if index >= ids.count { index = 0 } }
-        .task(id: current.id) { await resolvePlayTarget(current) }
+        .task(id: current.id) { await prepare() }
         .task(id: "\(index)-\(interactions)") { await autoAdvance() }
     }
 
     // MARK: Layers
 
-    /// Full screen (1920×1080) from the top of the block, so it runs behind the peeking row.
+    /// Blurred low-res first, then the full-res cross-fades in. Pushes in horizontally when
+    /// paging; fades out at the bottom into the page tint (no hard edge).
     private var backdrop: some View {
         ZStack {
-            Color.black
-            RemoteImage(url: client.imageURL(current.display.backdropPath, width: 1920, height: 1080))
-                .frame(width: 1920, height: 1080)
-                .id(current.id)
-                .transition(.asymmetric(
-                    insertion: .modifier(active: PushModifier(x: CGFloat(step) * -1920), identity: PushModifier(x: 0)),
-                    removal: .modifier(active: PushModifier(x: CGFloat(step) * 1920 * 0.3), identity: PushModifier(x: 0))))
-                .zIndex(Double(generation))
-            // Dark only on the text side (bottom-right) and the bottom.
+            ZStack {
+                RemoteImage(url: Self.lowResURL(current, client: client))
+                    .blur(radius: 24, opaque: true)
+                RemoteImage(url: Self.fullResURL(current, client: client))
+            }
+            .frame(width: 1920, height: 1080)
+            .clipped()
+            .frame(width: 1920, height: Self.artHeight, alignment: .top)
+            .id(current.id)
+            .transition(.asymmetric(
+                insertion: .modifier(active: PushModifier(x: CGFloat(step) * -1920), identity: PushModifier(x: 0)),
+                removal: .modifier(active: PushModifier(x: CGFloat(step) * 1920 * 0.3), identity: PushModifier(x: 0))))
+            .zIndex(Double(generation))
+
+            // Dark only on the text side (bottom-right).
             LinearGradient(stops: [
-                .init(color: .black.opacity(0.78), location: 0),
-                .init(color: .black.opacity(0.45), location: 0.3),
+                .init(color: .black.opacity(0.7), location: 0),
+                .init(color: .black.opacity(0.4), location: 0.3),
                 .init(color: .clear, location: 0.6),
             ], startPoint: .trailing, endPoint: .leading)
             LinearGradient(stops: [
-                .init(color: .clear, location: 0.4),
-                .init(color: .black.opacity(0.55), location: 0.72),
-                .init(color: .black, location: 1),
+                .init(color: .clear, location: 0.35),
+                .init(color: .black.opacity(0.35), location: 0.6),
+                .init(color: .clear, location: 1),
             ], startPoint: .top, endPoint: .bottom)
         }
-        .frame(width: 1920, height: 1080)
+        .frame(width: 1920, height: Self.artHeight)
+        // Long soft fade into the page below.
+        .mask(LinearGradient(stops: [
+            .init(color: .black, location: 0),
+            .init(color: .black, location: 0.5),
+            .init(color: .clear, location: 1),
+        ], startPoint: .top, endPoint: .bottom))
         .clipped()
         .environment(\.layoutDirection, .leftToRight)
         .frame(width: 1920, height: Self.height, alignment: .top)
@@ -139,6 +183,8 @@ struct HeroBanner: View {
 
     private var buttons: some View {
         HStack(spacing: 20) {
+            edgeTarget(.edgeStart)
+
             Button(action: play) {
                 HStack(spacing: 12) {
                     Image(systemName: "play.fill")
@@ -154,8 +200,8 @@ struct HeroBanner: View {
             .buttonStyle(GlassCircleButtonStyle())
             .focused(focus, equals: .add)
 
-            NavigationLink(value: DetailRoute(item: current.display, sourceID: "banner|\(current.id)",
-                                              context: BrowseContext(rowID: "banner-\(chipTitle)", items: items.map(\.display)))) {
+            // A plain Button (pushed by the page), so the glyph renders in every state.
+            Button { onInfo(current) } label: {
                 Image(systemName: "info")
             }
             .buttonStyle(GlassCircleButtonStyle())
@@ -166,8 +212,33 @@ struct HeroBanner: View {
                     .buttonStyle(GlassCircleButtonStyle())
                     .focused(focus, equals: .next)
             }
+
+            edgeTarget(.edgeEnd)
         }
         .focusSection()
+    }
+
+    /// Invisible focus target just past either end of the button row: Right from the first
+    /// button pages back, Left from the last pages forward (Arabic).
+    private func edgeTarget(_ control: Control) -> some View {
+        Color.white.opacity(0.001)
+            .frame(width: 6, height: 76)
+            .focusable(items.count > 1)
+            .focused(focus, equals: control)
+    }
+
+    private func handleEdges(from old: Control?, to new: Control?) {
+        let lastButton: Control = items.count > 1 ? .next : .info
+        switch new {
+        case .edgeStart?:
+            if let old, old != .edgeEnd { go(-1) }
+            DispatchQueue.main.async { focus.wrappedValue = .play }
+        case .edgeEnd?:
+            if let old, old != .edgeStart { go(+1) }
+            DispatchQueue.main.async { focus.wrappedValue = lastButton }
+        default:
+            break
+        }
     }
 
     /// The rating between laurels on the side opposite the text (MAL for anime, IMDb / TMDB…).
@@ -206,7 +277,7 @@ struct HeroBanner: View {
         .allowsHitTesting(false)
     }
 
-    /// Glass chip with the page name, only while the banner has focus.
+    /// Glass chip with the page name, only while the banner has focus (after the scroll settles).
     private var chip: some View {
         Text(chipTitle)
             .font(.system(size: 24, weight: .semibold))
@@ -219,8 +290,7 @@ struct HeroBanner: View {
             }
             .padding(.top, 50)
             .padding(.leading, CardKind.inset)
-            .opacity(hasFocus ? 1 : 0)
-            .animation(.easeInOut(duration: 0.3).delay(hasFocus ? 0.35 : 0), value: hasFocus)
+            .opacity(chipVisible ? 1 : 0)
             .allowsHitTesting(false)
     }
 
@@ -233,7 +303,7 @@ struct HeroBanner: View {
         return ArabicFormat.joined(parts)
     }
 
-    /// Resolution and HDR of the file Play starts (movies; shows show none until resolved).
+    /// Resolution and HDR of the file Play starts.
     private func qualityBadges(_ item: PlexItem) -> [String] {
         let target = playTargets[current.id] ?? item
         var out: [String] = []
@@ -259,6 +329,7 @@ struct HeroBanner: View {
 
     // MARK: Actions
 
+    /// Horizontal push (~0.35 s), then the text fades back in (~0.3 s).
     private func go(_ delta: Int) {
         guard items.count > 1 else { return }
         step = delta
@@ -288,7 +359,19 @@ struct HeroBanner: View {
         }
     }
 
-    private func resolvePlayTarget(_ item: BannerItem) async {
+    /// The slide's artwork (and its neighbours'), then what Play starts.
+    private func prepare() async {
+        let item = current
+        if !ready.contains(item.id) {
+            if let url = Self.lowResURL(item, client: client) { _ = await ImageLoader.shared.image(for: url) }
+            ready.insert(item.id)
+        }
+        for offset in [1, 2] where items.count > offset {
+            let next = items[(index + offset) % items.count]
+            if let url = Self.lowResURL(next, client: client) { _ = await ImageLoader.shared.image(for: url) }
+            if offset == 1, let url = Self.fullResURL(next, client: client) { _ = await ImageLoader.shared.image(for: url) }
+            ready.insert(next.id)
+        }
         guard playTargets[item.id] == nil else { return }
         if item.display.isShow {
             if let episode = await client.episodeToPlay(showKey: item.display.ratingKey) { playTargets[item.id] = episode }

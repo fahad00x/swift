@@ -406,6 +406,8 @@ struct PlexItem: Codable, Identifiable, Hashable {
     let year: Int?
     let thumb: String?
     let art: String?
+    /// Playlists: a mosaic of their items ("/playlists/{id}/composite/{stamp}").
+    let composite: String?
     let parentThumb: String?
     let grandparentThumb: String?
     let grandparentArt: String?
@@ -461,7 +463,7 @@ struct PlexItem: Codable, Identifiable, Hashable {
     func hash(into hasher: inout Hasher) { hasher.combine(ratingKey) }
 
     enum CodingKeys: String, CodingKey {
-        case ratingKey, key, type, title, summary, tagline, year, thumb, art, parentThumb, grandparentThumb,
+        case ratingKey, key, type, title, summary, tagline, year, thumb, art, composite, parentThumb, grandparentThumb,
              grandparentArt, duration, viewOffset, viewCount, leafCount, viewedLeafCount, childCount, index,
              parentIndex, parentTitle, grandparentTitle, parentRatingKey, grandparentRatingKey, contentRating,
              audienceRating, rating, audienceRatingImage, ratingImage, studio, originallyAvailableAt, guid, addedAt, updatedAt, subtype, lastViewedAt, librarySectionID
@@ -485,6 +487,7 @@ struct PlexItem: Codable, Identifiable, Hashable {
         year = c.lenientInt(forKey: .year)
         thumb = c.lenientString(forKey: .thumb)
         art = c.lenientString(forKey: .art)
+        composite = c.lenientString(forKey: .composite)
         parentThumb = c.lenientString(forKey: .parentThumb)
         grandparentThumb = c.lenientString(forKey: .grandparentThumb)
         grandparentArt = c.lenientString(forKey: .grandparentArt)
@@ -607,6 +610,7 @@ extension PlexItem {
     var posterPath: String? {
         if isEpisode { return grandparentThumb ?? parentThumb ?? thumb }
         if isSeason { return thumb ?? parentThumb }
+        if type == "playlist" { return thumb ?? composite }
         return thumb
     }
 

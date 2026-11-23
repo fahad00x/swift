@@ -23,31 +23,37 @@ struct ProfilePickerView: View {
         }
     }
 
+    @State private var chosenID: String?
+    @State private var choosingToEdit = false
+
+    /// Circle 170, gap 25 (pitch 195).
+    private let circle: CGFloat = 170
+
     var body: some View {
         ZStack {
-            LinearGradient(colors: [Color(white: 0.1), .black], startPoint: .top, endPoint: .bottom)
-                .ignoresSafeArea()
+            // Like the system user picker: only a blurred image, one centred row of circles.
+            ProfilePickerBackdrop(client: client, sections: sections)
 
-            VStack(spacing: 80) {
-                Text("مين يشاهد؟")
-                    .font(.system(size: 66, weight: .bold))
-
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(alignment: .top, spacing: 64) {
-                        ForEach(store.profiles) { profile in tile(profile) }
-                        addTile
-                    }
-                    .padding(.horizontal, 90)
-                    .padding(.vertical, 50)
-                    .frame(minWidth: 1920)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 25) {
+                    ForEach(store.profiles) { profile in tile(profile) }
+                    addTile
                 }
-                .scrollClipDisabled()
-                .focusSection()
-                .defaultFocus($focused, store.profiles.first?.id)
+                .padding(.horizontal, 80)
+                .padding(.vertical, 40)
+                .frame(minWidth: 1920)
+            }
+            .scrollClipDisabled()
+            .focusSection()
+            .defaultFocus($focused, store.profiles.first?.id)
+            .frame(maxHeight: .infinity)
 
-                Text("اضغط مطوّلاً على أي مستخدم لتعديله أو حذفه")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.45))
+            // Optional «تعديل» glass pill at the bottom centre.
+            VStack {
+                Spacer()
+                Button("تعديل") { choosingToEdit = true }
+                    .buttonStyle(PickerGlassPillStyle())
+                    .padding(.bottom, 70)
             }
         }
         .fullScreenCover(item: $editor) { target in
@@ -59,6 +65,12 @@ struct ProfilePickerView: View {
             }
         }
         .pinRequest($pin)
+        .confirmationDialog("تعديل مستخدم", isPresented: $choosingToEdit) {
+            ForEach(store.profiles) { profile in
+                Button(profile.name) { authorize(profile) { editor = .edit(profile) } }
+            }
+            Button("إلغاء", role: .cancel) {}
+        }
         .alert("حذف «\(pendingDelete?.name ?? "")»؟", isPresented: Binding(
             get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }
         )) {
@@ -74,11 +86,11 @@ struct ProfilePickerView: View {
 
     private func tile(_ profile: UserProfile) -> some View {
         let isFocused = focused == profile.id
-        return VStack(spacing: 30) {
+        return VStack(spacing: 22) {
             Button { choose(profile) } label: {
-                ProfileAvatar(profile: profile, size: 230)
+                ProfileInitialsCircle(profile: profile, size: circle)
             }
-            .buttonStyle(.card)
+            .buttonStyle(PickerCircleStyle(chosen: chosenID == profile.id))
             .focused($focused, equals: profile.id)
             .contextMenu {
                 Button("تعديل", systemImage: "pencil") { authorize(profile) { editor = .edit(profile) } }
@@ -89,52 +101,55 @@ struct ProfilePickerView: View {
                 }
             }
 
-            HStack(spacing: 10) {
-                if profile.hasPIN { Image(systemName: "lock.fill").font(.caption) }
-                Text(profile.name).lineLimit(1)
-            }
-            .font(.title3.weight(isFocused ? .bold : .medium))
-            .foregroundStyle(isFocused ? .white : .white.opacity(0.6))
-            if profile.isKids {
-                Text("أطفال")
-                    .font(.caption2.weight(.bold))
-                    .padding(.horizontal, 14).padding(.vertical, 4)
-                    .background(Capsule().fill(Color.white.opacity(0.15)))
-            }
+            Text(profile.name)
+                .font(.system(size: 22, weight: .medium))
+                .foregroundStyle(isFocused ? Color.white : Color.white.opacity(0.6))
+                .lineLimit(1)
         }
-        .frame(width: 260)
+        .frame(width: circle)
         .animation(.easeOut(duration: 0.2), value: isFocused)
     }
 
+    /// «+» in a translucent glass circle.
     private var addTile: some View {
         let isFocused = focused == "add"
-        return VStack(spacing: 30) {
+        return VStack(spacing: 22) {
             Button { editor = .create } label: {
                 ZStack {
-                    Circle().fill(Color.white.opacity(0.12))
+                    Circle().fill(.ultraThinMaterial)
+                    Circle().strokeBorder(Color.white.opacity(0.22), lineWidth: 1)
                     Image(systemName: "plus")
-                        .font(.system(size: 90, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.85))
+                        .font(.system(size: 60, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.9))
                 }
-                .frame(width: 230, height: 230)
+                .frame(width: circle, height: circle)
             }
-            .buttonStyle(.card)
+            .buttonStyle(PickerCircleStyle(chosen: false))
             .focused($focused, equals: "add")
 
-            Text("إضافة مستخدم")
-                .font(.title3.weight(isFocused ? .bold : .medium))
-                .foregroundStyle(isFocused ? .white : .white.opacity(0.6))
+            Text("إضافة")
+                .font(.system(size: 22, weight: .medium))
+                .foregroundStyle(isFocused ? Color.white : Color.white.opacity(0.6))
         }
-        .frame(width: 260)
+        .frame(width: circle)
+        .animation(.easeOut(duration: 0.2), value: isFocused)
     }
 
     private func choose(_ profile: UserProfile) {
         guard profile.hasPIN else {
-            store.activate(profile)
+            enter(profile)
             return
         }
         pin = PinRequest(title: "أدخل رمز «\(profile.name)»", profiles: [profile]) {
-            store.activate(profile)
+            enter(profile)
+        }
+    }
+
+    /// The chosen circle zooms slightly, then the screen cross-fades into Home (~0.4 s).
+    private func enter(_ profile: UserProfile) {
+        withAnimation(.easeOut(duration: 0.2)) { chosenID = profile.id }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            withAnimation(.easeInOut(duration: 0.4)) { store.activate(profile) }
         }
     }
 
@@ -144,5 +159,62 @@ struct ProfilePickerView: View {
         guard !editors.isEmpty else { action(); return }
         let subtitle = profile.isKids ? "حساب الأطفال يحتاج رمز المستخدم الرئيسي" : nil
         pin = PinRequest(title: "أدخل الرمز لتعديل «\(profile.name)»", subtitle: subtitle, profiles: editors, onSuccess: action)
+    }
+}
+
+/// Focus: the circle scales ~1.12 with a soft shadow and a subtle light rim (no ring).
+private struct PickerCircleStyle: ButtonStyle {
+    let chosen: Bool
+
+    func makeBody(configuration: Configuration) -> some View { CircleBody(configuration: configuration, chosen: chosen) }
+
+    private struct CircleBody: View {
+        let configuration: ButtonStyleConfiguration
+        let chosen: Bool
+        @Environment(\.isFocused) private var isFocused
+
+        var body: some View {
+            configuration.label
+                .clipShape(Circle())
+                .overlay {
+                    Circle()
+                        .strokeBorder(LinearGradient(colors: [.white.opacity(0.5), .white.opacity(0.05)],
+                                                     startPoint: .top, endPoint: .bottom), lineWidth: 1.5)
+                        .opacity(isFocused ? 1 : 0)
+                }
+                .contentShape(Circle())
+                .scaleEffect(chosen ? 1.2 : (configuration.isPressed ? 1.06 : (isFocused ? 1.12 : 1)))
+                .shadow(color: .black.opacity(isFocused ? 0.45 : 0), radius: 22, y: 12)
+                .animation(.easeOut(duration: 0.2), value: isFocused)
+        }
+    }
+}
+
+/// Small glass pill («تعديل»).
+private struct PickerGlassPillStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { PillBody(configuration: configuration) }
+
+    private struct PillBody: View {
+        let configuration: ButtonStyleConfiguration
+        @Environment(\.isFocused) private var isFocused
+
+        var body: some View {
+            configuration.label
+                .font(.system(size: 24, weight: .medium))
+                .foregroundStyle(isFocused ? Color.black : Color.white.opacity(0.85))
+                .environment(\.colorScheme, isFocused ? .light : .dark)
+                .padding(.horizontal, 34)
+                .frame(height: 56)
+                .background {
+                    if isFocused {
+                        Capsule().fill(Color.white)
+                    } else {
+                        Capsule().fill(.ultraThinMaterial)
+                        Capsule().strokeBorder(Color.white.opacity(0.2), lineWidth: 1)
+                    }
+                }
+                .scaleEffect(isFocused ? 1.06 : 1)
+                .animation(.easeOut(duration: 0.15), value: isFocused)
+        }
     }
 }

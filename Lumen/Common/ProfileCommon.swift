@@ -80,3 +80,73 @@ enum ProfileGate {
         return list
     }
 }
+
+// MARK: - «مين يشاهد؟» pieces (system user picker look), shared by both apps
+
+/// Profile circle: initials (up to 2 letters) on a soft, muted gradient of the profile colour,
+/// with a small lock badge when it has a PIN.
+struct ProfileInitialsCircle: View {
+    let profile: UserProfile
+    var size: CGFloat = 170
+
+    static func initials(_ name: String) -> String {
+        let words = name.split(whereSeparator: { $0.isWhitespace }).prefix(2)
+        let letters = words.compactMap(\.first).map(String.init).joined()
+        return letters.isEmpty ? "؟" : letters
+    }
+
+    var body: some View {
+        let color = Color(hex: profile.colorHex)
+        ZStack {
+            Circle().fill(Color(white: 0.32))
+            Circle().fill(LinearGradient(colors: [color.opacity(0.55), color.opacity(0.3)],
+                                         startPoint: .top, endPoint: .bottom))
+            Circle().fill(LinearGradient(colors: [.white.opacity(0.12), .clear], startPoint: .top, endPoint: .center))
+            Text(Self.initials(profile.name))
+                .font(.system(size: size * 0.38, weight: .semibold))
+                .foregroundStyle(.white)
+                .minimumScaleFactor(0.5)
+        }
+        .frame(width: size, height: size)
+        .overlay(alignment: .bottomTrailing) {
+            if profile.hasPIN {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: size * 0.11, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: size * 0.26, height: size * 0.26)
+                    .background(Circle().fill(.ultraThinMaterial))
+                    .overlay(Circle().strokeBorder(Color.white.opacity(0.25), lineWidth: 1))
+                    .offset(x: -size * 0.02, y: -size * 0.02)
+            }
+        }
+    }
+}
+
+/// Full-screen, heavily blurred artwork with a slight darkening; black until it loads.
+struct ProfilePickerBackdrop: View {
+    let client: PlexServerClient?
+    let sections: [PlexDirectory]
+    @State private var url: URL?
+
+    var body: some View {
+        ZStack {
+            Color.black
+            RemoteImage(url: url)
+                .blur(radius: 60, opaque: true)
+                .scaleEffect(1.15)
+            Color.black.opacity(0.35)
+        }
+        .ignoresSafeArea()
+        .task {
+            // The newest title of the first library with artwork.
+            guard let client else { return }
+            for section in sections {
+                let items = (try? await client.recentlyAdded(section: section, limit: 6)) ?? []
+                if let art = items.compactMap(\.backdropPath).first {
+                    withAnimation(.easeIn(duration: 0.4)) { url = client.imageURL(art, width: 640, height: 360) }
+                    return
+                }
+            }
+        }
+    }
+}
