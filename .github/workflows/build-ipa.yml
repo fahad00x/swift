@@ -1,0 +1,122 @@
+name: Build unsigned IPA (iPhone)
+
+# Builds the iPhone app for real devices (iphoneos SDK) without code signing and packages it
+# as an unsigned IPA (Payload/Lumen.app → Lumen.ipa), uploaded as a workflow artifact.
+# Sign and install it with a free Apple ID in Sideloadly (or AltStore).
+
+on:
+  workflow_dispatch:
+    inputs:
+      bundle_id:
+        description: "Bundle identifier written into the IPA"
+        type: string
+        default: com.fahad.lumen
+  # Manual only (Actions → Build unsigned IPA → Run workflow); TestFlight is the main channel now.
+
+# Needed to publish the IPA to the "ipa-latest" release (one fixed download link).
+permissions:
+  contents: write
+
+concurrency:
+  group: build-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SCHEME: LumenMobile
+  # A separate ID from the App Store / TestFlight one (com.fahad00x.lumen), so a free Apple ID
+  # can sign it. Only the packaged IPA is changed; the project keeps its own ID.
+  IPA_BUNDLE_ID: ${{ inputs.bundle_id || 'com.fahad.lumen' }}
+  IPA_NAME: Lumen
+
+jobs:
+  ipa:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select latest stable Xcode
+        run: |
+          XC=$(ls -d /Applications/Xcode_*.app 2>/dev/null | grep -vi -e beta -e rc | sort -V | tail -1)
+          if [ -n "$XC" ]; then sudo xcode-select -s "$XC"; fi
+          xcodebuild -version
+
+      - name: Install XcodeGen and generate the project
+        run: |
+          if [ -f project.yml ]; then
+            brew install xcodegen
+            xcodegen generate
+          fi
+
+      - name: Resolve Swift packages
+        run: xcodebuild -resolvePackageDependencies -project Lumen.xcodeproj -scheme "$SCHEME"
+
+      - name: Archive for iPhone (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project Lumen.xcodeproj -scheme "$SCHEME" \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/$SCHEME.xcarchive" \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            2>&1 | tee "$RUNNER_TEMP/archive.log" | grep -E "error:|ARCHIVE" || true
+          grep -q "ARCHIVE SUCCEEDED" "$RUNNER_TEMP/archive.log"
+
+      - name: Package unsigned IPA
+        run: |
+          APP=$(ls -d "$RUNNER_TEMP/$SCHEME.xcarchive/Products/Applications/"*.app | head -1)
+          test -n "$APP"
+          lipo -info "$APP/$(plutil -extract CFBundleExecutable raw "$APP/Info.plist")"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/$IPA_NAME.app"
+          PLIST="$RUNNER_TEMP/ipa/Payload/$IPA_NAME.app/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $IPA_BUNDLE_ID" "$PLIST"
+          # Unsigned: no leftover signatures or provisioning profile.
+          find "$RUNNER_TEMP/ipa/Payload" -name "_CodeSignature" -type d -prune -exec rm -rf {} +
+          rm -f "$RUNNER_TEMP/ipa/Payload/$IPA_NAME.app/embedded.mobileprovision"
+          (cd "$RUNNER_TEMP/ipa" && zip -qry "$GITHUB_WORKSPACE/$IPA_NAME.ipa" Payload)
+          ls -lh "$IPA_NAME.ipa"
+          {
+            echo "## 📱 $IPA_NAME.ipa (unsigned)"
+            echo
+            echo "- Bundle ID: \`$IPA_BUNDLE_ID\`"
+            echo "- Version: $(plutil -extract CFBundleShortVersionString raw "$PLIST") (${{ github.run_number }})"
+            echo "- Size: $(du -h "$IPA_NAME.ipa" | cut -f1)"
+            echo
+            echo "Download it from **Artifacts** at the bottom of this page, unzip, then sign/install with Sideloadly."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lumen-iPhone-unsigned-ipa
+          path: ${{ env.IPA_NAME }}.ipa
+          if-no-files-found: error
+          retention-days: 30
+
+      # Same link every time, downloads the .ipa itself (no zip):
+      # https://github.com/<owner>/<repo>/releases/download/ipa-latest/Lumen.ipa
+      - name: Publish to the ipa-latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ipa-latest
+        run: |
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+              --title "Lumen iPhone — unsigned IPA" --notes "Latest unsigned IPA for Sideloadly."
+          fi
+          gh release upload "$TAG" "$IPA_NAME.ipa" --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --title "Lumen iPhone — رقم البناء ${{ github.run_number }}" \
+            --notes "Build ${{ github.run_number }} · ${GITHUB_SHA::7} · $(date -u '+%Y-%m-%d %H:%M UTC'). Bundle ID: $IPA_BUNDLE_ID"
+          echo "Direct link: https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$IPA_NAME.ipa" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-ipa-log
+          path: ${{ runner.temp }}/archive.log
+          if-no-files-found: ignore

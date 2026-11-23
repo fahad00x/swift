@@ -1,0 +1,240 @@
+name: TestFlight
+
+# Builds Lumen (Apple TV and iPhone, one App Store Connect app), signs it automatically with an App Store Connect API key (cloud signing,
+# no manual certificates or profiles) and uploads it to TestFlight.
+# Runs on demand, and every two months so a fresh build is always available
+# (TestFlight builds expire after 90 days).
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: "Which app to upload"
+        type: choice
+        options: [both, tvOS, iOS]
+        default: both
+      signed_archive:
+        description: "Sign the archive with automatic signing (App Store Connect API key). Off = ad-hoc archive, signed only at export."
+        type: boolean
+        default: true
+      icloud:
+        description: "Include iCloud/CloudKit (profile sync). Turn off only to upload a build without iCloud."
+        type: boolean
+        default: true
+  schedule:
+    - cron: "0 3 1 */2 *"
+
+concurrency:
+  group: testflight
+  cancel-in-progress: false
+
+jobs:
+  testflight:
+    name: TestFlight (${{ matrix.platform }})
+    runs-on: macos-15
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.platforms == 'tvOS' && '["tvOS"]' || (github.event_name == 'workflow_dispatch' && inputs.platforms == 'iOS' && '["iOS"]' || '["tvOS","iOS"]')) }}
+    env:
+      SCHEME: ${{ matrix.platform == 'iOS' && 'LumenMobile' || 'Lumen' }}
+      DESTINATION: generic/platform=${{ matrix.platform }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      BUILD_NUMBER: ${{ github.run_number }}
+      # Scheduled runs have no inputs: sign the archive.
+      SIGNED_ARCHIVE: ${{ github.event_name != 'workflow_dispatch' && 'true' || (inputs.signed_archive && 'true' || 'false') }}
+      # Scheduled runs have no inputs: iCloud stays on.
+      ICLOUD: ${{ github.event_name != 'workflow_dispatch' && 'true' || (inputs.icloud && 'true' || 'false') }}
+    steps:
+      - name: Check secrets
+        run: |
+          missing=()
+          for name in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8 APPLE_TEAM_ID; do
+            if [ -z "${!name}" ]; then missing+=("$name"); fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            msg="Missing GitHub secrets: ${missing[*]}. Add them under Settings → Secrets and variables → Actions (see SETUP-TESTFLIGHT.md)."
+            echo "::error title=Missing secrets::$msg"
+            {
+              echo "## ❌ Missing secrets / الـ Secrets ناقصة"
+              echo
+              echo "$msg"
+              echo
+              echo "أضفها من: Settings ← Secrets and variables ← Actions ← New repository secret. التفاصيل في SETUP-TESTFLIGHT.md."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if ! [[ "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]]; then
+            echo "::error title=Invalid APPLE_TEAM_ID::APPLE_TEAM_ID must be the 10-character Team ID (e.g. AB12CD34EF), not your name or email."
+            exit 1
+          fi
+          echo "All secrets are present."
+
+      - uses: actions/checkout@v4
+
+      - name: Write App Store Connect API key
+        run: |
+          KEY_DIR="$RUNNER_TEMP/asc"
+          mkdir -p "$KEY_DIR"
+          KEY_PATH="$KEY_DIR/AuthKey_${ASC_KEY_ID}.p8"
+          if printf '%s' "$ASC_KEY_P8" | grep -q "BEGIN PRIVATE KEY"; then
+            printf '%s\n' "$ASC_KEY_P8" > "$KEY_PATH"
+          elif printf '%s' "$ASC_KEY_P8" | base64 --decode > "$KEY_PATH" 2>/dev/null && grep -q "BEGIN PRIVATE KEY" "$KEY_PATH"; then
+            echo "ASC_KEY_P8 was base64-encoded; decoded it."
+          else
+            echo "::error title=Invalid ASC_KEY_P8::ASC_KEY_P8 must contain the full contents of AuthKey_XXXX.p8, including the -----BEGIN PRIVATE KEY----- and -----END PRIVATE KEY----- lines."
+            exit 1
+          fi
+          chmod 600 "$KEY_PATH"
+          {
+            echo "ASC_KEY_PATH=$KEY_PATH"
+            echo "ARCHIVE_PATH=$RUNNER_TEMP/$SCHEME.xcarchive"
+            echo "EXPORT_PATH=$RUNNER_TEMP/export"
+          } >> "$GITHUB_ENV"
+
+      - name: Select Xcode
+        run: |
+          XC=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | grep -vi -e beta -e rc | sort -V | tail -1)
+          if [ -n "$XC" ]; then sudo xcode-select -s "$XC"; fi
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Resolve Swift packages (MPVKit)
+        run: xcodebuild -resolvePackageDependencies -project Lumen.xcodeproj -scheme Lumen
+
+      # The App Store Connect API can switch on the iCloud capability for the Bundle ID, but it
+      # can't create the iCloud container or assign it: that's a one-time manual step
+      # (SETUP-TESTFLIGHT.md, step 2b). Never fails the build.
+      - name: Enable iCloud capability on the App ID
+        if: env.ICLOUD == 'true'
+        continue-on-error: true
+        env:
+          BUNDLE_ID: com.fahad00x.lumen
+        run: python3 scripts/asc_enable_icloud.py
+
+      - name: Archive (build ${{ github.run_number }})
+        run: |
+          set -o pipefail
+          AUTH=(-authenticationKeyPath "$ASC_KEY_PATH" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID")
+          archive() {
+            rm -rf "$ARCHIVE_PATH"
+            xcodebuild archive \
+              -project Lumen.xcodeproj -scheme "$SCHEME" \
+              -configuration Release \
+              -destination "$DESTINATION" \
+              -archivePath "$ARCHIVE_PATH" \
+              DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+              CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+              "$@" 2>&1 | tee "$RUNNER_TEMP/archive.log" | grep -E "error:|warning: .*sign|ARCHIVE" || true
+            grep -q "ARCHIVE SUCCEEDED" "$RUNNER_TEMP/archive.log"
+          }
+          if [ "$SIGNED_ARCHIVE" = "true" ] && \
+             archive CODE_SIGN_STYLE=Automatic -allowProvisioningUpdates "${AUTH[@]}"; then
+            # Automatic signing with the API key (certificates and profiles created as needed).
+            echo "Signed archive (automatic signing)."
+          elif [ "$SIGNED_ARCHIVE" = "true" ] && grep -q "icloud-container-identifiers" "$RUNNER_TEMP/archive.log"; then
+            echo "::error title=iCloud container not assigned::The App ID com.fahad00x.lumen has iCloud on, but the container iCloud.com.fahad00x.lumen is not assigned to it. developer.apple.com → Identifiers → App IDs → com.fahad00x.lumen → iCloud → Edit → tick iCloud.com.fahad00x.lumen → Save (create the container under iCloud Containers first if it's missing). SETUP-TESTFLIGHT.md, step 2b."
+            exit 1
+          elif [ "$ICLOUD" = "true" ]; then
+            [ "$SIGNED_ARCHIVE" = "true" ] && echo "::warning title=Signing::Automatic signing during archive failed (often: no registered device for a development profile); using an ad-hoc archive signed for the App Store at export."
+            # Ad-hoc signature ("Sign to Run Locally"): no certificate or device needed, but the
+            # iCloud entitlements are embedded, so the export step keeps them when it signs for
+            # the App Store with a cloud-managed certificate.
+            if ! archive CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- PROVISIONING_PROFILE_SPECIFIER= \
+                         CODE_SIGNING_REQUIRED=NO AD_HOC_CODE_SIGNING_ALLOWED=YES; then
+              echo "::warning title=iCloud::Ad-hoc signed archive failed; building without iCloud entitlements (profiles stay on the device only)."
+              archive CODE_SIGNING_ALLOWED=NO
+            fi
+          else
+            # Unsigned archive: Xcode signs it during export with a cloud-managed distribution
+            # certificate. No iCloud entitlements: profiles are kept on the device only.
+            archive CODE_SIGNING_ALLOWED=NO
+          fi
+
+      # ITMS-90208 guard: every framework's Info.plist MinimumOSVersion must match its binary's
+      # minos, and none may need a newer OS than the app.
+      - name: Embedded frameworks minimum OS
+        run: bash scripts/check_framework_minos.sh "$(ls -d "$ARCHIVE_PATH"/Products/Applications/*.app | head -1)"
+
+      - name: Check iCloud entitlements in the archive
+        run: |
+          APP=$(ls -d "$ARCHIVE_PATH"/Products/Applications/*.app | head -1)
+          ENT=$(codesign -d --entitlements :- "$APP" 2>/dev/null || true)
+          if printf '%s' "$ENT" | grep -q "iCloud.com.fahad00x.lumen"; then
+            echo "iCloud container entitlement present."
+          else
+            echo "::warning title=iCloud::The archive has no iCloud entitlement; profile sync will be off in this build (data stays on the device)."
+          fi
+
+      - name: Export, sign and upload to TestFlight
+        run: |
+          set -o pipefail
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>${APPLE_TEAM_ID}</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>uploadSymbols</key><true/>
+            <key>iCloudContainerEnvironment</key><string>Production</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath "$ARCHIVE_PATH" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$EXPORT_PATH" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" 2>&1 | tee "$RUNNER_TEMP/export.log"
+          if ! grep -qE "EXPORT SUCCEEDED|Upload succeeded|Uploaded" "$RUNNER_TEMP/export.log"; then
+            if grep -q "Cloud signing permission error" "$RUNNER_TEMP/export.log"; then
+              echo "::error title=API key is not Admin::Cloud signing needs an App Store Connect API key with Admin access. App Store Connect → Users and Access → Integrations → Team Keys → generate a key with Access: Admin, then update the ASC_KEY_ID and ASC_KEY_P8 secrets (SETUP-TESTFLIGHT.md, step 4)."
+            fi
+            if grep -qiE "icloud|container" "$RUNNER_TEMP/export.log"; then
+              echo "::error title=iCloud container::Signing failed on the iCloud container. Create iCloud.com.fahad00x.lumen and assign it to the Bundle ID (SETUP-TESTFLIGHT.md, step 2b), or run the workflow with 'icloud' unchecked."
+            fi
+            exit 1
+          fi
+
+      - name: Summary
+        if: success()
+        run: |
+          VERSION=$(/usr/libexec/PlistBuddy -c "Print :ApplicationProperties:CFBundleShortVersionString" "$ARCHIVE_PATH/Info.plist")
+          {
+            echo "## ✅ ${{ matrix.platform }}: Uploaded to TestFlight / تم الرفع إلى TestFlight"
+            echo
+            echo "- Version: **$VERSION ($BUILD_NUMBER)**"
+            echo "- Bundle ID: \`com.fahad00x.lumen\`"
+            echo
+            echo "تحتاج App Store Connect حوالي 5–30 دقيقة لمعالجة النسخة، بعدها تظهر في تطبيق TestFlight على الآبل تي في."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: testflight-logs-${{ matrix.platform }}
+          path: |
+            ${{ runner.temp }}/archive.log
+            ${{ runner.temp }}/export.log
+            ${{ runner.temp }}/export/*.log
+          if-no-files-found: ignore
+
+      - name: Remove API key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/asc"

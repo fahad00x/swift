@@ -1,0 +1,140 @@
+name: Build tvOS app
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same toolchain as testflight.yml (App Store Connect requires the latest SDK).
+      - name: Select Xcode
+        run: |
+          XC=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | grep -vi -e beta -e rc | sort -V | tail -1)
+          if [ -n "$XC" ]; then sudo xcode-select -s "$XC"; fi
+          xcodebuild -version
+          ls -d /Applications/Xcode*.app
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Resolve Swift packages (MPVKit)
+        run: xcodebuild -resolvePackageDependencies -project Lumen.xcodeproj -scheme Lumen
+
+      - name: Build for Apple TV device (Release)
+        run: |
+          set -o pipefail
+          xcodebuild -project Lumen.xcodeproj -scheme Lumen \
+            -destination 'generic/platform=tvOS' \
+            -configuration Release \
+            -derivedDataPath build/device \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee device.log | grep -E "error:|BUILD" || true
+          grep -q "BUILD SUCCEEDED" device.log
+
+      - name: Check app bundle (icons, Info.plist, embedded frameworks)
+        run: |
+          APP=build/device/Build/Products/Release-appletvos/Lumen.app
+          plutil -p "$APP/Info.plist" | grep -E "CFBundleIdentifier|CFBundleVersion|CFBundleShortVersionString|ITSAppUsesNonExemptEncryption|CFBundlePrimaryIcon|UILaunchStoryboardName|TVTopShelfImage" || true
+          plutil -extract CFBundleIdentifier raw "$APP/Info.plist" | grep -qx "com.fahad00x.lumen"
+          plutil -extract ITSAppUsesNonExemptEncryption raw "$APP/Info.plist" | grep -qx "false"
+          plutil -extract CFBundleDevelopmentRegion raw "$APP/Info.plist" | grep -qx "ar"
+          test -d "$APP/ar.lproj"
+          plutil -extract CFBundleVersion raw "$APP/Info.plist" | grep -qx "${{ github.run_number }}"
+          plutil -extract CFBundleIcons.CFBundlePrimaryIcon xml1 -o /dev/null "$APP/Info.plist"
+          plutil -extract TVTopShelfImage xml1 -o /dev/null "$APP/Info.plist"
+          test -f "$APP/Assets.car"
+          test -d "$APP/LaunchScreen.storyboardc"
+          # App Store Connect rejects embedded frameworks that are static archives or that
+          # require a newer OS than the app (MPVKit ships MinimumOSVersion 100.0).
+          APP_MIN=$(plutil -extract MinimumOSVersion raw "$APP/Info.plist")
+          echo "App MinimumOSVersion: $APP_MIN"
+          bad=0
+          for fw in "$APP"/Frameworks/*.framework; do
+            [ -d "$fw" ] || continue
+            bin="$fw/$(basename "$fw" .framework)"
+            fw_min=$(plutil -extract MinimumOSVersion raw "$fw/Info.plist" 2>/dev/null || echo "missing")
+            echo "  $(basename "$fw"): MinimumOSVersion=$fw_min"
+            if [ ! -f "$bin" ] || file -b "$bin" | grep -q "ar archive"; then echo "::error::Static framework embedded: $fw"; bad=1; fi
+            if [ "$fw_min" = "missing" ] || [ "$(printf '%s\n%s\n' "$fw_min" "$APP_MIN" | sort -V | tail -1)" != "$APP_MIN" ]; then
+              echo "::error::$(basename "$fw") MinimumOSVersion ($fw_min) is higher than the app's ($APP_MIN)"; bad=1
+            fi
+          done
+          [ "$bad" = 0 ]
+          du -sh "$APP"
+
+      - name: Embedded frameworks minimum OS (tvOS)
+        run: bash scripts/check_framework_minos.sh build/device/Build/Products/Release-appletvos/Lumen.app
+
+      - name: Build for tvOS Simulator
+        run: |
+          set -o pipefail
+          xcodebuild -project Lumen.xcodeproj -scheme Lumen \
+            -destination 'generic/platform=tvOS Simulator' \
+            -configuration Debug \
+            -derivedDataPath build/sim \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee build.log | grep -E "error:|BUILD" || true
+          grep -q "BUILD SUCCEEDED" build.log
+
+      - name: Build for iPhone device (Release)
+        run: |
+          set -o pipefail
+          xcodebuild -project Lumen.xcodeproj -scheme LumenMobile \
+            -destination 'generic/platform=iOS' \
+            -configuration Release \
+            -derivedDataPath build/ios-device \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee ios-device.log | grep -E "error:|BUILD" || true
+          grep -q "BUILD SUCCEEDED" ios-device.log
+
+      - name: Check iPhone app bundle
+        run: |
+          APP=$(ls -d build/ios-device/Build/Products/Release-iphoneos/*.app | head -1)
+          echo "App: $APP"
+          plutil -extract CFBundleIdentifier raw "$APP/Info.plist" | grep -qx "com.fahad00x.lumen"
+          plutil -extract CFBundleDisplayName raw "$APP/Info.plist" | grep -qx "Lumen"
+          plutil -extract CFBundleVersion raw "$APP/Info.plist" | grep -qx "${{ github.run_number }}"
+          plutil -extract CFBundleIcons.CFBundlePrimaryIcon xml1 -o /dev/null "$APP/Info.plist"
+          plutil -extract UILaunchScreen xml1 -o /dev/null "$APP/Info.plist"
+          test -d "$APP/ar.lproj"
+          APP_MIN=$(plutil -extract MinimumOSVersion raw "$APP/Info.plist")
+          echo "App MinimumOSVersion: $APP_MIN"
+          bad=0
+          for fw in "$APP"/Frameworks/*.framework; do
+            [ -d "$fw" ] || continue
+            bin="$fw/$(basename "$fw" .framework)"
+            fw_min=$(plutil -extract MinimumOSVersion raw "$fw/Info.plist" 2>/dev/null || echo "missing")
+            echo "  $(basename "$fw"): MinimumOSVersion=$fw_min"
+            if [ ! -f "$bin" ] || file -b "$bin" | grep -q "ar archive"; then echo "::error::Static framework embedded: $fw"; bad=1; fi
+            if [ "$fw_min" = "missing" ] || [ "$(printf '%s\n%s\n' "$fw_min" "$APP_MIN" | sort -V | tail -1)" != "$APP_MIN" ]; then
+              echo "::error::$(basename "$fw") MinimumOSVersion ($fw_min) is higher than the app's ($APP_MIN)"; bad=1
+            fi
+          done
+          [ "$bad" = 0 ]
+          du -sh "$APP"
+
+      - name: Embedded frameworks minimum OS (iOS)
+        run: bash scripts/check_framework_minos.sh "$(ls -d build/ios-device/Build/Products/Release-iphoneos/*.app | head -1)"
+
+      - name: Build for iPhone Simulator
+        run: |
+          set -o pipefail
+          xcodebuild -project Lumen.xcodeproj -scheme LumenMobile \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug \
+            -derivedDataPath build/ios-sim \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee ios-sim.log | grep -E "error:|BUILD" || true
+          grep -q "BUILD SUCCEEDED" ios-sim.log

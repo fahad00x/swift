@@ -1,0 +1,165 @@
+name: Lumen
+options:
+  bundleIdPrefix: com.fahad00x
+  deploymentTarget:
+    tvOS: "17.0"
+    iOS: "17.0"
+  createIntermediateGroups: true
+  # Arabic-only app: UIKit and SwiftUI lay out right-to-left regardless of the device language.
+  developmentLanguage: ar
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0.0"
+    # CI overrides this with github.run_number (xcodebuild CURRENT_PROJECT_VERSION=...).
+    CURRENT_PROJECT_VERSION: "1"
+packages:
+  MPVKit:
+    url: https://github.com/mpvkit/MPVKit
+    exactVersion: 1.0.0
+targets:
+  Lumen:
+    type: application
+    platform: tvOS
+    sources:
+      - path: Lumen
+      # UI-independent profile storage + CloudKit sync, reusable by a future iPad / iPhone app.
+      - path: Shared
+        excludes:
+          - "**/*.ckdb"
+    # iCloud (CloudKit) for per-profile data. Container: iCloud.com.fahad00x.lumen
+    entitlements:
+      path: Lumen/Lumen.entitlements
+      properties:
+        com.apple.developer.icloud-container-identifiers:
+          - iCloud.com.fahad00x.lumen
+        com.apple.developer.icloud-services:
+          - CloudKit
+        # App Store validation requires push on tvOS apps that use CloudKit
+        # (Xcode switches it to "production" when exporting for the App Store).
+        aps-environment: development
+    attributes:
+      SystemCapabilities:
+        com.apple.iCloud:
+          enabled: 1
+        com.apple.Push:
+          enabled: 1
+    dependencies:
+      - package: MPVKit
+        product: MPVKit-GPL
+    postBuildScripts: &fixMPV
+      # MPVKit's embedded frameworks: fix MinimumOSVersion for App Store Connect (see the script).
+      - name: Fix embedded MPVKit frameworks
+        basedOnDependencyAnalysis: false
+        showEnvVars: false
+        script: bash "${SRCROOT}/scripts/fix_mpv_frameworks.sh"
+    info:
+      path: Lumen/Info.plist
+      properties:
+        CFBundleDisplayName: Lumen
+        CFBundleDevelopmentRegion: ar
+        CFBundleLocalizations: [ar]
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UIRequiredDeviceCapabilities: [arm64]
+        UIUserInterfaceStyle: Dark
+        UILaunchStoryboardName: LaunchScreen
+        ITSAppUsesNonExemptEncryption: false
+        LSApplicationCategoryType: public.app-category.entertainment
+        NSLocalNetworkUsageDescription: يحتاج Lumen للوصول إلى الشبكة المحلية للاتصال بخادم Plex في منزلك.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+          NSAllowsLocalNetworking: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.fahad00x.lumen
+        TARGETED_DEVICE_FAMILY: "3"
+        CODE_SIGN_STYLE: Automatic
+        ASSETCATALOG_COMPILER_APPICON_NAME: "App Icon & Top Shelf Image"
+        GENERATE_INFOPLIST_FILE: NO
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+  # iPhone app: same Bundle ID (one App Store Connect app with tvOS + iOS), same iCloud container.
+  # Shares Plex, profiles/CloudKit, the MPV engine and Home logic with the Apple TV app.
+  LumenMobile:
+    type: application
+    platform: iOS
+    sources:
+      - path: LumenMobile
+      - path: Shared
+        excludes:
+          - "**/*.ckdb"
+      - path: Lumen/Plex
+      - path: Lumen/Common
+      - path: Lumen/Services
+        excludes:
+          - PlaybackManager.swift
+      - path: Lumen/Player/MPVPlayer.swift
+      - path: Lumen/Player/PlayerSession.swift
+      - path: Lumen/Resources
+    entitlements:
+      path: LumenMobile/LumenMobile.entitlements
+      properties:
+        com.apple.developer.icloud-container-identifiers:
+          - iCloud.com.fahad00x.lumen
+        com.apple.developer.icloud-services:
+          - CloudKit
+    attributes:
+      SystemCapabilities:
+        com.apple.iCloud:
+          enabled: 1
+    dependencies:
+      - package: MPVKit
+        product: MPVKit-GPL
+    postBuildScripts: *fixMPV
+    info:
+      path: LumenMobile/Info.plist
+      properties:
+        CFBundleName: Lumen
+        CFBundleDisplayName: Lumen
+        CFBundleDevelopmentRegion: ar
+        CFBundleLocalizations: [ar]
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UIRequiredDeviceCapabilities: [arm64]
+        UIUserInterfaceStyle: Dark
+        UIStatusBarStyle: UIStatusBarStyleLightContent
+        UIApplicationSupportsIndirectInputEvents: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        ITSAppUsesNonExemptEncryption: false
+        LSApplicationCategoryType: public.app-category.entertainment
+        NSLocalNetworkUsageDescription: يحتاج Lumen للوصول إلى الشبكة المحلية للاتصال بخادم Plex في منزلك.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+          NSAllowsLocalNetworking: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.fahad00x.lumen
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: NO
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+schemes:
+  Lumen:
+    build:
+      targets:
+        Lumen: all
+    run:
+      config: Debug
+      # MoltenVK trips Metal API validation on HDR content (KhronosGroup/MoltenVK#2226).
+      enableGPUValidationMode: disabled
+    archive:
+      config: Release
+  LumenMobile:
+    build:
+      targets:
+        LumenMobile: all
+    run:
+      config: Debug
+      enableGPUValidationMode: disabled
+    archive:
+      config: Release

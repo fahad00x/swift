@@ -1,0 +1,258 @@
+import SwiftUI
+
+struct HomeView: View {
+    let client: PlexServerClient
+
+    @Environment(ProfileStore.self) private var store
+    @Environment(\.contentFilter) private var filter
+    @State private var feed = HomeFeed()
+    @State private var isLoading = true
+    @State private var isRefreshing = false
+
+    var body: some View {
+        BrowseStack(client: client) {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 26) {
+                    if !feed.featured.isEmpty {
+                        HeroPager(items: feed.featured, client: client)
+                    }
+                    if !feed.continueWatching.isEmpty {
+                        ShelfRow(title: "متابعة المشاهدة", items: feed.continueWatching, client: client,
+                                 style: .landscape, logos: feed.continueLogos)
+                    }
+                    if !feed.myList.isEmpty {
+                        ShelfRow(title: "قائمتي", items: feed.myList, client: client)
+                    }
+                    ForEach(feed.rows) { row in
+                        ShelfRow(title: row.title, items: row.items, client: client, ranked: row.ranked)
+                    }
+                    if !isLoading && feed.isEmpty {
+                        ContentUnavailableView("لا يوجد محتوى", systemImage: "film.stack",
+                                               description: Text(filter.scopes.isEmpty
+                                                                 ? "لا توجد مكتبات مفتوحة لهذا المستخدم. افتحها من الإعدادات ← إعدادات المستخدم."
+                                                                 : "أضف أفلاماً ومسلسلات إلى خادم Plex لتظهر هنا."))
+                            .padding(.top, 80)
+                    }
+                }
+                .padding(.bottom, 30)
+            }
+            .ignoresSafeArea(edges: feed.featured.isEmpty ? [] : .top)
+            .overlay {
+                if isLoading && feed.isEmpty { LoadingView() }
+            }
+            .refreshable { await load(showCached: false) }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { profileButton }
+                ToolbarItem(placement: .topBarTrailing) {
+                    // Small, non-blocking refresh indicator.
+                    if isRefreshing && !feed.isEmpty { ProgressView().controlSize(.small) }
+                }
+            }
+            .toolbarBackground(.hidden, for: .navigationBar)
+        }
+        .task { await load() }
+        .onReceive(NotificationCenter.default.publisher(for: .plexPlaybackDidEnd)) { _ in
+            Task { await load() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .profileDataDidChangeRemotely)) { _ in
+            guard !PlaybackManager.shared.isPlaying else { return }
+            Task { await load() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .libraryShouldRefresh)) { _ in
+            Task { await load(showCached: false) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .myListDidChange)) { _ in
+            Task { feed.myList = await UserFeed.myList(store: store, client: client, filter: filter) }
+        }
+    }
+
+    /// Current profile; tap to go back to «مين يشاهد؟».
+    @ViewBuilder
+    private var profileButton: some View {
+        if let profile = store.activeProfile {
+            Button { store.deactivate() } label: {
+                ProfileAvatar(profile: profile, size: 32)
+            }
+            .accessibilityLabel("تبديل المستخدم (\(profile.name))")
+        }
+    }
+
+    /// Cached library first (no spinner), then the server in the background.
+    private func load(showCached: Bool = true) async {
+        isRefreshing = true
+        defer { isRefreshing = false; isLoading = false }
+        await HomeFeed.loadCacheFirst(client: client, store: store, filter: filter,
+                                      showCached: showCached && feed.isEmpty, current: feed) { new in
+            // Keep the current slide when nothing visible changed (e.g. after playback).
+            var updated = new
+            if new.featured == feed.featured { updated.featured = feed.featured }
+            feed = updated
+        }
+    }
+}
+
+// MARK: - Hero
+
+/// Swipeable featured items at the top of Home (auto-advances every 7 s).
+struct HeroPager: View {
+    let items: [FeaturedItem]
+    let client: PlexServerClient
+
+    @State private var selection: String?
+
+    var body: some View {
+        TabView(selection: $selection) {
+            ForEach(items) { item in
+                HeroSlide(item: item, client: client)
+                    .tag(Optional(item.id))
+            }
+        }
+        .tabViewStyle(.page(indexDisplayMode: .always))
+        .frame(height: 560)
+        .task(id: selection) {
+            try? await Task.sleep(for: .seconds(7))
+            guard !Task.isCancelled, items.count > 1, !PlaybackManager.shared.isPlaying else { return }
+            let index = items.firstIndex { $0.id == selection } ?? 0
+            withAnimation { selection = items[(index + 1) % items.count].id }
+        }
+        .onAppear { if selection == nil { selection = items.first?.id } }
+        .onChange(of: items.map(\.id)) { _, ids in
+            // New suggestions: never stay on a page that no longer exists (blank hero).
+            if let selection, ids.contains(selection) { return }
+            selection = ids.first
+        }
+    }
+}
+
+private struct HeroSlide: View {
+    let item: FeaturedItem
+    let client: PlexServerClient
+
+    @Environment(ProfileStore.self) private var store
+    @State private var showEpisode: PlexItem?
+    @State private var starting = false
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            Color.black
+            RemoteImage(url: client.imageURL(item.display.thumb ?? item.display.backdropPath, width: 900, height: 1350))
+            LinearGradient(stops: [
+                .init(color: .black.opacity(0.35), location: 0),
+                .init(color: .clear, location: 0.25),
+                .init(color: .black.opacity(0.6), location: 0.6),
+                .init(color: .black, location: 1),
+            ], startPoint: .top, endPoint: .bottom)
+
+            VStack(spacing: 12) {
+                Text(item.eyebrow)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.85))
+                TitleLogo(item: item.display, client: client, maxHeight: 90)
+                Text(metaLine)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.8))
+                    .lineLimit(1)
+
+                HStack(spacing: 12) {
+                    Button(action: play) {
+                        Label(playTitle, systemImage: "play.fill")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(Capsule().fill(.white))
+                            .foregroundStyle(.black)
+                    }
+                    Button { store.toggleMyList(item.display.mediaInfo) } label: {
+                        Image(systemName: store.isOnMyList(item.display.ratingKey) ? "checkmark" : "plus")
+                            .font(.headline)
+                            .frame(width: 46, height: 46)
+                            .background(Circle().fill(.white.opacity(0.2)))
+                            .foregroundStyle(.white)
+                    }
+                    NavigationLink(value: item.display) {
+                        Image(systemName: "info")
+                            .font(.headline)
+                            .frame(width: 46, height: 46)
+                            .background(Circle().fill(.white.opacity(0.2)))
+                            .foregroundStyle(.white)
+                    }
+                }
+                .padding(.horizontal, 28)
+            }
+            .padding(.bottom, 44)
+        }
+        .clipped()
+        .task(id: item.id) {
+            if item.playable == nil, item.display.isShow, showEpisode == nil {
+                showEpisode = await client.episodeToPlay(showKey: item.display.ratingKey)
+            }
+        }
+    }
+
+    private var metaLine: String {
+        let d = item.display
+        var parts: [String] = [d.isShow ? "مسلسل" : "فيلم"]
+        parts += d.genres.prefix(2).map { ArabicFormat.genre($0.tag) }
+        if let year = d.year { parts.append(ArabicFormat.digits(year)) }
+        return parts.joined(separator: " · ")
+    }
+
+    private var target: PlexItem? { item.playable ?? showEpisode ?? (item.display.isShow ? nil : item.display) }
+
+    private var playTitle: String {
+        let verb = (target?.progress != nil && target?.isWatched == false) ? "استئناف" : "تشغيل"
+        if item.display.isShow, let code = target?.episodeCode { return "\(verb) \(code)" }
+        return verb
+    }
+
+    private func play() {
+        guard !starting else { return }
+        starting = true
+        Task {
+            defer { starting = false }
+            var playable = target
+            if playable == nil, item.display.isShow {
+                playable = await client.episodeToPlay(showKey: item.display.ratingKey)
+            }
+            guard let playable else { return }
+            await PlaybackManager.shared.play(playable, client: client)
+        }
+    }
+}
+
+/// Clear logo when Plex has one, otherwise the title.
+struct TitleLogo: View {
+    let item: PlexItem
+    let client: PlexServerClient
+    var maxHeight: CGFloat = 80
+
+    @State private var image: UIImage?
+    @State private var failed = false
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: 280, maxHeight: maxHeight)
+            } else if failed || item.clearLogoPath == nil {
+                Text(item.title)
+                    .font(.system(size: 32, weight: .heavy))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.6)
+            } else {
+                Color.clear.frame(height: maxHeight)
+            }
+        }
+        .task(id: item.ratingKey) {
+            guard let url = client.imageURL(item.clearLogoPath, width: 840, height: 280, png: true) else {
+                failed = true
+                return
+            }
+            image = await ImageLoader.shared.image(for: url)
+            failed = image == nil
+        }
+    }
+}

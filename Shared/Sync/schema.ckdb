@@ -1,0 +1,87 @@
+DEFINE SCHEMA
+
+    RECORD TYPE Users (
+        "___createTime" TIMESTAMP,
+        "___createdBy"  REFERENCE,
+        "___etag"       STRING,
+        "___modTime"    TIMESTAMP,
+        "___modifiedBy" REFERENCE,
+        "___recordID"   REFERENCE QUERYABLE,
+        roles           LIST<INT64>,
+        GRANT WRITE TO "_creator",
+        GRANT READ TO "_world"
+    );
+
+    RECORD TYPE Profile (
+        "___createTime"           TIMESTAMP,
+        "___createdBy"            REFERENCE,
+        "___etag"                 STRING,
+        "___modTime"              TIMESTAMP,
+        "___modifiedBy"           REFERENCE,
+        "___recordID"             REFERENCE QUERYABLE,
+        profileID                 STRING QUERYABLE,
+        name                      STRING,
+        symbol                    STRING,
+        colorHex                  STRING,
+        isKids                    INT64,
+        isOwner                   INT64,
+        pinHash                   STRING,
+        scopes                    STRING,
+        knownSections             STRING,
+        genres                    STRING,
+        preferredAudioLanguage    STRING,
+        preferredSubtitleLanguage STRING,
+        subtitlesOff              INT64,
+        createdAt                 TIMESTAMP,
+        modifiedAt                TIMESTAMP,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_creator"
+    );
+
+    RECORD TYPE MediaState (
+        "___createTime"  TIMESTAMP,
+        "___createdBy"   REFERENCE,
+        "___etag"        STRING,
+        "___modTime"     TIMESTAMP,
+        "___modifiedBy"  REFERENCE,
+        "___recordID"    REFERENCE QUERYABLE,
+        profileID        STRING QUERYABLE,
+        profile          REFERENCE QUERYABLE,
+        ratingKey        STRING,
+        type             STRING,
+        showKey          STRING,
+        seasonKey        STRING,
+        sectionKey       STRING,
+        sortIndex        INT64,
+        genres           STRING,
+        offsetMs         INT64,
+        durationMs       INT64,
+        watched          INT64,
+        lastViewedAt     TIMESTAMP,
+        audioStreamID    INT64,
+        subtitleStreamID INT64,
+        modifiedAt       TIMESTAMP,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_creator"
+    );
+
+    RECORD TYPE WatchlistItem (
+        "___createTime" TIMESTAMP,
+        "___createdBy"  REFERENCE,
+        "___etag"       STRING,
+        "___modTime"    TIMESTAMP,
+        "___modifiedBy" REFERENCE,
+        "___recordID"   REFERENCE QUERYABLE,
+        profileID       STRING QUERYABLE,
+        profile         REFERENCE QUERYABLE,
+        ratingKey       STRING,
+        type            STRING,
+        sectionKey      STRING,
+        addedAt         TIMESTAMP,
+        modifiedAt      TIMESTAMP,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_creator"
+    );

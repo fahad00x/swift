@@ -1,0 +1,320 @@
+import Foundation
+import QuartzCore
+import Libmpv
+
+/// Works around MoltenVK briefly forcing a 1×1 drawable, which causes flicker.
+/// https://github.com/mpv-player/mpv/pull/13651
+final class MPVMetalLayer: CAMetalLayer {
+    override var drawableSize: CGSize {
+        get { super.drawableSize }
+        set {
+            if Int(newValue.width) > 1 && Int(newValue.height) > 1 {
+                super.drawableSize = newValue
+            }
+        }
+    }
+}
+
+struct MPVTrack: Identifiable, Hashable {
+    enum Kind: String { case video, audio, sub }
+
+    let id: Int
+    let kind: Kind
+    let title: String?
+    let language: String?
+    let codec: String?
+    let channels: Int?
+    let isExternal: Bool
+    let isSelected: Bool
+    /// Stream index inside the container (Plex's stream `index`).
+    let ffIndex: Int?
+
+    var displayName: String {
+        var parts: [String] = []
+        if let language { parts.append(Self.languageName(language)) }
+        if let title, !title.isEmpty, title.lowercased() != language?.lowercased() { parts.append(title) }
+        var tech: [String] = []
+        if let codec { tech.append(codec.uppercased()) }
+        if let channels {
+            switch channels {
+            case 8: tech.append("7.1")
+            case 6: tech.append("5.1")
+            case 2: tech.append("Stereo")
+            case 1: tech.append("Mono")
+            default: tech.append("\(channels)ch")
+            }
+        }
+        if !tech.isEmpty { parts.append(tech.joined(separator: " ")) }
+        if parts.isEmpty { parts.append("مسار \(id)") }
+        return parts.joined(separator: " · ")
+    }
+
+    static func languageName(_ code: String) -> String {
+        Locale.current.localizedString(forLanguageCode: code) ?? code
+    }
+}
+
+/// Thin Swift wrapper around a libmpv handle rendering into a CAMetalLayer
+/// (vo=gpu-next, Vulkan via MoltenVK, VideoToolbox hardware decoding).
+final class MPVPlayer {
+    enum Event {
+        case property(name: String, value: Any?)
+        case fileLoaded
+        case endFile(reachedEOF: Bool, error: String?)
+    }
+
+    struct Configuration {
+        var hdr = false
+        var fastProfile = false
+        var preferredLanguages = ["ara", "ar", "eng", "en"]
+    }
+
+    /// Called on the main queue.
+    var onEvent: ((Event) -> Void)?
+
+    private var handle: OpaquePointer?
+    private let queue = DispatchQueue(label: "lumen.mpv.events", qos: .userInitiated)
+    private var retainedSelf: Unmanaged<MPVPlayer>?
+
+    static let observed: [(String, mpv_format)] = [
+        ("time-pos", MPV_FORMAT_DOUBLE),
+        ("duration", MPV_FORMAT_DOUBLE),
+        ("pause", MPV_FORMAT_FLAG),
+        ("paused-for-cache", MPV_FORMAT_FLAG),
+        ("track-list/count", MPV_FORMAT_INT64),
+        ("aid", MPV_FORMAT_INT64),
+        ("sid", MPV_FORMAT_INT64),
+    ]
+
+    init?(layer: CAMetalLayer, configuration: Configuration) {
+        guard let mpv = mpv_create() else { return nil }
+        handle = mpv
+
+        var layerRef = layer
+        mpv_set_option(mpv, "wid", MPV_FORMAT_INT64, &layerRef)
+
+        #if DEBUG
+        mpv_request_log_messages(mpv, "warn")
+        #else
+        mpv_request_log_messages(mpv, "no")
+        #endif
+
+        var options: [(String, String)] = [
+            ("vo", "gpu-next"),
+            ("gpu-api", "vulkan"),
+            ("gpu-context", "moltenvk"),
+            ("hwdec", "videotoolbox"),
+            ("video-rotate", "no"),
+            ("idle", "yes"),
+            // Generous network cache for high bitrate 4K remuxes.
+            ("cache", "yes"),
+            ("demuxer-max-bytes", "400MiB"),
+            ("demuxer-max-back-bytes", "100MiB"),
+            ("demuxer-readahead-secs", "60"),
+            ("network-timeout", "30"),
+            ("user-agent", "\(PlexClientInfo.product)/\(PlexClientInfo.version) (\(PlexClientInfo.platform))"),
+            // Tracks & subtitles.
+            ("alang", configuration.preferredLanguages.joined(separator: ",")),
+            ("slang", configuration.preferredLanguages.joined(separator: ",")),
+            ("subs-match-os-language", "yes"),
+            ("subs-fallback", "yes"),
+            ("sub-auto", "no"),
+            ("sub-font-size", "46"),
+            ("sub-border-size", "2.5"),
+            ("sub-shadow-offset", "1"),
+            ("sub-margin-y", "60"),
+            ("audio-channels", "auto-safe"),
+            ("tone-mapping", "auto"),
+        ]
+        // HDR passthrough: must be set before initialisation.
+        options.append(("target-colorspace-hint", configuration.hdr ? "yes" : "no"))
+        if configuration.fastProfile { options.append(("profile", "fast")) }
+
+        for (key, value) in options { mpv_set_option_string(mpv, key, value) }
+
+        guard mpv_initialize(mpv) >= 0 else {
+            mpv_terminate_destroy(mpv)
+            handle = nil
+            return nil
+        }
+
+        for (name, format) in Self.observed { mpv_observe_property(mpv, 0, name, format) }
+
+        let unmanaged = Unmanaged.passRetained(self)
+        retainedSelf = unmanaged
+        mpv_set_wakeup_callback(mpv, { ctx in
+            guard let ctx else { return }
+            Unmanaged<MPVPlayer>.fromOpaque(ctx).takeUnretainedValue().drainEvents()
+        }, unmanaged.toOpaque())
+    }
+
+    deinit {
+        if let handle { mpv_terminate_destroy(handle) }
+    }
+
+    // MARK: Control
+
+    func load(_ url: URL, start seconds: Double = 0) {
+        let opts = "start=\(max(0, Int(seconds)))"
+        // loadfile <url> <flags> <index> <options>
+        command("loadfile", url.absoluteString, "replace", "-1", opts)
+    }
+
+    func addSubtitle(_ url: URL, title: String?, language: String?, select: Bool = false) {
+        command("sub-add", url.absoluteString, select ? "select" : "auto", title ?? "", language ?? "")
+    }
+
+    func seek(to seconds: Double) {
+        command("seek", String(format: "%.3f", max(0, seconds)), "absolute+exact")
+    }
+
+    func seek(by seconds: Double) {
+        command("seek", String(format: "%.3f", seconds), "relative+exact")
+    }
+
+    var isPaused: Bool {
+        get { flag("pause") }
+        set { setFlag("pause", newValue) }
+    }
+
+    func selectAudio(_ id: Int) { setString("aid", "\(id)") }
+    func selectSubtitle(_ id: Int?) { setString("sid", id.map(String.init) ?? "no") }
+
+    var position: Double { double("time-pos") }
+    var duration: Double { double("duration") }
+
+    func tracks() -> [MPVTrack] {
+        let count = int("track-list/count")
+        guard count > 0 else { return [] }
+        return (0..<count).compactMap { i in
+            let p = "track-list/\(i)"
+            guard let rawKind = string("\(p)/type"), let kind = MPVTrack.Kind(rawValue: rawKind) else { return nil }
+            let channels = int("\(p)/demux-channel-count")
+            return MPVTrack(id: int("\(p)/id"), kind: kind,
+                            title: string("\(p)/title"), language: string("\(p)/lang"),
+                            codec: string("\(p)/codec"), channels: channels > 0 ? channels : nil,
+                            isExternal: flag("\(p)/external"), isSelected: flag("\(p)/selected"),
+                            ffIndex: string("\(p)/ff-index").flatMap { Int($0) })
+        }
+    }
+
+    /// Chapters in the file, in ms: (title, start, end); the last one ends at the file's end.
+    func chapters() -> [(title: String?, startMs: Int, endMs: Int)] {
+        let count = int("chapter-list/count")
+        guard count > 0 else { return [] }
+        let starts = (0..<count).map { double("chapter-list/\($0)/time") }
+        let total = duration
+        return (0..<count).map { i in
+            let end = i + 1 < count ? starts[i + 1] : (total > 0 ? total : starts[i])
+            return (string("chapter-list/\(i)/title"), Int(starts[i] * 1000), Int(end * 1000))
+        }
+    }
+
+    /// Tears the player down; safe to call more than once.
+    func shutdown() {
+        guard let mpv = handle else { return }
+        onEvent = nil
+        handle = nil
+        queue.async { [retainedSelf] in
+            mpv_set_wakeup_callback(mpv, nil, nil)
+            mpv_terminate_destroy(mpv)
+            retainedSelf?.release()
+        }
+        retainedSelf = nil
+    }
+
+    // MARK: Low-level helpers
+
+    private func command(_ args: String...) {
+        guard let handle else { return }
+        var cargs: [UnsafePointer<CChar>?] = args.map { UnsafePointer(strdup($0)) }
+        cargs.append(nil)
+        defer { for ptr in cargs { if let ptr { free(UnsafeMutablePointer(mutating: ptr)) } } }
+        mpv_command_async(handle, 0, &cargs)
+    }
+
+    private func setString(_ name: String, _ value: String) {
+        guard let handle else { return }
+        mpv_set_property_string(handle, name, value)
+    }
+
+    private func setFlag(_ name: String, _ value: Bool) {
+        guard let handle else { return }
+        var v: Int32 = value ? 1 : 0
+        mpv_set_property(handle, name, MPV_FORMAT_FLAG, &v)
+    }
+
+    private func flag(_ name: String) -> Bool {
+        guard let handle else { return false }
+        var v: Int32 = 0
+        mpv_get_property(handle, name, MPV_FORMAT_FLAG, &v)
+        return v != 0
+    }
+
+    private func double(_ name: String) -> Double {
+        guard let handle else { return 0 }
+        var v: Double = 0
+        mpv_get_property(handle, name, MPV_FORMAT_DOUBLE, &v)
+        return v
+    }
+
+    private func int(_ name: String) -> Int {
+        guard let handle else { return 0 }
+        var v: Int64 = 0
+        mpv_get_property(handle, name, MPV_FORMAT_INT64, &v)
+        return Int(v)
+    }
+
+    private func string(_ name: String) -> String? {
+        guard let handle, let cstr = mpv_get_property_string(handle, name) else { return nil }
+        defer { mpv_free(cstr) }
+        return String(cString: cstr)
+    }
+
+    // MARK: Events
+
+    private func drainEvents() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            while let mpv = self.handle, let event = mpv_wait_event(mpv, 0) {
+                let id = event.pointee.event_id
+                if id == MPV_EVENT_NONE { break }
+                if let parsed = Self.parse(event.pointee) {
+                    DispatchQueue.main.async { [weak self] in self?.onEvent?(parsed) }
+                }
+                if id == MPV_EVENT_SHUTDOWN { break }
+            }
+        }
+    }
+
+    private static func parse(_ event: mpv_event) -> Event? {
+        switch event.event_id {
+        case MPV_EVENT_PROPERTY_CHANGE:
+            guard let raw = event.data else { return nil }
+            let property = raw.assumingMemoryBound(to: mpv_event_property.self).pointee
+            let name = String(cString: property.name)
+            var value: Any?
+            if let data = property.data {
+                switch property.format {
+                case MPV_FORMAT_DOUBLE: value = data.assumingMemoryBound(to: Double.self).pointee
+                case MPV_FORMAT_FLAG: value = data.assumingMemoryBound(to: Int32.self).pointee != 0
+                case MPV_FORMAT_INT64: value = Int(data.assumingMemoryBound(to: Int64.self).pointee)
+                default: value = nil
+                }
+            }
+            return .property(name: name, value: value)
+        case MPV_EVENT_FILE_LOADED:
+            return .fileLoaded
+        case MPV_EVENT_END_FILE:
+            guard let raw = event.data else { return nil }
+            let end = raw.assumingMemoryBound(to: mpv_event_end_file.self).pointee
+            if end.reason == MPV_END_FILE_REASON_EOF { return .endFile(reachedEOF: true, error: nil) }
+            if end.reason == MPV_END_FILE_REASON_ERROR {
+                return .endFile(reachedEOF: false, error: String(cString: mpv_error_string(end.error)))
+            }
+            return nil
+        default:
+            return nil
+        }
+    }
+}
