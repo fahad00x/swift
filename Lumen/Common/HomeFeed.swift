@@ -103,6 +103,10 @@ struct HomeFeed: Codable {
                 // Split / kids libraries lose items to filtering: fetch more.
                 let generous = filter.isSplit(section.key) || filter.isKids || !filter.focusGenres.isEmpty
                 group.addTask {
+                    #if os(tvOS)
+                    let recent = (try? await client.recentlyAdded(section: section, limit: generous ? 90 : 30)) ?? []
+                    return SectionData(section: section, recent: recent, topRated: [], sample: [])
+                    #else
                     async let recent = client.recentlyAdded(section: section, limit: generous ? 90 : 30)
                     async let top = client.items(section: section, sort: .rating, start: 0, size: generous ? 80 : 30)
                     // A sample of the library to discover its main genres.
@@ -111,6 +115,7 @@ struct HomeFeed: Codable {
                                        recent: (try? await recent) ?? [],
                                        topRated: (try? await top)?.items ?? [],
                                        sample: (try? await sample)?.items ?? [])
+                    #endif
                 }
             }
             var out: [String: SectionData] = [:]
@@ -136,6 +141,14 @@ struct HomeFeed: Codable {
             recentByScope.append((scope, Array(items.prefix(24))))
         }
 
+        #if os(tvOS)
+        // Apple TV Home: Continue Watching, then «أضيف مؤخراً» per library (all from the device).
+        let tvRows = recentByScope.filter { !$0.1.isEmpty }.map { scope, items in
+            Row(id: "recent-\(scope.id)", title: "أضيف مؤخراً في \(scope.rowName)", items: items)
+        }
+        return HomeFeed(featured: [], continueWatching: await continueTask, continueLogos: [:],
+                        myList: await listTask, rows: tvRows)
+        #else
         let focusOnly = !filter.focusGenres.isEmpty
         let sample = await filter.resolve(perSection.values.flatMap(\.sample), client: client, focusedOnly: focusOnly)
         let topCandidates = await filter.resolve(perSection.values.flatMap(\.topRated), client: client, focusedOnly: focusOnly)
@@ -173,6 +186,7 @@ struct HomeFeed: Codable {
         rows += Self.genreRows(sample, focus: filter.focusGenres, affinity: affinity)
 
         return HomeFeed(featured: newFeatured, continueWatching: deck, continueLogos: logos, myList: list, rows: rows)
+        #endif
     }
 
     private struct SectionData {

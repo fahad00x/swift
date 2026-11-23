@@ -1,25 +1,26 @@
 import SwiftUI
 
-// Apple TV–style media cards. Focus uses the native `.card` button style, so the lift,
-// shadow, specular edge highlight and touch-driven parallax tilt all come from tvOS.
+// Apple TV media cards: artwork with status overlays and a light white-border focus style
+// (no shadow or parallax, so moving focus stays cheap).
 
 enum CardKind {
-    /// 2:3 poster. ~5½ fit across the screen.
+    /// 2:3 poster. 7 fit across the content area (next to the sidebar rail).
     case poster
     /// 16:9 Continue Watching card. ~4½ fit across the screen.
     case landscape
 
-    /// Width chosen so that, after the 80 pt leading inset and 40 pt gaps,
-    /// the last visible card is cut in half (signals that the row scrolls).
+    /// Sized for the content area next to the sidebar rail.
     var size: CGSize {
         switch self {
-        case .poster: return CGSize(width: 298, height: 447)
-        case .landscape: return CGSize(width: 372, height: 209)
+        case .poster: return CGSize(width: 210, height: 315)
+        case .landscape: return CGSize(width: 340, height: 191)
         }
     }
 
-    static let cornerRadius: CGFloat = 12
-    static let spacing: CGFloat = 40
+    static let cornerRadius: CGFloat = 10
+    static let spacing: CGFloat = 28
+    /// Side inset of rows and grids (inside the content area, next to the rail).
+    static let inset: CGFloat = 50
 }
 
 // MARK: - Landscape (Continue Watching)
@@ -80,6 +81,9 @@ struct LandscapeCard: View {
 
 // MARK: - Poster
 
+/// Artwork only (the title is drawn under the card by `MediaCardLink`), with the status
+/// overlays: unwatched triangle + progress bar, unwatched episode count, quality, rating and
+/// the «يُعرض» ribbon for shows with a recent episode.
 struct PosterCard: View {
     let item: PlexItem
     let client: PlexServerClient
@@ -88,53 +92,163 @@ struct PosterCard: View {
     var logoPath: String?
     var size: CGSize = CardKind.poster.size
 
+    @Environment(ProfileStore.self) private var store
+    @State private var airing = false
+
     var body: some View {
-        ZStack(alignment: .bottom) {
+        ZStack {
             Color(white: 0.13)
             Image(systemName: item.isShow || item.isEpisode ? "tv" : "film")
-                .font(.system(size: 54))
+                .font(.system(size: 44))
                 .foregroundStyle(.white.opacity(0.2))
-            RemoteImage(url: client.imageURL(item.posterPath, width: Int(size.width * 2), height: Int(size.height * 2)))
-            LinearGradient(stops: [
-                .init(color: .clear, location: 0.5),
-                .init(color: .black.opacity(0.88), location: 1),
-            ], startPoint: .top, endPoint: .bottom)
-
-            VStack(alignment: .leading, spacing: 4) {
-                CardTitle(title: item.cardTitle, logoPath: logoPath, client: client,
-                          logoSize: CGSize(width: size.width - 40, height: 70), font: .callout.weight(.bold))
-                if let subtitle {
-                    Text(subtitle)
-                        .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.72))
-                        .lineLimit(1)
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        // Rank at the top-left (the trailing side in Arabic); the unwatched triangle is top-right.
-        .overlay(alignment: .topTrailing) {
-            if let rank {
-                Text(ArabicFormat.digits(rank))
-                    .font(.system(size: 120, weight: .heavy, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.82))
-                    .shadow(color: .black.opacity(0.55), radius: 10, y: 4)
-                    .padding(.horizontal, 16)
-                    .offset(y: -18)
-            }
+            RemoteImage(url: size == CardKind.poster.size
+                        ? client.posterURL(item)
+                        : client.imageURL(item.posterPath, width: Int(size.width * 2), height: Int(size.height * 2)))
+            PosterBadges(item: item, unwatchedEpisodes: unwatchedEpisodes, airing: airing)
         }
         .frame(width: size.width, height: size.height)
-        .artworkStatus(item, barHeight: 6)
+        .artworkStatus(item, triangleFraction: 0.14, barHeight: 5)
         .clipShape(RoundedRectangle(cornerRadius: CardKind.cornerRadius, style: .continuous))
+        .task(id: item.ratingKey) {
+            guard item.isShow, let aired = await client.latestAired(show: item.ratingKey) else { return }
+            airing = aired >= PosterBadges.airingCutoff
+        }
     }
 
-    private var subtitle: String? {
-        if item.isEpisode { return item.episodeCode }
-        let genres = item.genres.prefix(2).map { ArabicFormat.genre($0.tag) }
-        if !genres.isEmpty { return genres.joined(separator: "، ") }
+    private var unwatchedEpisodes: Int? {
+        guard item.isShow || item.isSeason, let leaves = item.leafCount, leaves > 0 else { return nil }
+        let remaining = leaves - store.watchedEpisodeCount(under: item.ratingKey)
+        return remaining > 0 ? remaining : nil
+    }
+}
+
+/// Overlays drawn in physical positions (top-left count / quality, bottom rating / ribbon),
+/// so they never collide with the top-right unwatched triangle in Arabic.
+private struct PosterBadges: View {
+    let item: PlexItem
+    let unwatchedEpisodes: Int?
+    let airing: Bool
+
+    /// Shows with an episode aired in the last 14 days count as airing.
+    static var airingCutoff: String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: Date().addingTimeInterval(-14 * 86_400))
+    }
+
+    private var rating: String? {
+        guard let r = item.audienceRating ?? item.rating, r > 0 else { return nil }
+        return String(format: "%.1f", r)
+    }
+
+    private var quality: String? {
+        guard item.isPlayable else { return nil }
+        return item.media.first?.resolutionBadge
+    }
+
+    var body: some View {
+        ZStack {
+            if rating != nil || airing {
+                LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .center, endPoint: .bottom)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                if let unwatchedEpisodes {
+                    badge(ArabicFormat.digits(unwatchedEpisodes), font: .system(size: 18, weight: .bold))
+                }
+                if let quality {
+                    badge(quality, font: .system(size: 14, weight: .heavy))
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding(8)
+
+            HStack(spacing: 6) {
+                if let rating {
+                    HStack(spacing: 3) {
+                        Image(systemName: "star.fill").font(.system(size: 12))
+                        Text(rating).font(.system(size: 15, weight: .bold))
+                    }
+                    .foregroundStyle(.white)
+                }
+                Spacer(minLength: 0)
+                if airing {
+                    Text("يُعرض")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color(red: 0.35, green: 0.85, blue: 0.45)))
+                }
+            }
+            .frame(maxHeight: .infinity, alignment: .bottom)
+            .padding(.horizontal, 8)
+            .padding(.bottom, 12)
+        }
+        .environment(\.layoutDirection, .leftToRight)
+        .allowsHitTesting(false)
+    }
+
+    private func badge(_ text: String, font: Font) -> some View {
+        Text(text)
+            .font(font)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Color.black.opacity(0.72)))
+    }
+}
+
+/// Title and year / episode under a poster.
+private struct CardCaption: View {
+    let item: PlexItem
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(item.cardTitle)
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.9))
+                .lineLimit(1)
+            if let detail {
+                Text(detail)
+                    .font(.system(size: 18))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    private var detail: String? {
+        if item.isEpisode {
+            var code: [String] = []
+            if let s = item.parentIndex { code.append("م\(ArabicFormat.digits(s))") }
+            if let e = item.index { code.append("ح\(ArabicFormat.digits(e))") }
+            return code.isEmpty ? nil : code.joined(separator: " · ")
+        }
+        if item.isSeason { return item.parentTitle }
         return item.year.map { ArabicFormat.digits($0) }
+    }
+}
+
+/// Focus: a slight lift and a white border, no heavy shadow or parallax (cheap to draw).
+struct PosterButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        StyleBody(configuration: configuration)
+    }
+
+    private struct StyleBody: View {
+        let configuration: ButtonStyleConfiguration
+        @Environment(\.isFocused) private var isFocused
+
+        var body: some View {
+            configuration.label
+                .overlay {
+                    RoundedRectangle(cornerRadius: CardKind.cornerRadius, style: .continuous)
+                        .strokeBorder(Color.white, lineWidth: isFocused ? 5 : 0)
+                }
+                .scaleEffect(configuration.isPressed ? 0.97 : (isFocused ? 1.08 : 1))
+                .animation(.easeOut(duration: 0.12), value: isFocused)
+        }
     }
 }
 
@@ -205,26 +319,40 @@ struct MediaCardLink: View {
     var context: BrowseContext?
 
     @Environment(BackdropState.self) private var backdrop
+    @Environment(HomeFocus.self) private var homeFocus: HomeFocus?
     @Environment(\.detailNamespace) private var namespace
 
     private var zoomID: String { sourceID ?? item.id }
 
     var body: some View {
-        NavigationLink(value: DetailRoute(item: item, sourceID: zoomID, context: context)) {
-            Group {
-                switch kind {
-                case .poster:
-                    PosterCard(item: item, client: client, rank: rank, logoPath: logoPath, size: posterSize)
-                case .landscape:
-                    LandscapeCard(item: item, client: client, logoPath: logoPath)
+        VStack(alignment: .leading, spacing: 12) {
+            NavigationLink(value: DetailRoute(item: item, sourceID: zoomID, context: context)) {
+                Group {
+                    switch kind {
+                    case .poster:
+                        PosterCard(item: item, client: client, rank: rank, logoPath: logoPath, size: posterSize)
+                    case .landscape:
+                        LandscapeCard(item: item, client: client, logoPath: logoPath)
+                    }
                 }
+                .background(FocusReporter { focused in
+                    guard focused else { return }
+                    if let homeFocus {
+                        // Home shows the focused item's details and backdrop at the top.
+                        homeFocus.item = item
+                    } else {
+                        backdrop.url = client.imageURL(item.backdropPath, width: 1280, height: 720)
+                    }
+                })
+                .zoomSource(id: zoomID, namespace: namespace)
             }
-            .background(FocusReporter { focused in
-                if focused { backdrop.url = client.imageURL(item.backdropPath, width: 1920, height: 1080) }
-            })
-            .zoomSource(id: zoomID, namespace: namespace)
+            .buttonStyle(PosterButtonStyle())
+
+            if kind == .poster {
+                CardCaption(item: item)
+                    .frame(width: posterSize.width, alignment: .leading)
+            }
         }
-        .buttonStyle(.card)
     }
 }
 
@@ -266,9 +394,9 @@ struct ShelfView: View {
         let context = BrowseContext(rowID: shelf.id, items: shelf.items)
         VStack(alignment: .leading, spacing: 0) {
             Text(shelf.title)
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.78))
-                .padding(.horizontal, 80)
+                .font(.system(size: 30, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.85))
+                .padding(.horizontal, CardKind.inset)
 
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -282,10 +410,10 @@ struct ShelfView: View {
                                 .focused($focusedID, equals: item.id)
                         }
                     }
-                    // Room for the ~10% focus scale and shadow, so cards never cover the title.
-                    .padding(.horizontal, 80)
-                    .padding(.top, 34)
-                    .padding(.bottom, 54)
+                    // Room for the 8% focus lift, so cards never cover the title.
+                    .padding(.horizontal, CardKind.inset)
+                    .padding(.top, 24)
+                    .padding(.bottom, 30)
                 }
                 .scrollClipDisabled()
                 .onAppear { restoreFocus(proxy) }
@@ -307,7 +435,7 @@ struct ShelfView: View {
     }
 }
 
-/// Grid of posters for library and search pages (5 per row, same card as the shelves).
+/// Grid of posters for library and search pages (7 per row, same card as the shelves).
 /// Wrap the enclosing ScrollView in a ScrollViewReader and pass its proxy so focus can be
 /// restored to the last item reached by paging on a details page.
 struct PosterGrid: View {
@@ -320,18 +448,18 @@ struct PosterGrid: View {
     @FocusState private var focusedID: String?
 
     private let rowID = "grid"
-    private let columns = Array(repeating: GridItem(.fixed(CardKind.poster.size.width), spacing: 67, alignment: .top), count: 5)
+    private let columns = Array(repeating: GridItem(.fixed(CardKind.poster.size.width), spacing: CardKind.spacing, alignment: .top), count: 7)
 
     var body: some View {
         let context = BrowseContext(rowID: rowID, items: items)
-        LazyVGrid(columns: columns, alignment: .center, spacing: 70) {
+        LazyVGrid(columns: columns, alignment: .center, spacing: 44) {
             ForEach(items) { item in
                 MediaCardLink(item: item, client: client, sourceID: context.sourceID(for: item), context: context)
                     .focused($focusedID, equals: item.id)
                     .onAppear { onItemAppear(item) }
             }
         }
-        .padding(.horizontal, 80)
+        .padding(.horizontal, CardKind.inset)
         .padding(.vertical, 30)
         .onAppear {
             guard let id = returnState.take(for: rowID) else { return }

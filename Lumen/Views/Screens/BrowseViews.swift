@@ -1,75 +1,24 @@
 import SwiftUI
 
-struct MainTabView: View {
-    let client: PlexServerClient
-    let sections: [PlexDirectory]
-    let profile: UserProfile
-
-    @Environment(ProfileStore.self) private var store
-    @State private var newSections: [PlexDirectory] = []
-
-    var body: some View {
-        let filter = ContentFilter(profile: profile, sections: sections)
-        TabView {
-            HomeView(client: client)
-                .tabItem { Label("الرئيسية", systemImage: "house.fill") }
-            // Only the libraries this profile opened, in its own order.
-            ForEach(filter.scopes) { scope in
-                LibraryView(client: client, scope: scope)
-                    .tabItem { Label(scope.title, systemImage: scope.icon) }
-            }
-            SearchView(client: client)
-                .tabItem { Label("بحث", systemImage: "magnifyingglass") }
-            SettingsView(client: client, sections: sections)
-                .tabItem { Label("الإعدادات", systemImage: "gearshape") }
-        }
-        .environment(\.contentFilter, filter)
-        .task { checkForNewLibraries() }
-        .alert(newLibraryTitle, isPresented: Binding(get: { !newSections.isEmpty }, set: { if !$0 { newSections = [] } })) {
-            Button("إضافة") { acknowledge(enable: true) }
-            Button("لا", role: .cancel) { acknowledge(enable: false) }
-        } message: {
-            Text("«\(newSections.map(\.title).joined(separator: "»، «"))» — تبي تضيفها لمكتباتك؟")
-        }
-    }
-
-    private var newLibraryTitle: String {
-        newSections.count > 1 ? "فيه مكتبات جديدة" : "فيه مكتبة جديدة"
-    }
-
-    /// Libraries added to the server since the profile last looked start locked; ask once.
-    private func checkForNewLibraries() {
-        let unknown = sections.filter { !profile.knownSections.contains($0.key) }
-        guard !unknown.isEmpty else { return }
-        if profile.isKids {
-            // Kids can't change their libraries without the main PIN: keep them locked.
-            store.acknowledgeSections(unknown.map(\.key), enable: false)
-        } else {
-            newSections = unknown
-        }
-    }
-
-    private func acknowledge(enable: Bool) {
-        let keys = newSections.map(\.key)
-        newSections = []
-        store.acknowledgeSections(keys, enable: enable)
-    }
-}
-
 /// Wraps a browsing screen with a NavigationStack, shared backdrop and detail routing.
 struct BrowseContainer<Content: View>: View {
     let client: PlexServerClient
+    /// Home draws its own backdrop (the focused item's).
+    var showsBackdrop = true
     @ViewBuilder let content: () -> Content
     @Environment(BackdropState.self) private var backdrop
+    @Environment(\.focusSidebar) private var focusSidebar
     @Namespace private var detailNamespace
     @State private var returnState = BrowseReturnState()
 
     var body: some View {
         NavigationStack {
             ZStack {
-                BackdropView(url: backdrop.url)
+                if showsBackdrop { BackdropView(url: backdrop.url) }
                 content()
             }
+            // Menu on a top-level screen goes to the sidebar (pushed pages handle their own Back).
+            .onExitCommand(perform: focusSidebar)
             .navigationDestination(for: DetailRoute.self) { route in
                 // The page applies the zoom transition itself so it can follow paging.
                 DetailPage(client: client, entry: route.item, context: route.context, sourceID: route.sourceID)
@@ -80,181 +29,6 @@ struct BrowseContainer<Content: View>: View {
         }
         .environment(\.detailNamespace, detailNamespace)
         .environment(returnState)
-    }
-}
-
-// MARK: - Home
-
-struct HomeView: View {
-    let client: PlexServerClient
-
-    @Environment(BackdropState.self) private var backdrop
-    @Environment(ProfileStore.self) private var store
-    @Environment(\.contentFilter) private var filter
-    @State private var featured: [FeaturedItem] = []
-    @State private var continueWatching: [PlexItem] = []
-    @State private var myList: [PlexItem] = []
-    @State private var shelves: [Shelf] = []
-    /// Full-screen spinner only while nothing (not even the cache) can be shown.
-    @State private var isLoading = true
-    @State private var isRefreshing = false
-    @State private var showingPicker = false
-
-    @State private var continueLogos: [String: String] = [:]
-
-    /// How much of the hero image the "Continue Watching" row sits on.
-    private let continueOverlap: CGFloat = 320
-
-    private var isEmpty: Bool { featured.isEmpty && continueWatching.isEmpty && shelves.isEmpty && myList.isEmpty }
-
-    var body: some View {
-        BrowseContainer(client: client) {
-            if isLoading && isEmpty {
-                LoadingView()
-            } else if isEmpty {
-                VStack(spacing: 40) {
-                    profileButton
-                    ContentUnavailableView("لا يوجد محتوى", systemImage: "film.stack",
-                                           description: Text(filter.scopes.isEmpty
-                                                             ? "لا توجد مكتبات مفتوحة لهذا المستخدم. افتحها من الإعدادات ← إعدادات المستخدم."
-                                                             : "أضف أفلاماً ومسلسلات إلى خادم Plex لتظهر هنا."))
-                }
-            } else {
-                ScrollViewReader { proxy in
-                    ScrollView(.vertical) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            profileButton
-                                .padding(.top, featured.isEmpty ? 40 : 0)
-                                .zIndex(2)
-
-                            if !featured.isEmpty {
-                                HeroCarousel(items: featured, client: client,
-                                             bottomInset: continueWatching.isEmpty ? 40 : continueOverlap) {
-                                    withAnimation(.easeInOut(duration: 0.4)) { proxy.scrollTo("hero", anchor: .top) }
-                                }
-                                .id("hero")
-                                // The avatar row sits over the top of the hero image.
-                                .padding(.top, -profileRowHeight)
-                            }
-
-                            if !continueWatching.isEmpty {
-                                ShelfView(shelf: Shelf(id: "continue", title: "متابعة المشاهدة",
-                                                       kind: .landscape, items: continueWatching,
-                                                       logos: continueLogos),
-                                          client: client)
-                                    // Sits on the lower part of the hero image, like the Apple TV app.
-                                    .padding(.top, featured.isEmpty ? 30 : -continueOverlap)
-                                    .zIndex(1)
-                            }
-
-                            if !myList.isEmpty {
-                                ShelfView(shelf: Shelf(id: "mylist", title: "قائمتي", kind: .poster, items: myList),
-                                          client: client)
-                            }
-
-                            ForEach(shelves) { shelf in
-                                ShelfView(shelf: shelf, client: client)
-                            }
-                        }
-                        .padding(.bottom, 60)
-                    }
-                    .ignoresSafeArea()
-                }
-            }
-        }
-        .overlay(alignment: .topTrailing) {
-            if isRefreshing && !isEmpty {
-                // Small, non-blocking refresh indicator.
-                ProgressView()
-                    .scaleEffect(0.6)
-                    .padding(.top, 40)
-                    .padding(.horizontal, 60)
-                    .allowsHitTesting(false)
-            }
-        }
-        .task { await load() }
-        .onReceive(NotificationCenter.default.publisher(for: .plexPlaybackDidEnd)) { _ in
-            Task { await load() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .libraryShouldRefresh)) { _ in
-            Task { await load(showCached: false) }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .profileDataDidChangeRemotely)) { _ in
-            guard !PlaybackManager.shared.isPlaying else { return }
-            Task { await load() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .myListDidChange)) { _ in
-            Task { myList = await UserFeed.myList(store: store, client: client, filter: filter) }
-        }
-    }
-
-    private let profileRowHeight: CGFloat = 150
-
-    /// Small avatar of the current profile at the top of Home; opens «مين يشاهد؟».
-    @ViewBuilder
-    private var profileButton: some View {
-        if let profile = store.activeProfile {
-            HStack {
-                Button { store.deactivate() } label: {
-                    HStack(spacing: 16) {
-                        ProfileAvatar(profile: profile, size: 64)
-                        Text(profile.name).font(.callout.weight(.semibold))
-                    }
-                    .padding(.horizontal, 10)
-                }
-                .buttonStyle(ProfileChipStyle())
-                Spacer()
-            }
-            .padding(.horizontal, 80)
-            .frame(height: profileRowHeight)
-            .focusSection()
-        }
-    }
-
-    /// Cached library first (no spinner), then the server in the background.
-    private func load(showCached: Bool = true) async {
-        isRefreshing = true
-        defer { isRefreshing = false; isLoading = false }
-        let current = HomeFeed(featured: featured, continueWatching: continueWatching,
-                               continueLogos: continueLogos, myList: myList, rows: [])
-        await HomeFeed.loadCacheFirst(client: client, store: store, filter: filter,
-                                      showCached: showCached && isEmpty, current: current) { apply($0) }
-    }
-
-    private func apply(_ feed: HomeFeed) {
-        continueWatching = feed.continueWatching
-        continueLogos = feed.continueLogos
-        myList = feed.myList
-        shelves = feed.rows.map { Shelf(id: $0.id, title: $0.title, kind: .poster, items: $0.items, ranked: $0.ranked) }
-        // Keep the current slide when nothing visible changed (e.g. after playback).
-        if feed.featured != featured { featured = feed.featured }
-
-        if backdrop.url == nil, let first = (continueWatching.first ?? shelves.first?.items.first) {
-            backdrop.url = client.imageURL(first.backdropPath, width: 1920, height: 1080)
-        }
-    }
-}
-
-/// Small capsule around the profile avatar on Home.
-private struct ProfileChipStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        ChipBody(configuration: configuration)
-    }
-
-    private struct ChipBody: View {
-        let configuration: ButtonStyleConfiguration
-        @Environment(\.isFocused) private var isFocused
-
-        var body: some View {
-            configuration.label
-                .foregroundStyle(isFocused ? Color.black : Color.white)
-                .padding(.vertical, 8)
-                .padding(.trailing, 18)
-                .background(Capsule().fill(isFocused ? Color.white : Color.black.opacity(0.35)))
-                .scaleEffect(configuration.isPressed ? 0.95 : (isFocused ? 1.1 : 1))
-                .shadow(color: .black.opacity(isFocused ? 0.4 : 0), radius: 14, y: 8)
-                .animation(.easeOut(duration: 0.15), value: isFocused)
-        }
     }
 }
 
@@ -295,7 +69,7 @@ struct LibraryView: View {
                         .pickerStyle(.segmented)
                         .frame(maxWidth: 1000)
                     }
-                    .padding(.horizontal, 80)
+                    .padding(.horizontal, CardKind.inset)
 
                     if items.isEmpty && loadedOnce && !isLoading {
                         ContentUnavailableView("لا توجد عناصر", systemImage: "tray")
@@ -410,6 +184,8 @@ struct SettingsView: View {
     let sections: [PlexDirectory]
     @Environment(AppSession.self) private var session
     @Environment(ProfileStore.self) private var store
+    @Environment(SidebarPrefs.self) private var sidebarPrefs
+    @Environment(\.contentFilter) private var filter
     @AppStorage(PlaybackSettings.forceTranscodeKey) private var forceTranscode = false
     @AppStorage(PlaybackSettings.engineKey) private var engine: PlaybackEngine = .mpv
     @AppStorage(PlaybackSettings.fastProfileKey) private var fastProfile = false
@@ -452,6 +228,18 @@ struct SettingsView: View {
                         Text("iCloud")
                     } footer: {
                         Text("بيانات كل مستخدم (التقدّم، المشاهَد، قائمتي، المكتبات) محفوظة في iCloud وعلى الجهاز، ولا تُرسل إلى Plex.")
+                    }
+                }
+
+                if !filter.scopes.isEmpty {
+                    Section {
+                        ForEach(filter.scopes) { scope in
+                            sidebarRow(scope)
+                        }
+                    } header: {
+                        Text("مكتبات الشريط الجانبي")
+                    } footer: {
+                        Text("اختر حتى \(ArabicFormat.digits(SidebarPrefs.maxPinned)) مكتبات تظهر في الشريط الجانبي بهذا الترتيب، والباقي تحت «المزيد». زر السهم يقدّم المكتبة خطوة.")
                     }
                 }
 
@@ -532,6 +320,32 @@ struct SettingsView: View {
             ProfileEditorView(client: client, sections: sections, existing: profile)
         }
         .pinRequest($pin)
+    }
+
+    private func sidebarRow(_ scope: LibraryScope) -> some View {
+        let position = sidebarPrefs.pinned(from: filter.scopes).firstIndex { $0.id == scope.id }
+        return HStack(spacing: 30) {
+            Button {
+                sidebarPrefs.toggle(scope, in: filter.scopes)
+            } label: {
+                HStack(spacing: 20) {
+                    Image(systemName: position != nil ? "checkmark.circle.fill" : "circle")
+                    Image(systemName: scope.icon)
+                    Text(scope.title)
+                    Spacer()
+                    if let position {
+                        Text(ArabicFormat.digits(position + 1)).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            if let position, position > 0 {
+                Button {
+                    sidebarPrefs.moveUp(scope, in: filter.scopes)
+                } label: {
+                    Image(systemName: "arrow.up")
+                }
+            }
+        }
     }
 
     /// A kids profile needs the main profile's PIN to open its settings.
