@@ -58,6 +58,8 @@ actor ImageLoader {
         if let image {
             let cost = Int(image.size.width * image.scale * image.size.height * image.scale * 4)
             memory.setObject(image, forKey: url as NSURL, cost: cost)
+            // Synchronous copy for views appearing on this artwork (first frame, no black).
+            ImageMemo.shared.cache.setObject(image, forKey: url as NSURL)
         }
         return image
     }

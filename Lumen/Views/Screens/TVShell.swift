@@ -121,6 +121,14 @@ private struct SidebarPadding: ViewModifier {
     func body(content: Content) -> some View { content.padding(.leading, inset + extra) }
 }
 
+/// Shell state shared with the screens: how many pages (details, listings) are pushed on top
+/// of the current screen. While one is, the sidebar can't open (no edge catcher).
+@MainActor
+@Observable
+final class ShellState {
+    var pushedPages = 0
+}
+
 struct MainTabView: View {
     let client: PlexServerClient
     let sections: [PlexDirectory]
@@ -135,6 +143,7 @@ struct MainTabView: View {
     @State private var prefs: SidebarPrefs
     /// The sidebar is on screen (hidden completely while closed).
     @State private var sidebarVisible = false
+    @State private var shell = ShellState()
     @FocusState private var sidebarFocus: TVDestination?
     @FocusState private var edgeFocused: Bool
     @Namespace private var shellNamespace
@@ -167,7 +176,7 @@ struct MainTabView: View {
             Color.clear
                 .frame(width: 12)
                 .frame(maxHeight: .infinity)
-                .focusable(!sidebarVisible)
+                .focusable(!sidebarVisible && shell.pushedPages == 0)
                 .focused($edgeFocused)
                 .focusSection()
 
@@ -202,6 +211,7 @@ struct MainTabView: View {
         }
         .environment(\.contentFilter, filter)
         .environment(prefs)
+        .environment(shell)
         .ignoresSafeArea(.container, edges: .horizontal)
         .task { checkForNewLibraries() }
         .alert(newLibraryTitle, isPresented: Binding(get: { !newSections.isEmpty }, set: { if !$0 { newSections = [] } })) {
@@ -223,6 +233,8 @@ struct MainTabView: View {
     /// Back / Menu on a top-level screen, or Right at the edge: shows the sidebar on the
     /// current page's row.
     private func openSidebar() {
+        // Only from a top-level screen (never from a details page).
+        guard shell.pushedPages == 0 else { return }
         guard !sidebarVisible else { sidebarFocus = selection; return }
         withAnimation(.timingCurve(0.2, 0.8, 0.2, 1, duration: 0.22)) { sidebarVisible = true }
         DispatchQueue.main.async { sidebarFocus = selection }
@@ -592,8 +604,13 @@ struct BannerPage<Content: View>: View {
                             infoRoute = DetailRoute(item: item.display, sourceID: "banner|\(item.id)",
                                                     context: BrowseContext(rowID: "banner-\(chipTitle)", items: banner.map(\.display)))
                         }
-                        // Scrolled into the rows: what's left of the banner is dimmed.
-                        .overlay(Color.black.opacity(atRows ? 0.5 : 0).allowsHitTesting(false))
+                        // Scrolled into the rows: what's left of the banner (artwork included,
+                        // down to the bottom edge) is dimmed.
+                        .overlay(alignment: .top) {
+                            Color.black.opacity(atRows ? 0.5 : 0)
+                                .frame(height: HeroBanner.artHeight)
+                                .allowsHitTesting(false)
+                        }
                         .id("banner")
                     }
 
@@ -646,9 +663,12 @@ struct BannerPage<Content: View>: View {
     }
 
     /// Puts the row's top marker (a 1 pt view at the top of the row) at `y` on the screen.
+    /// The marker has its own id: the row itself shares the row id with `ForEach`, and
+    /// scrolling to the whole row would anchor its middle instead of its header.
     private func scroll(_ proxy: ScrollViewProxy, to id: String, y: CGFloat) {
+        let target = id == BannerPageID.firstRow ? id : PageRow<EmptyView>.markerID(id)
         DispatchQueue.main.async {
-            withAnimation(.appleScroll) { proxy.scrollTo(id, anchor: UnitPoint(x: 0.5, y: y / 1080)) }
+            withAnimation(.appleScroll) { proxy.scrollTo(target, anchor: UnitPoint(x: 0.5, y: y / 1080)) }
         }
     }
 }
@@ -658,9 +678,11 @@ struct PageRow<Row: View>: View {
     let id: String
     @ViewBuilder let row: () -> Row
 
+    static func markerID(_ id: String) -> String { id + "#top" }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Color.clear.frame(height: 1).id(id)
+            Color.clear.frame(height: 1).id(Self.markerID(id))
             row()
         }
     }

@@ -92,7 +92,7 @@ struct ProfilePickerView: View {
                     .nativeCircleFocus()
                     .scaleEffect(chosenID == profile.id ? 1.12 : 1)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(AvatarButtonStyle())
             .focused($focused, equals: profile.id)
             .contextMenu {
                 Button("تعديل", systemImage: "pencil") { authorize(profile) { editor = .edit(profile) } }
@@ -127,7 +127,7 @@ struct ProfilePickerView: View {
                 .frame(width: circle, height: circle)
                 .nativeCircleFocus()
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(AvatarButtonStyle())
             .focused($focused, equals: "add")
 
             Text("إضافة")
@@ -228,5 +228,14 @@ private extension View {
         self
             .clipShape(Circle())
             .nativeHighlight(Circle())
+    }
+}
+
+/// Draws nothing around the label: no glass tile / platter (tvOS 26 gives borderless buttons
+/// one). The circle's own native highlight (`nativeCircleFocus`) is the only focus effect.
+private struct AvatarButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.9 : 1)
     }
 }

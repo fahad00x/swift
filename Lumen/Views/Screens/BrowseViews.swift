@@ -339,6 +339,8 @@ struct ItemListPage: View {
     let client: PlexServerClient
     let route: BrowseRoute
 
+    @Environment(ShellState.self) private var shell: ShellState?
+
     @Environment(\.contentFilter) private var filter
     @State private var items: [PlexItem] = []
     @State private var loaded = false
@@ -362,6 +364,8 @@ struct ItemListPage: View {
             }
         }
         .ignoresSafeArea()
+        .onAppear { shell?.pushedPages += 1 }
+        .onDisappear { shell?.pushedPages = max(0, (shell?.pushedPages ?? 1) - 1) }
         .task {
             let query = route.query.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
             let found = await client.listing(route.path, query)

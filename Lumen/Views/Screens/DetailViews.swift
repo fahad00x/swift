@@ -23,6 +23,7 @@ struct DetailPage: View {
     @Environment(ProfileStore.self) private var store
     @Environment(\.contentFilter) private var filter
     @Environment(\.dismiss) private var dismiss
+    @Environment(ShellState.self) private var shell: ShellState?
 
     /// The row item currently shown (movie, show, season or episode).
     @State private var current: PlexItem
@@ -105,8 +106,10 @@ struct DetailPage: View {
             cardStrip
 
             if let item {
+                // Near-invisible (not 0) until revealed, so the buttons can take focus at once
+                // and focus never escapes to the sidebar.
                 cardText(item)
-                    .opacity(revealed && !expanded ? 1 : 0)
+                    .opacity(expanded ? 0 : (revealed ? 1 : 0.02))
                     .offset(y: revealed ? 0 : 24)
 
                 if expanded {
@@ -145,6 +148,7 @@ struct DetailPage: View {
             if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
             guard !Task.isCancelled else { return }
             withAnimation(.easeOut(duration: 0.3)) { revealed = true }
+            if heroFocus == nil, !expanded { heroFocus = .play }
             if !cacheMiss { await load() }
             await preloadNeighbours()
         }
@@ -155,6 +159,12 @@ struct DetailPage: View {
             Task { await load() }
         }
         .defaultFocus($heroFocus, .play)
+        .onAppear {
+            shell?.pushedPages += 1
+            // Back lands on the same poster (or the last one reached by paging).
+            if let context { returnState.set(rowID: context.rowID, itemID: current.id) }
+        }
+        .onDisappear { shell?.pushedPages = max(0, (shell?.pushedPages ?? 1) - 1) }
     }
 
     /// Back goes one step back: from the episodes to the card, from the card to the poster.
@@ -190,7 +200,7 @@ struct DetailPage: View {
                 let offset = (items.firstIndex { $0.id == entry.id } ?? i) - i
                 let isCurrent = entry.id == current.id
                 let full = isCurrent && expanded
-                DetailCardArt(url: artURL(for: entry, isCurrent: isCurrent),
+                DetailCardArt(url: artURL(for: entry, isCurrent: isCurrent), lowURL: lowArtURL(for: entry),
                               isCurrent: isCurrent, expanded: full, dimmed: !isCurrent)
                     .frame(width: full ? Self.screen.width : Self.cardWidth,
                            height: full ? Self.screen.height : Self.cardHeight)
@@ -203,6 +213,14 @@ struct DetailPage: View {
         .frame(width: Self.screen.width, height: Self.screen.height, alignment: .top)
         .environment(\.layoutDirection, .leftToRight)
         .allowsHitTesting(false)
+    }
+
+    /// Small version of the main backdrop (often already in memory from the banner / rows),
+    /// drawn first so the card never opens black.
+    private func lowArtURL(for entry: PlexItem) -> URL? {
+        let key = displayKey(entry)
+        let path = metadataCache[key]?.backdropPath ?? (entry.isEpisode ? (entry.grandparentArt ?? entry.art) : entry.backdropPath)
+        return client.imageURL(path, width: 480, height: 270)
     }
 
     /// Current card: one of its artworks (cycled); neighbours: their main backdrop.
@@ -756,6 +774,8 @@ struct DetailPage: View {
 /// a heavily blurred colour wash of it on the full-screen episodes view.
 private struct DetailCardArt: View {
     let url: URL?
+    /// Low-res backdrop, blurred, under the full one (shown at once when cached).
+    let lowURL: URL?
     let isCurrent: Bool
     let expanded: Bool
     let dimmed: Bool
@@ -763,6 +783,8 @@ private struct DetailCardArt: View {
     var body: some View {
         ZStack {
             Color(white: 0.1)
+            RemoteImage(url: lowURL)
+                .blur(radius: expanded ? 70 : 12, opaque: true)
             RemoteImage(url: url)
                 .id(url)
                 .transition(.opacity)

@@ -21,8 +21,8 @@ struct HeroBanner: View {
     /// Height of the banner block in the page (the first row peeks under it); the artwork
     /// runs further, under the rows.
     static let height: CGFloat = 860
-    /// The artwork ends (faded out) at the banner's own edge; below it the page is flat.
-    static let artHeight: CGFloat = 860
+    /// The artwork runs full-bleed to the bottom of the screen (1080), under the first row.
+    static let artHeight: CGFloat = 1080
 
     @Environment(ProfileStore.self) private var store
     @State private var step = 1
@@ -110,19 +110,16 @@ struct HeroBanner: View {
                 .init(color: .black.opacity(0.4), location: 0.3),
                 .init(color: .clear, location: 0.6),
             ], startPoint: .trailing, endPoint: .leading)
+            // Soft dark gradient at the bottom, under the first row's title and posters; it
+            // reaches the page colour only at the very bottom edge, so scrolling shows no seam.
             LinearGradient(stops: [
-                .init(color: .clear, location: 0.35),
-                .init(color: .black.opacity(0.35), location: 0.6),
-                .init(color: .clear, location: 1),
+                .init(color: .clear, location: 0.5),
+                .init(color: .black.opacity(0.45), location: 0.75),
+                .init(color: BannerPage<EmptyView>.pageColor.opacity(0.85), location: 0.95),
+                .init(color: BannerPage<EmptyView>.pageColor, location: 1),
             ], startPoint: .top, endPoint: .bottom)
         }
         .frame(width: 1920, height: Self.artHeight)
-        // Long soft fade into the page below.
-        .mask(LinearGradient(stops: [
-            .init(color: .black, location: 0),
-            .init(color: .black, location: 0.5),
-            .init(color: .clear, location: 1),
-        ], startPoint: .top, endPoint: .bottom))
         .clipped()
         .environment(\.layoutDirection, .leftToRight)
         .frame(width: 1920, height: Self.height, alignment: .top)
