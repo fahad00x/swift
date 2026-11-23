@@ -191,13 +191,6 @@ struct MainTabView: View {
             }
         }
         .focusScope(shellNamespace)
-        .overlay(alignment: .topTrailing) {
-            // First library download only (the clock lives in the sidebar).
-            LibrarySyncBanner()
-                .padding(.top, 30)
-                .padding(.trailing, 60)
-                .allowsHitTesting(false)
-        }
         .onChange(of: edgeFocused) { _, focused in
             if focused { openSidebar() }
         }
@@ -474,16 +467,21 @@ struct HomeView: View {
     var body: some View {
         BrowseContainer(client: client, showsBackdrop: false) {
             if isLoading && isEmpty {
-                LoadingView()
+                // The first library download shows only here, while Home has nothing yet.
+                VStack(spacing: 40) {
+                    LoadingView()
+                    LibrarySyncBanner()
+                }
             } else if isEmpty {
                 ContentUnavailableView("لا يوجد محتوى", systemImage: "film.stack",
                                        description: Text(filter.scopes.isEmpty
                                                          ? "لا توجد مكتبات مفتوحة لهذا المستخدم. افتحها من الإعدادات ← إعدادات المستخدم."
                                                          : "أضف أفلاماً ومسلسلات إلى خادم Plex لتظهر هنا."))
             } else {
-                BannerPage(banner: banner, chipTitle: "الرئيسية", client: client, bannerFocus: $bannerFocus) {
+                BannerPage(banner: banner, chipTitle: "الرئيسية", client: client, bannerFocus: $bannerFocus,
+                           firstRowID: rows.first?.id) {
                     ForEach(rows) { shelf in
-                        ShelfView(shelf: shelf, client: client).id(shelf.id)
+                        PageRow(id: shelf.id) { ShelfView(shelf: shelf, client: client) }
                     }
                 }
             }
@@ -557,18 +555,20 @@ extension EnvironmentValues {
     }
 }
 
-/// A banner page (Home, a library): the banner, then `content` (rows, a tab bar…).
+/// A banner page (Home, a library): the banner, then `content` (rows, a tab bar…), all in
+/// ONE vertical scroll, so the banner leaves the screen like the rest of the page.
 ///
-/// The page moves as one piece: with focus on the banner it shows full screen (the first row
-/// peeking at the bottom); with focus in the rows the whole page (banner included, no
-/// parallax) moves up ~660 pt with the Apple curve, and Up from the first row brings it back.
-/// The banner artwork bleeds under the rows and fades into a dark tint of itself, never
-/// into black.
+/// Scroll positions (1080p, Apple TV app): banner focused → top of the page; the first row
+/// focused → its header at y≈230 (the bottom ~200 pt of the banner, dimmed, above it); any
+/// later row → its header at y≈300 with the bottom of the previous row's posters above it.
+/// Below the banner the page is a flat #1F2020.
 struct BannerPage<Content: View>: View {
     let banner: [BannerItem]
     let chipTitle: String
     let client: PlexServerClient
     var bannerFocus: FocusState<HeroBanner.Control?>.Binding
+    /// Scroll marker id of the first row (or tab bar) under the banner.
+    var firstRowID: String?
     @ViewBuilder let content: () -> Content
 
     @State private var index = 0
@@ -576,105 +576,93 @@ struct BannerPage<Content: View>: View {
     @State private var chipVisible = false
     @State private var infoRoute: DetailRoute?
 
-    /// How far the page moves up for the rows: the rows area then starts ~200 pt from the top.
-    private static var shift: CGFloat { HeroBanner.height - 200 }
-    /// Room above the first row inside the rows area (focus lift).
-    private static var rowTopInset: CGFloat { 30 }
-    private var rowsHeight: CGFloat {
-        banner.isEmpty ? 990 : 1080 - (HeroBanner.height - Self.shift) + Self.rowTopInset
-    }
+    static var pageColor: Color { Color(red: 0x1F / 255, green: 0x20 / 255, blue: 0x20 / 255) }
+    private static let firstRowY: CGFloat = 230
+    private static let laterRowY: CGFloat = 300
 
     var body: some View {
-        ZStack(alignment: .top) {
-            PageTint(url: banner.isEmpty ? nil : HeroBanner.lowResURL(banner[min(index, banner.count - 1)], client: client))
-
-            VStack(alignment: .leading, spacing: 0) {
-                if banner.isEmpty {
-                    Color.clear.frame(height: 90)
-                } else {
-                    HeroBanner(items: banner, client: client, chipTitle: chipTitle, focus: bannerFocus,
-                               index: $index, chipVisible: chipVisible) { item in
-                        infoRoute = DetailRoute(item: item.display, sourceID: "banner|\(item.id)",
-                                                context: BrowseContext(rowID: "banner-\(chipTitle)", items: banner.map(\.display)))
-                    }
-                    // Scrolled into the rows: the banner stays visible above them, dimmed.
-                    .overlay(Color.black.opacity(atRows ? 0.5 : 0).allowsHitTesting(false))
-                }
-
-                ScrollViewReader { proxy in
-                    ScrollView(.vertical) {
-                        LazyVStack(alignment: .leading, spacing: 0) {
-                            content()
+        ScrollViewReader { proxy in
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 0) {
+                    if banner.isEmpty {
+                        Color.clear.frame(height: 90)
+                    } else {
+                        HeroBanner(items: banner, client: client, chipTitle: chipTitle, focus: bannerFocus,
+                                   index: $index, chipVisible: chipVisible) { item in
+                            infoRoute = DetailRoute(item: item.display, sourceID: "banner|\(item.id)",
+                                                    context: BrowseContext(rowID: "banner-\(chipTitle)", items: banner.map(\.display)))
                         }
-                        .padding(.top, Self.rowTopInset)
-                        // The last row stays fully visible with its focus lift.
-                        .padding(.bottom, 120)
+                        // Scrolled into the rows: what's left of the banner is dimmed.
+                        .overlay(Color.black.opacity(atRows ? 0.5 : 0).allowsHitTesting(false))
+                        .id("banner")
                     }
-                    .frame(height: rowsHeight)
-                    .padding(.top, -Self.rowTopInset)
-                    .environment(\.pageRowFocused, { id in
-                        // The focused row's header ~200 pt from the top of the screen, the
-                        // next row's header and the top of its posters visible below it.
-                        DispatchQueue.main.async {
-                            withAnimation(.appleScroll) {
-                                proxy.scrollTo(id, anchor: UnitPoint(x: 0.5, y: Self.rowTopInset / rowsHeight))
-                            }
-                        }
-                    })
+
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        content()
+                    }
+                    // The last row stays fully visible with its focus lift.
+                    .padding(.bottom, 120)
                 }
             }
-            .offset(y: atRows && !banner.isEmpty ? -Self.shift : 0)
+            .background(Self.pageColor)
+            .scrollClipDisabled()
+            .ignoresSafeArea()
             .environment(\.pageContentFocused, {
+                // Banner → content: the first row at its reading position.
                 guard !atRows else { return }
                 chipVisible = false
-                withAnimation(.appleScroll) { atRows = true }
+                withAnimation(.easeOut(duration: 0.3)) { atRows = true }
+                if let firstRowID { scroll(proxy, to: firstRowID, y: Self.firstRowY) }
             })
-        }
-        .frame(width: 1920, height: 1080, alignment: .top)
-        .ignoresSafeArea()
-        .onChange(of: bannerFocus.wrappedValue) { old, new in
-            if new != nil {
-                if atRows {
-                    // Rows → banner: the whole page back down, focus on the primary button.
-                    withAnimation(.appleScroll) { atRows = false }
-                    if old == nil, new != .play { DispatchQueue.main.async { bannerFocus.wrappedValue = .play } }
+            .environment(\.pageRowFocused, { id in
+                if !atRows {
+                    chipVisible = false
+                    withAnimation(.easeOut(duration: 0.3)) { atRows = true }
                 }
-                // The chip fades in once the scroll has settled.
-                DispatchQueue.main.asyncAfter(deadline: .now() + (old == nil ? 0.85 : 0)) {
-                    guard bannerFocus.wrappedValue != nil, !atRows else { return }
-                    withAnimation(.easeOut(duration: 0.3)) { chipVisible = true }
+                scroll(proxy, to: id, y: id == firstRowID ? Self.firstRowY : Self.laterRowY)
+            })
+            .onChange(of: bannerFocus.wrappedValue) { old, new in
+                if new != nil {
+                    if atRows {
+                        // Rows → banner: the whole page back to the top, focus on the primary button.
+                        withAnimation(.easeOut(duration: 0.3)) { atRows = false }
+                        DispatchQueue.main.async { withAnimation(.appleScroll) { proxy.scrollTo("banner", anchor: .top) } }
+                        if old == nil, new != .play { DispatchQueue.main.async { bannerFocus.wrappedValue = .play } }
+                    }
+                    // The chip fades in once the scroll has settled.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + (old == nil ? 0.85 : 0)) {
+                        guard bannerFocus.wrappedValue != nil, !atRows else { return }
+                        withAnimation(.easeOut(duration: 0.3)) { chipVisible = true }
+                    }
+                } else {
+                    withAnimation(.easeOut(duration: 0.15)) { chipVisible = false }
                 }
-            } else {
-                withAnimation(.easeOut(duration: 0.15)) { chipVisible = false }
             }
         }
+        .frame(width: 1920, height: 1080)
         .navigationDestination(item: $infoRoute) { route in
             DetailPage(client: client, entry: route.item, context: route.context, sourceID: route.sourceID)
         }
     }
+
+    /// Puts the row's top marker (a 1 pt view at the top of the row) at `y` on the screen.
+    private func scroll(_ proxy: ScrollViewProxy, to id: String, y: CGFloat) {
+        DispatchQueue.main.async {
+            withAnimation(.appleScroll) { proxy.scrollTo(id, anchor: UnitPoint(x: 0.5, y: y / 1080)) }
+        }
+    }
 }
 
-/// The page background under a banner: a dark, blurred tint of the current artwork.
-private struct PageTint: View {
-    let url: URL?
+/// A row in a banner page with its 1 pt scroll marker on top (the marker carries the id).
+struct PageRow<Row: View>: View {
+    let id: String
+    @ViewBuilder let row: () -> Row
 
     var body: some View {
-        ZStack {
-            Color(white: 0.06)
-            if let url {
-                RemoteImage(url: url)
-                    .blur(radius: 80, opaque: true)
-                    .scaleEffect(1.2)
-                    .id(url)
-                    .transition(.opacity)
-            }
-            Color.black.opacity(0.6)
+        VStack(alignment: .leading, spacing: 0) {
+            Color.clear.frame(height: 1).id(id)
+            row()
         }
-        .frame(width: 1920, height: 1080)
-        .clipped()
-        .animation(.easeInOut(duration: 0.5), value: url)
-        .ignoresSafeArea()
-        .allowsHitTesting(false)
     }
 }
 

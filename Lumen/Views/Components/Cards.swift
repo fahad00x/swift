@@ -127,23 +127,6 @@ struct PosterCard: View {
                         ? client.posterURL(item)
                         : client.imageURL(item.posterPath, width: Int(size.width * 2), height: Int(size.height * 2)))
             PosterBadges(corner: cornerText)
-            // Focused: a small caption inside the art at the bottom centre («مسلسل • كوميديا»).
-            if isFocused, let focusCaption {
-                VStack(spacing: 0) {
-                    Spacer(minLength: 0)
-                    Text(focusCaption)
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                        .padding(.horizontal, 10)
-                        .padding(.top, 40)
-                        .padding(.bottom, 16)
-                        .frame(maxWidth: .infinity)
-                        .background(LinearGradient(colors: [.clear, .black.opacity(0.75)], startPoint: .top, endPoint: .bottom))
-                }
-                .transition(.opacity)
-            }
         }
         .animation(.easeOut(duration: 0.2), value: isFocused)
         .frame(width: size.width, height: size.height)
@@ -153,7 +136,7 @@ struct PosterCard: View {
     }
 
     /// «مسلسل • كوميديا» / «فيلم • أكشن»; the season and episode for an episode.
-    private var focusCaption: String? {
+    static func focusCaption(_ item: PlexItem) -> String? {
         if item.isEpisode { return ArabicFormat.episodeCode(season: item.parentIndex, episode: item.index) }
         guard item.isShow || item.type == "movie" else { return nil }
         let kind = item.isShow ? "مسلسل" : "فيلم"
@@ -324,6 +307,7 @@ struct MediaCardLink: View {
 
     @Environment(BackdropState.self) private var backdrop
     @Environment(\.pageContentFocused) private var pageContentFocused
+    @State private var cardFocused = false
     @Environment(\.detailNamespace) private var namespace
 
     private var zoomID: String { sourceID ?? item.id }
@@ -344,6 +328,21 @@ struct MediaCardLink: View {
             }
             // Native tvOS card focus: lift, soft shadow, moving shine and parallax tilt.
             .buttonStyle(.card)
+            // Focused poster: «مسلسل • كوميديا» just under it (badges printed on server posters
+            // stay readable); takes no room in the row.
+            .overlay(alignment: .bottom) {
+                if kind == .poster, cardFocused, let caption = PosterCard.focusCaption(item) {
+                    Text(caption)
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .lineLimit(1)
+                        .fixedSize()
+                        .offset(y: 44)
+                        .transition(.opacity)
+                        .allowsHitTesting(false)
+                }
+            }
+            .animation(.easeOut(duration: 0.2), value: cardFocused)
 
             // No text under posters (Apple TV app); landscape cards keep their title.
             if kind == .landscape {
@@ -367,6 +366,7 @@ struct MediaCardLink: View {
             }
         }
         .background(FocusReporter { focused in
+            cardFocused = focused
             guard focused else { return }
             // Under a banner: focus in the rows moves the page up.
             pageContentFocused?()

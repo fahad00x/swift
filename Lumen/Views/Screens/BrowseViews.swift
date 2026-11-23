@@ -72,9 +72,10 @@ struct LibraryView: View {
     var body: some View {
         BrowseContainer(client: client, showsBackdrop: false) {
             ScrollViewReader { proxy in
-                BannerPage(banner: banner, chipTitle: scope.title, client: client, bannerFocus: $bannerFocus) {
+                BannerPage(banner: banner, chipTitle: scope.title, client: client, bannerFocus: $bannerFocus,
+                           firstRowID: BannerPageID.firstRow) {
+                    Color.clear.frame(height: 1).id(BannerPageID.firstRow)
                     LibraryTabBar(selection: $tab)
-                        .id(BannerPageID.firstRow)
                         .padding(.top, banner.isEmpty ? 20 : 0)
                         .padding(.bottom, 40)
 
@@ -83,7 +84,9 @@ struct LibraryView: View {
                         if rows.isEmpty && loaded {
                             ContentUnavailableView("لا توجد عناصر", systemImage: "tray").frame(maxWidth: .infinity)
                         }
-                        ForEach(rows) { shelf in ShelfView(shelf: shelf, client: client).id(shelf.id) }
+                        ForEach(rows) { shelf in
+                            PageRow(id: shelf.id) { ShelfView(shelf: shelf, client: client) }
+                        }
                     case .browse:
                         LibraryBrowseGrid(client: client, scope: scope, scrollProxy: proxy)
                     case .collections:

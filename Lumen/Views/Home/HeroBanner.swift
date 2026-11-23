@@ -21,7 +21,8 @@ struct HeroBanner: View {
     /// Height of the banner block in the page (the first row peeks under it); the artwork
     /// runs further, under the rows.
     static let height: CGFloat = 860
-    static let artHeight: CGFloat = 1200
+    /// The artwork ends (faded out) at the banner's own edge; below it the page is flat.
+    static let artHeight: CGFloat = 860
 
     @Environment(ProfileStore.self) private var store
     @State private var step = 1
