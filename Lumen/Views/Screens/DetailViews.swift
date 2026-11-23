@@ -834,15 +834,16 @@ private struct DetailBackdrop: View {
 
             // Text side + bottom scrims (physical sides; see environment below).
             LinearGradient(stops: [
-                .init(color: .black.opacity(0.85), location: 0),
-                .init(color: .black.opacity(0.55), location: 0.35),
-                .init(color: .clear, location: 0.72),
+                .init(color: .black.opacity(0.92), location: 0),
+                .init(color: .black.opacity(0.7), location: 0.35),
+                .init(color: .black.opacity(0.25), location: 0.62),
+                .init(color: .clear, location: 0.8),
             ], startPoint: appDirection == .rightToLeft ? .trailing : .leading,
                endPoint: appDirection == .rightToLeft ? .leading : .trailing)
                 .opacity(expanded ? 0.4 : 1)
             LinearGradient(stops: [
-                .init(color: .clear, location: 0.4),
-                .init(color: .black.opacity(0.6), location: 0.7),
+                .init(color: .clear, location: 0.3),
+                .init(color: .black.opacity(0.7), location: 0.62),
                 .init(color: .black.opacity(0.95), location: 1),
             ], startPoint: .top, endPoint: .bottom)
         }

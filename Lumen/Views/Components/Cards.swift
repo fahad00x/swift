@@ -6,14 +6,14 @@ import SwiftUI
 enum CardKind {
     /// 2:3 poster. 7 fit across the content area (next to the sidebar rail).
     case poster
-    /// 16:9 Continue Watching card. ~4½ fit across the screen.
+    /// 16:9 Continue Watching card (episode still / movie art), progress and title below it.
     case landscape
 
     /// Sized for the content area next to the sidebar rail.
     var size: CGSize {
         switch self {
         case .poster: return CGSize(width: 210, height: 315)
-        case .landscape: return CGSize(width: 340, height: 191)
+        case .landscape: return CGSize(width: 400, height: 225)
         }
     }
 
@@ -25,53 +25,69 @@ enum CardKind {
 
 // MARK: - Landscape (Continue Watching)
 
+/// 16:9 artwork only: the episode's own still (or the movie's art). Progress, title and
+/// episode are drawn under it by `LandscapeCaption`.
 struct LandscapeCard: View {
     let item: PlexItem
     let client: PlexServerClient
-    /// Show / movie clear logo, when known.
-    var logoPath: String?
 
     var body: some View {
         let size = CardKind.landscape.size
-        ZStack(alignment: .bottom) {
+        ZStack {
             Color(white: 0.13)
+            Image(systemName: item.isEpisode ? "tv" : "film")
+                .font(.system(size: 44))
+                .foregroundStyle(.white.opacity(0.2))
             RemoteImage(url: client.imageURL(item.landscapePath, width: Int(size.width * 2), height: Int(size.height * 2)))
-            LinearGradient(stops: [
-                .init(color: .clear, location: 0.35),
-                .init(color: .black.opacity(0.8), location: 1),
-            ], startPoint: .top, endPoint: .bottom)
-
-            VStack(alignment: .leading, spacing: 8) {
-                CardTitle(title: item.cardTitle, logoPath: logoPath, client: client,
-                          logoSize: CGSize(width: 190, height: 64), font: .headline)
-                HStack(spacing: 10) {
-                    Image(systemName: "play.fill")
-                        .font(.system(size: 14, weight: .bold))
-                    Text(caption)
-                        .font(.caption2.weight(.semibold))
-                        .lineLimit(1)
-                }
-                .foregroundStyle(.white.opacity(0.9))
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 14)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(width: size.width, height: size.height)
-        .artworkStatus(item, triangleFraction: 0.08, barHeight: 6)
         .clipShape(RoundedRectangle(cornerRadius: CardKind.cornerRadius, style: .continuous))
     }
+}
 
-    /// "م٣  •  ح١  •  ٥٨د" for an episode, "باقي ٤٥د" for a movie.
-    private var caption: String {
-        let remaining = item.duration.map { max(0, $0 - (item.viewOffset ?? 0)) }
-        let time = remaining.map(ArabicFormat.duration(ms:))
-        if item.isEpisode {
-            let code = ArabicFormat.shortEpisodeCode(season: item.parentIndex, episode: item.index)
-            return ArabicFormat.joined([code, time].compactMap { $0 })
+/// Under a Continue Watching card: a clear progress bar, the title, and
+/// «الموسم ١  •  الحلقة ٧» (episodes) or the time left (movies).
+private struct LandscapeCaption: View {
+    let item: PlexItem
+
+    @Environment(ProfileStore.self) private var store
+
+    var body: some View {
+        let width = CardKind.landscape.size.width
+        VStack(alignment: .leading, spacing: 6) {
+            // Fills left → right like the player's timeline (also in Arabic).
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.white.opacity(0.22))
+                Capsule()
+                    .fill(ArtworkStatusOverlay.orange)
+                    .frame(width: width * (store.progress(of: item) ?? 0))
+            }
+            .frame(width: width, height: 6)
+            .environment(\.layoutDirection, .leftToRight)
+            .opacity(store.progress(of: item) == nil ? 0 : 1)
+            .padding(.bottom, 4)
+
+            Text(item.cardTitle)
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.9))
+                .lineLimit(1)
+            if let detail {
+                Text(detail)
+                    .font(.system(size: 18))
+                    .foregroundStyle(.white.opacity(0.6))
+                    .lineLimit(1)
+            }
         }
-        guard let time else { return "" }
-        return item.progress != nil ? "باقي \(time)" : time
+        .frame(width: width, alignment: .leading)
+    }
+
+    private var detail: String? {
+        if item.isEpisode {
+            return ArabicFormat.episodeCode(season: item.parentIndex, episode: item.index)
+        }
+        let remaining = item.duration.map { max(0, $0 - (store.state(for: item.ratingKey)?.offsetMs ?? item.viewOffset ?? 0)) }
+        guard let remaining, remaining > 0 else { return item.year.map { ArabicFormat.digits($0) } }
+        return "باقي " + ArabicFormat.duration(ms: remaining)
     }
 }
 
@@ -313,7 +329,7 @@ struct MediaCardLink: View {
                     case .poster:
                         PosterCard(item: item, client: client, rank: rank, logoPath: logoPath, size: posterSize)
                     case .landscape:
-                        LandscapeCard(item: item, client: client, logoPath: logoPath)
+                        LandscapeCard(item: item, client: client)
                     }
                 }
                 .background(FocusReporter { focused in
@@ -329,9 +345,12 @@ struct MediaCardLink: View {
             }
             .buttonStyle(PosterButtonStyle())
 
-            if kind == .poster {
+            switch kind {
+            case .poster:
                 CardCaption(item: item)
                     .frame(width: posterSize.width, alignment: .leading)
+            case .landscape:
+                LandscapeCaption(item: item)
             }
         }
     }

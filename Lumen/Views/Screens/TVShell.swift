@@ -395,6 +395,10 @@ struct HomeView: View {
 
     private var isEmpty: Bool { continueWatching.isEmpty && shelves.isEmpty }
 
+    /// Height of the focused item's details above the rows (was 440: the second row ended
+    /// up below the bottom of the screen).
+    static let detailsHeight: CGFloat = 370
+
     var body: some View {
         BrowseContainer(client: client, showsBackdrop: false) {
             ZStack(alignment: .top) {
@@ -409,9 +413,10 @@ struct HomeView: View {
                                                              : "أضف أفلاماً ومسلسلات إلى خادم Plex لتظهر هنا."))
                 } else {
                     VStack(alignment: .leading, spacing: 0) {
+                        // Short enough that a good part of the second row shows under the first.
                         FocusedDetails(item: focus.item, client: client)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .frame(height: 440, alignment: .bottomLeading)
+                            .frame(height: Self.detailsHeight, alignment: .bottomLeading)
                             .padding(.horizontal, CardKind.inset)
                             .padding(.bottom, 8)
 
@@ -419,7 +424,7 @@ struct HomeView: View {
                             LazyVStack(alignment: .leading, spacing: 4) {
                                 if !continueWatching.isEmpty {
                                     ShelfView(shelf: Shelf(id: "continue", title: "متابعة المشاهدة",
-                                                           kind: .poster, items: continueWatching),
+                                                           kind: .landscape, items: continueWatching),
                                               client: client)
                                 }
                                 ForEach(shelves) { shelf in
@@ -483,15 +488,23 @@ private struct HomeBackdrop: View {
                     .id(url)
                     .transition(.opacity)
             }
-            // Darken towards the text (leading side) and the rows (bottom).
+            // Darken towards the text (the right side in Arabic) and the rows (bottom), strong
+            // enough for white text over light artwork.
             LinearGradient(stops: [
-                .init(color: .black.opacity(0.92), location: 0),
-                .init(color: .black.opacity(0.55), location: 0.45),
-                .init(color: .black.opacity(0.1), location: 1),
+                .init(color: .black.opacity(0.95), location: 0),
+                .init(color: .black.opacity(0.82), location: 0.3),
+                .init(color: .black.opacity(0.45), location: 0.6),
+                .init(color: .black.opacity(0.15), location: 1),
             ], startPoint: .trailing, endPoint: .leading)
+            // Behind the details block at the top.
             LinearGradient(stops: [
-                .init(color: .clear, location: 0.3),
-                .init(color: .black.opacity(0.85), location: 0.62),
+                .init(color: .black.opacity(0.35), location: 0),
+                .init(color: .clear, location: 0.2),
+            ], startPoint: .top, endPoint: .bottom)
+            LinearGradient(stops: [
+                .init(color: .clear, location: 0.22),
+                .init(color: .black.opacity(0.7), location: 0.4),
+                .init(color: .black.opacity(0.92), location: 0.58),
                 .init(color: .black, location: 1),
             ], startPoint: .top, endPoint: .bottom)
         }
@@ -536,8 +549,8 @@ private struct FocusedDetails: View {
                 if let summary = (item.summary?.isEmpty == false ? item.summary : owner?.summary) {
                     Text(summary)
                         .font(.system(size: 22))
-                        .foregroundStyle(.white.opacity(0.8))
-                        .lineLimit(3)
+                        .foregroundStyle(.white.opacity(0.85))
+                        .lineLimit(2)
                         .frame(maxWidth: 1000, alignment: .leading)
                 }
 
