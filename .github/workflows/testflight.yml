@@ -32,7 +32,7 @@ jobs:
   testflight:
     name: TestFlight (${{ matrix.platform }})
     runs-on: macos-15
-    timeout-minutes: 60
+    timeout-minutes: 100
     strategy:
       fail-fast: false
       matrix:
@@ -210,6 +210,13 @@ jobs:
             fi
             exit 1
           fi
+
+      # Upload only means Apple received the file; ITMS errors (e.g. 90208) come from processing.
+      - name: Wait for App Store Connect processing
+        env:
+          PLATFORM: ${{ matrix.platform == 'iOS' && 'IOS' || 'TV_OS' }}
+          WAIT_MINUTES: "40"
+        run: python3 scripts/asc_build_status.py
 
       - name: Summary
         if: success()
