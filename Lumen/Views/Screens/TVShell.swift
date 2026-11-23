@@ -23,9 +23,11 @@ final class SidebarPrefs {
     private let key: String
     private var pinnedIDs: [String]?
 
+    /// From the profile (synced through iCloud); older builds kept it on the device only.
     init(profileID: String) {
         key = "sidebar.libraries.\(profileID)"
-        pinnedIDs = UserDefaults.standard.stringArray(forKey: key)
+        let profile = ProfileStore.shared.profiles.first { $0.id == profileID }
+        pinnedIDs = profile?.settings?.sidebarScopes ?? UserDefaults.standard.stringArray(forKey: key)
     }
 
     /// Pinned libraries in order (the first four by default).
@@ -61,6 +63,7 @@ final class SidebarPrefs {
     private func save(_ ids: [String]) {
         pinnedIDs = ids
         UserDefaults.standard.set(ids, forKey: key)
+        ProfileStore.shared.updateSettings { $0.sidebarScopes = ids }
     }
 }
 

@@ -6,6 +6,7 @@ enum Theme {
 
 @main
 struct LumenMobileApp: App {
+    @UIApplicationDelegateAdaptor(LumenAppDelegate.self) private var appDelegate
     @State private var session = AppSession()
     @Environment(\.scenePhase) private var scenePhase
 
@@ -16,6 +17,13 @@ struct LumenMobileApp: App {
                 .environment(session.profiles)
                 .preferredColorScheme(.dark)
                 .tint(Theme.accent)
+                .alert("تمت إضافة مستخدم مشترك",
+                       isPresented: Binding(get: { session.profiles.acceptedShareTitle != nil },
+                                            set: { if !$0 { session.profiles.acceptedShareTitle = nil } })) {
+                    Button("حسناً", role: .cancel) {}
+                } message: {
+                    Text("«\(session.profiles.acceptedShareTitle ?? "")» صار متاحاً في «مين يشاهد؟» ويتزامن مع الجهاز الآخر.")
+                }
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {

@@ -125,6 +125,10 @@ targets:
         UIUserInterfaceStyle: Dark
         UIStatusBarStyle: UIStatusBarStyleLightContent
         UIApplicationSupportsIndirectInputEvents: true
+        # Opens profile invitations (CloudKit shares) in the app.
+        CKSharingSupported: true
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft

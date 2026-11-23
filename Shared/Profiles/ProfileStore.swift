@@ -1,3 +1,4 @@
+import CloudKit
 import Foundation
 import Observation
 
@@ -41,6 +42,10 @@ final class ProfileStore {
     private(set) var rememberLastProfile: Bool
     /// Bumped on every change to the active profile's progress, watched marks or My List.
     private(set) var revision = 0
+    /// Title of a profile just added from another iCloud account's invitation (for a message).
+    var acceptedShareTitle: String?
+    /// Profiles other iCloud accounts shared with this one: profileID → their zone.
+    private(set) var sharedZones: [String: SharedZone] = [:]
 
     /// Overlay read by networking code; always reflects the active profile.
     let snapshot = UserStateSnapshot()
@@ -51,6 +56,7 @@ final class ProfileStore {
     @ObservationIgnored private var dirty: [String: Date] = [:]
     @ObservationIgnored private var pendingDeletes: Set<String> = []
     @ObservationIgnored private var changeToken: Data?
+    @ObservationIgnored private var sharedTokens: [String: Data] = [:]
     @ObservationIgnored private let cloud: CloudKitSync?
     @ObservationIgnored private var scheduledSync: Task<Void, Never>?
     @ObservationIgnored private var autoSync: Task<Void, Never>?
@@ -112,6 +118,7 @@ final class ProfileStore {
     func activate(_ profile: UserProfile) {
         activeProfileID = profile.id
         UserDefaults.standard.set(profile.id, forKey: Keys.lastProfile)
+        applySettingsToDevice()
         refreshSnapshot()
         revision += 1
         scheduleSync(after: 0)
@@ -142,7 +149,8 @@ final class ProfileStore {
     }
 
     func delete(_ profile: UserProfile) {
-        guard !profile.isOwner else { return }
+        // The owner can't be deleted; a shared profile belongs to the account that shared it.
+        guard !profile.isOwner, !isSharedWithMe(profile) else { return }
         profiles.removeAll { $0.id == profile.id }
         dirty.removeValue(forKey: profile.recordName)
         pendingDeletes.insert(profile.recordName)
@@ -171,6 +179,55 @@ final class ProfileStore {
         p.knownSections += new
         if enable { p.scopes += new.map { ScopeID(.all, $0).raw } }
         upsertProfile(p)
+    }
+
+    // MARK: - Per-profile settings (follow the profile to every device)
+
+    /// Changes the active profile's settings.
+    func updateSettings(_ change: (inout ProfileSettings) -> Void) {
+        guard var p = activeProfile else { return }
+        var settings = p.settings ?? ProfileSettings()
+        change(&settings)
+        guard settings != p.settings else { return }
+        p.settings = settings
+        upsertProfile(p)
+    }
+
+    /// Copies the active profile's playback preferences to the keys the players read.
+    private func applySettingsToDevice() {
+        guard let settings = activeProfile?.settings else { return }
+        if let on = settings.autoSkipIntro { UserDefaults.standard.set(on, forKey: ProfileSettings.autoSkipIntroKey) }
+        if let on = settings.autoPlayNext { UserDefaults.standard.set(on, forKey: ProfileSettings.autoPlayNextKey) }
+    }
+
+    // MARK: - Sharing with another iCloud account
+
+    /// The profile lives in another account's iCloud and was shared with this one.
+    func isSharedWithMe(_ profile: UserProfile) -> Bool { sharedZones[profile.id] != nil }
+
+    /// Uploads everything, then returns the profile's share (created on first use) for the
+    /// system sharing screen.
+    func prepareShare(for profile: UserProfile) async throws -> (CKShare, CKContainer) {
+        guard let cloud else { throw CloudSyncError.account(.couldNotDetermine) }
+        await syncNow()
+        let result = try await cloud.share(profileID: profile.id, title: profile.name)
+        // Upload the profile's data again (unchanged) so every record is in the shared hierarchy.
+        for (name, state) in states where state.profileID == profile.id { dirty[name] = dirty[name] ?? state.modifiedAt }
+        for (name, entry) in list where entry.profileID == profile.id { dirty[name] = dirty[name] ?? entry.modifiedAt }
+        scheduleSync(after: 0)
+        return result
+    }
+
+    /// Opens an invitation to someone else's profile (link tapped on this device).
+    func acceptShare(_ metadata: CKShare.Metadata) async {
+        guard let cloud else { return }
+        do {
+            try await cloud.accept(metadata)
+            await syncNow()
+            acceptedShareTitle = (metadata.share[CKShare.SystemFieldKey.title] as? String) ?? "مستخدم مشترك"
+        } catch {
+            cloudStatus = .failed(CloudKitSync.describe(error))
+        }
     }
 
     private func upsertProfile(_ profile: UserProfile) {
@@ -415,12 +472,16 @@ final class ProfileStore {
             let changes = try await cloud.fetchChanges(since: changeToken)
             apply(changes)
             changeToken = changes.token
+            // Profiles shared with this account (a failure here never stops the private sync).
+            if let shared = try? await cloud.fetchShared(tokens: sharedTokens) {
+                applyShared(shared)
+            }
 
             let uploads: [(SyncRecord, Date)] = dirty.compactMap { name, date in record(named: name).map { ($0, date) } }
             let deletions = Array(pendingDeletes)
             var failure: String?
             if !uploads.isEmpty || !deletions.isEmpty {
-                let result = try await cloud.push(uploads.map(\.0), deleting: deletions)
+                let result = try await cloud.push(uploads.map(\.0), deleting: deletions, shared: sharedZones)
                 let pushedDates = Dictionary(uploads.map { ($0.0.recordName, $0.1) }, uniquingKeysWith: { a, _ in a })
                 for name in result.saved where dirty[name] == pushedDates[name] {
                     dirty.removeValue(forKey: name)
@@ -433,6 +494,18 @@ final class ProfileStore {
         } catch {
             cloudStatus = .failed(CloudKitSync.describe(error))
         }
+    }
+
+    /// Merges the shared database; a profile whose share ended is removed from this device only.
+    private func applyShared(_ shared: SharedChanges) {
+        var zones = sharedZones.filter { shared.listedZones.contains($0.value.key) }
+        for (id, zone) in shared.profileZones { zones[id] = zone }
+        let ended = sharedZones.keys.filter { zones[$0] == nil }
+        sharedZones = zones
+        sharedTokens = shared.zoneTokens
+        var changes = shared.changes
+        changes.deletedRecordNames += ended.map { "profile-\($0)" }
+        apply(changes)
     }
 
     private func record(named name: String) -> SyncRecord? {
@@ -460,6 +533,7 @@ final class ProfileStore {
             switch record {
             case .profile(let p):
                 if let i = profiles.firstIndex(where: { $0.id == p.id }) { profiles[i] = p } else { profiles.append(p) }
+                if p.id == activeProfileID { applySettingsToDevice() }
             case .state(let s):
                 states[name] = s
                 if s.profileID == activeProfileID { touchedActive = true }
@@ -494,6 +568,8 @@ final class ProfileStore {
         var dirty: [String: Date]
         var pendingDeletes: [String]
         var changeToken: Data?
+        var sharedZones: [String: SharedZone]?
+        var sharedTokens: [String: Data]?
     }
 
     /// tvOS only guarantees the Caches directory, so profiles are also kept in UserDefaults
@@ -513,6 +589,8 @@ final class ProfileStore {
             dirty = cache.dirty
             pendingDeletes = Set(cache.pendingDeletes)
             changeToken = cache.changeToken
+            sharedZones = cache.sharedZones ?? [:]
+            sharedTokens = cache.sharedTokens ?? [:]
         } else if let data = UserDefaults.standard.data(forKey: Keys.backup),
                   let backup = try? JSONDecoder().decode([UserProfile].self, from: data) {
             profiles = backup
@@ -533,7 +611,8 @@ final class ProfileStore {
 
     private func saveToDisk() {
         let cache = Cache(profiles: profiles, states: Array(states.values), list: Array(list.values),
-                          dirty: dirty, pendingDeletes: Array(pendingDeletes), changeToken: changeToken)
+                          dirty: dirty, pendingDeletes: Array(pendingDeletes), changeToken: changeToken,
+                          sharedZones: sharedZones, sharedTokens: sharedTokens)
         if let data = try? JSONEncoder().encode(cache) {
             try? data.write(to: cacheURL, options: .atomic)
         }

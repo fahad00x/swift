@@ -55,10 +55,21 @@
      --environment development --file Shared/Sync/schema.ckdb
    ```
 3. **أو يدوياً من المتصفح:** ‏**CloudKit Database ← Schema ← Record Types ← +**، وأنشئ الأنواع والحقول الموجودة في الملف [`Shared/Sync/schema.ckdb`](Shared/Sync/schema.ckdb) بنفس الأسماء والأنواع (`STRING` = String، `INT64` = Int(64)، `TIMESTAMP` = Date/Time، `REFERENCE` = Reference):
-   - `Profile`: ‏profileID، name، symbol، colorHex، isKids، isOwner، pinHash، scopes، knownSections، genres، preferredAudioLanguage، preferredSubtitleLanguage، subtitlesOff، createdAt، modifiedAt
+   - `Profile`: ‏profileID، name، symbol، colorHex، isKids، isOwner، pinHash، scopes، knownSections، genres، preferredAudioLanguage، preferredSubtitleLanguage، subtitlesOff، settings، createdAt، modifiedAt
    - `MediaState`: ‏profileID، profile، ratingKey، type، showKey، seasonKey، sectionKey، sortIndex، genres، offsetMs، durationMs، watched، lastViewedAt، audioStreamID، subtitleStreamID، modifiedAt
    - `WatchlistItem`: ‏profileID، profile، ratingKey، type، sectionKey، addedAt، modifiedAt
 4. بعدها من الصفحة الرئيسية للـ Container اضغط **Deploy Schema Changes…** ثم **Deploy** إلى Production.
+
+### إضافة حقل `settings` (مرة وحدة، للنسخ من البناء ١٠ وطالع)
+إعدادات كل مستخدم (مكتبات الشريط الجانبي، تخطي المقدمة، الحلقة التالية) تنحفظ في حقل جديد اسمه `settings` في نوع `Profile`. تقدر تسويها من متصفح الجوال (Safari: ‏**aA ← Request Desktop Website** إذا الصفحة ضيقة):
+
+1. افتح <https://icloud.developer.apple.com> وسجّل دخول بحساب المطوّر، ثم **CloudKit Database** واختر `iCloud.com.fahad00x.lumen`.
+2. فوق تأكد إن البيئة **Development**.
+3. من القائمة: **Schema ← Record Types ← Profile**.
+4. اضغط **+ Add Field** (أو زر +)، الاسم `settings` والنوع **String**، ثم **Save**.
+5. ارجع لصفحة الـ Container واضغط **Deploy Schema Changes…** ← راجع إن التغيير «Profile: settings» ← **Deploy**.
+
+> قبل هالخطوة التطبيق يشتغل عادي ويحفظ كل شي ثاني، بس هالإعدادات تبقى على الجهاز نفسه ولا تتزامن.
 
 > **إذا ما سويت هذي الخطوات:** التطبيق يشتغل عادي، والمستخدمين وبياناتهم تنحفظ على الآبل تي في نفسه بس، وفي الإعدادات تحت «iCloud» تطلع رسالة توضّح السبب. وإذا فشل التوقيع بسبب الـ Container، شغّل الـ workflow مع إلغاء خيار **icloud** عشان ترفع نسخة بدون iCloud لين تخلص الإعداد.
 > **بديل تلقائي:** إذا عندك Apple TV مسجّل في حسابك (Devices)، شغّل الـ workflow مع خيار **signed_archive**؛ التوقيع التلقائي في Xcode ينشئ الـ Container ويربطه بنفسه.

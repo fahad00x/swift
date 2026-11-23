@@ -73,6 +73,8 @@ actor CloudKitSync {
     private let zoneID: CKRecordZone.ID
     private var container: CKContainer?
     private var zoneReady = false
+    /// The production schema has no `settings` field yet (profiles are saved without it).
+    private var settingsFieldMissing = false
 
     init(containerIdentifier: String) {
         self.containerIdentifier = containerIdentifier
@@ -169,50 +171,161 @@ actor CloudKitSync {
 
     // MARK: Push
 
-    func push(_ records: [SyncRecord], deleting deletions: [String]) async throws -> CloudPushResult {
+    /// - Parameter shared: profiles another account shared with this one (profileID → its zone);
+    ///   their records go to that zone in the shared database, everything else to the private one.
+    func push(_ records: [SyncRecord], deleting deletions: [String],
+              shared: [String: SharedZone] = [:]) async throws -> CloudPushResult {
         var result = CloudPushResult()
-        // Profiles first, so children never reference a profile the server hasn't seen.
-        let ordered = records.sorted { lhs, rhs in
-            if case .profile = lhs, !(rhs.isProfile) { return true }
-            return false
+        func zone(forRecordName name: String) -> SharedZone? {
+            shared.first { id, _ in
+                name == "profile-\(id)" || name.hasPrefix("state-\(id)-") || name.hasPrefix("list-\(id)-")
+            }?.value
         }
-        let toSave = ordered.map { RecordMapper.record(for: $0, zoneID: zoneID) }
-        let toDelete = deletions.map { CKRecord.ID(recordName: $0, zoneID: zoneID) }
-        let batch = 300
+        var privateRecords: [SyncRecord] = []
+        var sharedRecords: [SharedZone: [SyncRecord]] = [:]
+        for record in records {
+            if let z = shared[record.profileID] { sharedRecords[z, default: []].append(record) } else { privateRecords.append(record) }
+        }
+        var privateDeletes: [String] = []
+        var sharedDeletes: [SharedZone: [String]] = [:]
+        for name in deletions {
+            if let z = zone(forRecordName: name) { sharedDeletes[z, default: []].append(name) } else { privateDeletes.append(name) }
+        }
 
         do {
-            for start in stride(from: 0, to: toSave.count, by: batch) {
-                let chunk = Array(toSave[start..<min(start + batch, toSave.count)])
-                let outcome = try await database.modifyRecords(saving: chunk, deleting: [], savePolicy: .allKeys, atomically: false)
-                for (id, saved) in outcome.saveResults {
-                    switch saved {
-                    case .success: result.saved.append(id.recordName)
-                    case .failure(let error):
-                        result.failures[id.recordName] = Self.describe(error)
-                        if (error as? CKError)?.code == .zoneNotFound { zoneReady = false }
-                    }
-                }
-            }
-            for start in stride(from: 0, to: toDelete.count, by: batch) {
-                let chunk = Array(toDelete[start..<min(start + batch, toDelete.count)])
-                let outcome = try await database.modifyRecords(saving: [], deleting: chunk, savePolicy: .allKeys, atomically: false)
-                for (id, deleted) in outcome.deleteResults {
-                    switch deleted {
-                    case .success: result.deleted.append(id.recordName)
-                    case .failure(let error):
-                        if (error as? CKError)?.code == .unknownItem {
-                            result.deleted.append(id.recordName)
-                        } else {
-                            result.failures[id.recordName] = Self.describe(error)
-                        }
-                    }
-                }
-            }
+            try await push(privateRecords, deleting: privateDeletes, database: database, zoneID: zoneID, into: &result)
         } catch let error as CKError where error.code == .zoneNotFound || error.code == .userDeletedZone {
             zoneReady = false
             throw error
         }
+        let sharedDB = ckContainer.sharedCloudDatabase
+        for z in Set(sharedRecords.keys).union(sharedDeletes.keys) {
+            do {
+                try await push(sharedRecords[z] ?? [], deleting: sharedDeletes[z] ?? [], database: sharedDB,
+                               zoneID: z.zoneID, into: &result)
+            } catch {
+                // The owner stopped sharing: the next pull removes the profile here.
+                for record in sharedRecords[z] ?? [] { result.failures[record.recordName] = Self.describe(error) }
+            }
+        }
         return result
+    }
+
+    /// Profiles first, so children never reference a profile the server hasn't seen.
+    private func push(_ records: [SyncRecord], deleting deletions: [String], database: CKDatabase,
+                      zoneID: CKRecordZone.ID, into result: inout CloudPushResult) async throws {
+        let ordered = records.sorted { lhs, rhs in
+            if case .profile = lhs, !(rhs.isProfile) { return true }
+            return false
+        }
+        let byName = Dictionary(ordered.map { ($0.recordName, $0) }, uniquingKeysWith: { a, _ in a })
+        let includeSettings = !settingsFieldMissing
+        let toSave = ordered.map { RecordMapper.record(for: $0, zoneID: zoneID, includeSettings: includeSettings) }
+        let toDelete = deletions.map { CKRecord.ID(recordName: $0, zoneID: zoneID) }
+        let batch = 300
+
+        var retryWithoutSettings: [CKRecord] = []
+        for start in stride(from: 0, to: toSave.count, by: batch) {
+            let chunk = Array(toSave[start..<min(start + batch, toSave.count)])
+            let outcome = try await database.modifyRecords(saving: chunk, deleting: [], savePolicy: .allKeys, atomically: false)
+            for (id, saved) in outcome.saveResults {
+                switch saved {
+                case .success: result.saved.append(id.recordName)
+                case .failure(let error):
+                    let code = (error as? CKError)?.code
+                    if includeSettings, code == .serverRejectedRequest || code == .invalidArguments,
+                       let value = byName[id.recordName], value.isProfile {
+                        // Production schema without the `settings` field yet: save the rest.
+                        retryWithoutSettings.append(RecordMapper.record(for: value, zoneID: zoneID, includeSettings: false))
+                        continue
+                    }
+                    result.failures[id.recordName] = Self.describe(error)
+                    if code == .zoneNotFound, database === self.database { zoneReady = false }
+                }
+            }
+        }
+        if !retryWithoutSettings.isEmpty {
+            let outcome = try await database.modifyRecords(saving: retryWithoutSettings, deleting: [], savePolicy: .allKeys, atomically: false)
+            for (id, saved) in outcome.saveResults {
+                switch saved {
+                case .success:
+                    settingsFieldMissing = true
+                    result.saved.append(id.recordName)
+                case .failure(let error):
+                    result.failures[id.recordName] = Self.describe(error)
+                }
+            }
+        }
+        for start in stride(from: 0, to: toDelete.count, by: batch) {
+            let chunk = Array(toDelete[start..<min(start + batch, toDelete.count)])
+            let outcome = try await database.modifyRecords(saving: [], deleting: chunk, savePolicy: .allKeys, atomically: false)
+            for (id, deleted) in outcome.deleteResults {
+                switch deleted {
+                case .success: result.deleted.append(id.recordName)
+                case .failure(let error):
+                    if (error as? CKError)?.code == .unknownItem {
+                        result.deleted.append(id.recordName)
+                    } else {
+                        result.failures[id.recordName] = Self.describe(error)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: Sharing
+
+    /// Profiles another iCloud account shared with this one, from the shared database.
+    func fetchShared(tokens: [String: Data]) async throws -> SharedChanges {
+        let db = ckContainer.sharedCloudDatabase
+        let zones = try await db.allRecordZones()
+        var out = SharedChanges()
+        for zone in zones {
+            let ref = SharedZone(zone.zoneID)
+            out.listedZones.insert(ref.key)
+            var token = tokens[ref.key].flatMap(Self.unarchiveToken)
+            var moreComing = true
+            while moreComing {
+                do {
+                    let result = try await db.recordZoneChanges(inZoneWith: zone.zoneID, since: token)
+                    for (_, outcome) in result.modificationResultsByID {
+                        guard case .success(let modification) = outcome,
+                              let record = RecordMapper.decode(modification.record) else { continue }
+                        out.changes.records.append(record)
+                        if case .profile(let p) = record { out.profileZones[p.id] = ref }
+                    }
+                    out.changes.deletedRecordNames += result.deletions.map(\.recordID.recordName)
+                    token = result.changeToken
+                    moreComing = result.moreComing
+                } catch let error as CKError where error.code == .changeTokenExpired && token != nil {
+                    token = nil
+                }
+            }
+            out.zoneTokens[ref.key] = token.flatMap(Self.archiveToken)
+        }
+        return out
+    }
+
+    /// The share of a profile (created on first use): the profile and all its data, read-write
+    /// for the people the owner invites.
+    func share(profileID: String, title: String) async throws -> (CKShare, CKContainer) {
+        try await prepare()
+        let rootID = CKRecord.ID(recordName: "profile-\(profileID)", zoneID: zoneID)
+        let root = try await database.record(for: rootID)
+        if let ref = root.share, let existing = try? await database.record(for: ref.recordID) as? CKShare {
+            return (existing, ckContainer)
+        }
+        let share = CKShare(rootRecord: root)
+        share[CKShare.SystemFieldKey.title] = title as CKRecordValue
+        share.publicPermission = .none
+        let outcome = try await database.modifyRecords(saving: [root, share], deleting: [], savePolicy: .changedKeys, atomically: true)
+        if case .failure(let error)? = outcome.saveResults[share.recordID] { throw error }
+        return (share, ckContainer)
+    }
+
+    /// Joins a profile someone shared (the invitation link was opened on this device).
+    func accept(_ metadata: CKShare.Metadata) async throws {
+        _ = try await ckContainer.accept(metadata)
     }
 
     // MARK: Helpers
@@ -247,13 +360,49 @@ private extension SyncRecord {
     }
 }
 
+extension SyncRecord {
+    var profileID: String {
+        switch self {
+        case .profile(let p): return p.id
+        case .state(let s): return s.profileID
+        case .listItem(let w): return w.profileID
+        }
+    }
+}
+
+/// A record zone in the shared database (another account's profiles, shared with this one).
+struct SharedZone: Codable, Hashable, Sendable {
+    var owner: String
+    var zone: String
+
+    init(_ id: CKRecordZone.ID) {
+        owner = id.ownerName
+        zone = id.zoneName
+    }
+
+    var zoneID: CKRecordZone.ID { CKRecordZone.ID(zoneName: zone, ownerName: owner) }
+    var key: String { owner + "|" + zone }
+}
+
+struct SharedChanges: Sendable {
+    var changes = CloudChanges()
+    /// Change token per zone key.
+    var zoneTokens: [String: Data] = [:]
+    /// Profiles whose record arrived in this fetch, with their zone.
+    var profileZones: [String: SharedZone] = [:]
+    /// Every shared zone this account can still see.
+    var listedZones: Set<String> = []
+}
+
 // MARK: - Record mapping
 
 /// Model ⇄ CKRecord. Lists are stored as JSON strings (CloudKit can't infer the type of an empty list).
 enum RecordMapper {
     typealias RecordType = CloudKitSync.RecordType
 
-    static func record(for value: SyncRecord, zoneID: CKRecordZone.ID) -> CKRecord {
+    /// - Parameter includeSettings: false until the `settings` field exists in the production
+    ///   schema (CloudKit rejects unknown fields there; see SETUP-TESTFLIGHT.md).
+    static func record(for value: SyncRecord, zoneID: CKRecordZone.ID, includeSettings: Bool = true) -> CKRecord {
         let id = CKRecord.ID(recordName: value.recordName, zoneID: zoneID)
         switch value {
         case .profile(let p):
@@ -271,6 +420,10 @@ enum RecordMapper {
             r["preferredAudioLanguage"] = p.preferredAudioLanguage.map { $0 as NSString }
             r["preferredSubtitleLanguage"] = p.preferredSubtitleLanguage.map { $0 as NSString }
             r["subtitlesOff"] = NSNumber(value: p.subtitlesOff ? 1 : 0)
+            if includeSettings, let settings = p.settings,
+               let data = try? JSONEncoder().encode(settings), let text = String(data: data, encoding: .utf8) {
+                r["settings"] = text as NSString
+            }
             r["createdAt"] = p.createdAt as NSDate
             r["modifiedAt"] = p.modifiedAt as NSDate
             return r
@@ -321,6 +474,9 @@ enum RecordMapper {
             p.preferredAudioLanguage = r["preferredAudioLanguage"] as? String
             p.preferredSubtitleLanguage = r["preferredSubtitleLanguage"] as? String
             p.subtitlesOff = bool(r.object(forKey: "subtitlesOff"))
+            if let text = r["settings"] as? String, let data = text.data(using: .utf8) {
+                p.settings = try? JSONDecoder().decode(ProfileSettings.self, from: data)
+            }
             p.createdAt = (r["createdAt"] as? Date) ?? r.creationDate ?? Date()
             p.modifiedAt = modified
             return .profile(p)

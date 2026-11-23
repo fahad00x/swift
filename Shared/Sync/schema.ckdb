@@ -32,6 +32,7 @@ DEFINE SCHEMA
         preferredAudioLanguage    STRING,
         preferredSubtitleLanguage STRING,
         subtitlesOff              INT64,
+        settings                  STRING,
         createdAt                 TIMESTAMP,
         modifiedAt                TIMESTAMP,
         GRANT WRITE TO "_creator",

@@ -28,6 +28,9 @@ struct UserProfile: Codable, Identifiable, Hashable, Sendable {
     var preferredAudioLanguage: String?
     var preferredSubtitleLanguage: String?
     var subtitlesOff: Bool
+    /// Sidebar libraries and playback preferences (one JSON field in iCloud, so new settings
+    /// need no CloudKit schema change). nil on profiles saved before it existed.
+    var settings: ProfileSettings?
     var createdAt: Date
     var modifiedAt: Date
 
@@ -58,6 +61,18 @@ struct UserProfile: Codable, Identifiable, Hashable, Sendable {
     var contentSignature: String {
         "\(isKids)|\(scopes.joined(separator: ","))|\(genres.joined(separator: ","))"
     }
+}
+
+/// Per-profile settings that follow the profile to every device.
+struct ProfileSettings: Codable, Hashable, Sendable {
+    /// Libraries pinned to the Apple TV sidebar, in order (scope ids).
+    var sidebarScopes: [String]?
+    var autoSkipIntro: Bool?
+    var autoPlayNext: Bool?
+
+    /// Device keys these mirror (the players read them from UserDefaults).
+    static let autoSkipIntroKey = "playback.autoSkipIntro"
+    static let autoPlayNextKey = "playback.autoPlayNext"
 }
 
 /// Playback progress, watched mark and chosen tracks of one item for one profile.

@@ -64,6 +64,27 @@ struct SettingsView: View {
                     }
                 }
 
+                if store.cloudStatus != .localOnly, store.activeProfile?.isKids == false {
+                    Section {
+                        ForEach(store.profiles) { profile in
+                            if store.isSharedWithMe(profile) {
+                                HStack(spacing: 14) {
+                                    ProfileAvatar(profile: profile, size: 36)
+                                    Text(profile.name)
+                                    Spacer()
+                                    Text("مشارَك معك").font(.caption).foregroundStyle(.secondary)
+                                }
+                            } else {
+                                ShareProfileRow(profile: profile)
+                            }
+                        }
+                    } header: {
+                        Text("المشاركة مع حساب iCloud آخر")
+                    } footer: {
+                        Text("أرسل دعوة لمستخدم (مثلاً لجهاز زوجتك بحساب iCloud مختلف). بعد قبولها يظهر المستخدم في Lumen على جهازها، ويتزامن تقدّمه وقائمته وإعداداته بين الجهازين.")
+                    }
+                }
+
                 Section("حساب Plex") {
                     HStack(spacing: 14) {
                         RemoteImage(url: session.user?.thumb.flatMap(URL.init(string:)))
@@ -125,6 +146,9 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("الإعدادات")
+            // Follow the profile to its other devices.
+            .onChange(of: autoSkipIntro) { _, on in store.updateSettings { $0.autoSkipIntro = on } }
+            .onChange(of: autoPlayNext) { _, on in store.updateSettings { $0.autoPlayNext = on } }
             .navigationDestination(isPresented: $showLibraries) {
                 LibrariesSettingsView(client: client, sections: sections)
             }

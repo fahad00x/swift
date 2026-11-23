@@ -319,6 +319,9 @@ struct SettingsView: View {
             }
             .frame(maxWidth: 1300)
             .navigationTitle("الإعدادات")
+            // Follow the profile to its other devices.
+            .onChange(of: autoSkipIntro) { _, on in store.updateSettings { $0.autoSkipIntro = on } }
+            .onChange(of: autoPlayNext) { _, on in store.updateSettings { $0.autoPlayNext = on } }
         }
         .fullScreenCover(item: $editing) { profile in
             ProfileEditorView(client: client, sections: sections, existing: profile)
