@@ -40,11 +40,11 @@ private struct LibraryIndex {
         self.sections = sections
         for section in sections.values {
             for item in section.items { byKey[item.ratingKey] = item }
-            for season in section.seasons {
+            for season in section.seasons where byKey[season.ratingKey] == nil {
                 byKey[season.ratingKey] = season
                 if let show = season.parentRatingKey { children[show, default: []].append(season) }
             }
-            for episode in section.episodes {
+            for episode in section.episodes where byKey[episode.ratingKey] == nil {
                 byKey[episode.ratingKey] = episode
                 if let season = episode.parentRatingKey { children[season, default: []].append(episode) }
                 guard let show = episode.grandparentRatingKey else { continue }
@@ -166,7 +166,7 @@ actor LocalLibrary {
 
     func items(server: String, section: String, sort: LibrarySort, start: Int, size: Int) -> (items: [PlexItem], total: Int)? {
         guard serverID == server, let stored = index.sections[section] else { return nil }
-        let sorted = Self.sorted(stored.items, by: sort, index: index)
+        let sorted = Self.sorted(stored.items.uniqued(), by: sort, index: index)
         let lower = min(start, sorted.count)
         let upper = min(lower + max(size, 0), sorted.count)
         return (Array(sorted[lower..<upper]), sorted.count)
@@ -174,7 +174,7 @@ actor LocalLibrary {
 
     func recentlyAdded(server: String, section: String, limit: Int) -> [PlexItem]? {
         guard serverID == server, let stored = index.sections[section] else { return nil }
-        return Array(Self.sorted(stored.items, by: .recentlyAdded, index: index).prefix(limit))
+        return Array(Self.sorted(stored.items.uniqued(), by: .recentlyAdded, index: index).prefix(limit))
     }
 
     /// Seasons of a show, or episodes of a season.
@@ -209,7 +209,7 @@ actor LocalLibrary {
             if episodes.count < limit { episodes += section.episodes.filter { matches($0.title) }.prefix(limit) }
         }
         titles.sort { ($0.title.count, $0.title) < ($1.title.count, $1.title) }
-        return Array((titles + episodes).prefix(limit))
+        return Array((titles + episodes).uniqued().prefix(limit))
     }
 
     private static func sorted(_ items: [PlexItem], by sort: LibrarySort, index: LibraryIndex) -> [PlexItem] {
@@ -371,7 +371,8 @@ final class LibrarySync {
             report(start, total)
             if c.metadata.isEmpty || start >= total { break }
         }
-        return out
+        // Paging can repeat an item when the library changes meanwhile.
+        return out.uniqued()
     }
 
     /// Full fetch the first time; then only items updated since the last sync, falling back to a

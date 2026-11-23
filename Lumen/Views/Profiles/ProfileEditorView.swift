@@ -48,7 +48,11 @@ struct ProfileEditorView: View {
             }
             .padding(.horizontal, 60)
             .navigationTitle(existing == nil ? "إضافة مستخدم" : "تعديل المستخدم")
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            // Full-screen and opaque: nothing of the screen underneath shows through.
+            .background(Color.black.ignoresSafeArea())
         }
+        .background(Color.black.ignoresSafeArea())
         .fullScreenCover(isPresented: $settingPIN) {
             PinSetupView { pin in
                 draft.pinHash = ProfilePIN.hash(pin, profileID: draft.id)

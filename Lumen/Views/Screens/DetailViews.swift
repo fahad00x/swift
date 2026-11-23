@@ -82,7 +82,7 @@ struct DetailPage: View {
     @FocusState private var seasonFocus: String?
     @FocusState private var lowerFocus: String?
 
-    enum HeroButton: Hashable { case play, watchlist, more, edgeStart, edgeEnd }
+    enum HeroButton: Hashable { case play, watchlist, more, edgeStart, edgeEnd, backToTop }
 
     private let width: CGFloat = 1920
     private let height: CGFloat = 1080
@@ -319,6 +319,9 @@ struct DetailPage: View {
         case .edgeEnd?:
             if let old, buttons.contains(old) { page(+1) }
             DispatchQueue.main.async { heroFocus = .more }
+        case .backToTop?:
+            setExpanded(false)
+            DispatchQueue.main.async { heroFocus = .play }
         default:
             break
         }
@@ -356,7 +359,7 @@ struct DetailPage: View {
 
     private func backdropURL(_ item: PlexItem) -> URL? {
         let path = metadataCache[displayKey(item)]?.backdropPath ?? (item.isEpisode ? (item.grandparentArt ?? item.art) : item.backdropPath)
-        return client.imageURL(path, width: 3840, height: 2160)
+        return client.imageURL(path, width: 1920, height: 1080)
     }
 
     /// Artwork + logo of the previous and next items, so paging never shows a blank frame.
@@ -403,6 +406,13 @@ struct DetailPage: View {
     @ViewBuilder
     private func browse(_ item: PlexItem) -> some View {
         VStack(alignment: .leading, spacing: 26) {
+            // The buttons above are hidden in state 2 (and hidden views can't take focus), so
+            // Up from the first row lands on this full-width strip, which goes back to the top.
+            Color.white.opacity(0.001)
+                .frame(width: width, height: 10)
+                .focusable(expanded)
+                .focused($heroFocus, equals: .backToTop)
+
             if item.isShow {
                 if seasons.count > 1 { seasonChips }
                 episodesRow
@@ -439,9 +449,18 @@ struct DetailPage: View {
         .focusSection()
     }
 
+    /// Episode focus lands on when entering the row: the one Play starts, else the first unwatched.
+    private func entryEpisode(_ episodes: [PlexItem]) -> PlexItem? {
+        episodes.first { $0.ratingKey == playTarget?.ratingKey }
+            ?? episodes.first { !$0.isWatched }
+            ?? episodes.first
+    }
+
     private var episodesRow: some View {
-        let episodes = selectedSeasonKey.flatMap { episodesBySeason[$0] } ?? []
-        return ScrollView(.horizontal, showsIndicators: false) {
+        let episodes = (selectedSeasonKey.flatMap { episodesBySeason[$0] } ?? []).uniqued()
+        let entry = entryEpisode(episodes)
+        return ScrollViewReader { proxy in
+        ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(alignment: .top, spacing: 48) {
                 ForEach(episodes) { episode in
                     Button { play(episode) } label: {
@@ -465,7 +484,13 @@ struct DetailPage: View {
             .padding(.bottom, 40)
         }
         .scrollClipDisabled()
+        .onAppear {
+            // Show the episode you're up to (e.g. E7), not the start of the season.
+            if let entry { proxy.scrollTo(entry.id, anchor: .center) }
+        }
+        }
         .focusSection()
+        .defaultFocus($lowerFocus, entry.map { "ep-\($0.id)" }, priority: .userInitiated)
         .id(selectedSeasonKey)
         .transition(.opacity)
         .animation(.easeInOut(duration: 0.25), value: selectedSeasonKey)

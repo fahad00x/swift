@@ -19,7 +19,7 @@ struct PinPadView: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.92).ignoresSafeArea()
+            Color.black.ignoresSafeArea()
             VStack(spacing: 44) {
                 VStack(spacing: 14) {
                     Text(title).font(.title2.weight(.bold))

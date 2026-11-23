@@ -41,7 +41,7 @@ struct HomeView: View {
             .overlay {
                 if isLoading && feed.isEmpty { LoadingView() }
             }
-            .overlay { LibrarySyncBanner() }
+            .overlay(alignment: .bottom) { LibrarySyncBanner().padding(.bottom, 16) }
             .refreshable { await load(showCached: false) }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { profileButton }

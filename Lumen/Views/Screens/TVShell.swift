@@ -84,7 +84,8 @@ struct MainTabView: View {
     let sections: [PlexDirectory]
     let profile: UserProfile
 
-    static let railWidth: CGFloat = 112
+    /// Room the collapsed rail takes at the screen's edge (the right, in Arabic).
+    static let railInset: CGFloat = 140
 
     @Environment(ProfileStore.self) private var store
     @State private var newSections: [PlexDirectory] = []
@@ -100,37 +101,51 @@ struct MainTabView: View {
         _prefs = State(initialValue: SidebarPrefs(profileID: profile.id))
     }
 
+    private var sidebarOpen: Bool { sidebarFocus != nil }
+
     var body: some View {
         let filter = ContentFilter(profile: profile, sections: sections)
         let pinned = prefs.pinned(from: filter.scopes)
         let rest = filter.scopes.filter { scope in !pinned.contains { $0.id == scope.id } }
 
-        ZStack(alignment: .leading) {
+        // Arabic layout: the sidebar sits on the leading side, which is the right.
+        ZStack(alignment: .topLeading) {
             Color.black.ignoresSafeArea()
 
             content(filter: filter, rest: rest)
-                .environment(\.layoutDirection, .rightToLeft)
                 .environment(\.focusSidebar, { sidebarFocus = selection })
-                .padding(.leading, Self.railWidth)
+                .padding(.leading, Self.railInset)
                 .prefersDefaultFocus(true, in: shellNamespace)
+
+            // The content dims while the menu is open.
+            Color.black
+                .opacity(sidebarOpen ? 0.55 : 0)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
 
             TVSidebar(selection: $selection, focus: $sidebarFocus, profile: profile,
                       pinned: pinned, hasMore: !rest.isEmpty) {
                 store.deactivate()
             } onSelect: { destination in
                 selection = destination
-                // Hand focus to the chosen screen; the rail collapses.
+                // Hand focus to the chosen screen; the panel collapses to the rail.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { sidebarFocus = nil }
             }
+            .padding(.leading, 34)
+            .padding(.top, 34)
         }
+        .animation(.easeOut(duration: 0.2), value: sidebarOpen)
         .focusScope(shellNamespace)
         .overlay(alignment: .topTrailing) {
-            ClockView()
-                .padding(.top, 4)
-                .padding(.trailing, 64)
-                .allowsHitTesting(false)
+            // Opposite corner from the sidebar: the clock, and under it the first-sync progress.
+            VStack(alignment: .trailing, spacing: 14) {
+                ClockView()
+                LibrarySyncBanner()
+            }
+            .padding(.top, 4)
+            .padding(.trailing, 64)
+            .allowsHitTesting(false)
         }
-        .environment(\.layoutDirection, .leftToRight)
         .environment(\.contentFilter, filter)
         .environment(prefs)
         .ignoresSafeArea(.container, edges: .horizontal)
@@ -160,6 +175,7 @@ struct MainTabView: View {
             }
         case .more:
             MoreLibrariesView(scopes: rest) { scope in selection = .library(scope.id) }
+                .onExitCommand { sidebarFocus = selection }
         case .settings:
             SettingsView(client: client, sections: sections)
         }
@@ -190,6 +206,8 @@ struct MainTabView: View {
 
 // MARK: - Sidebar
 
+/// Floating rounded menu (blue-grey, semi-transparent) that fits its content; a slim icon rail
+/// while it doesn't have focus.
 private struct TVSidebar: View {
     @Binding var selection: TVDestination
     var focus: FocusState<TVDestination?>.Binding
@@ -206,33 +224,51 @@ private struct TVSidebar: View {
         return !pinned.contains { $0.id == id }
     }
 
+    static let panelColor = Color(red: 0.13, green: 0.16, blue: 0.21)
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 2) {
             Button(action: onProfile) {
-                HStack(spacing: 20) {
-                    ProfileAvatar(profile: profile, size: 52)
+                HStack(spacing: 16) {
+                    Text(String(profile.name.prefix(1)))
+                        .font(.system(size: 24, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 46, height: 46)
+                        .background(Circle().fill(Color(hex: profile.colorHex)))
                     if expanded {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(profile.name).font(.system(size: 26, weight: .semibold)).lineLimit(1)
-                            Text("تبديل المستخدم").font(.system(size: 18)).opacity(0.6)
-                        }
+                        Text(profile.name)
+                            .font(.system(size: 26, weight: .semibold))
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 16, weight: .bold))
+                            .opacity(0.6)
+                        Spacer(minLength: 0)
                     }
                 }
             }
-            .buttonStyle(SidebarButtonStyle(selected: false))
+            .buttonStyle(SidebarButtonStyle(selected: false, expanded: expanded))
             .focused(focus, equals: .profile)
-            .padding(.bottom, 24)
+            .padding(.bottom, 10)
 
             row(.myList, "قائمتي", "bookmark")
             row(.search, "بحث", "magnifyingglass")
             row(.home, "الرئيسية", "house")
 
-            Text("المكتبات")
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(.white.opacity(expanded ? 0.5 : 0))
-                .padding(.leading, 14)
-                .padding(.top, 22)
+            if expanded {
+                HStack(spacing: 12) {
+                    Text("المكتبات")
+                        .font(.system(size: 19, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.5))
+                    Rectangle()
+                        .fill(Color.white.opacity(0.18))
+                        .frame(height: 1)
+                }
+                .padding(.horizontal, 14)
+                .padding(.top, 14)
                 .padding(.bottom, 4)
+            } else {
+                Color.clear.frame(height: 18)
+            }
 
             ForEach(pinned) { scope in
                 row(.library(scope.id), scope.title, scope.icon)
@@ -241,66 +277,70 @@ private struct TVSidebar: View {
                 row(.more, "المزيد", "ellipsis", selected: selection == .more || selectedIsUnpinnedLibrary)
             }
 
-            Spacer(minLength: 20)
+            Rectangle()
+                .fill(Color.white.opacity(expanded ? 0.18 : 0))
+                .frame(height: 1)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+
             row(.settings, "الإعدادات", "gearshape")
         }
-        .padding(.vertical, 46)
-        .padding(.horizontal, 18)
-        .frame(width: expanded ? 420 : MainTabView.railWidth, alignment: .leading)
-        .frame(maxHeight: .infinity)
+        .padding(12)
+        .frame(width: expanded ? 400 : 96, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
         .background {
-            // Solid gradient instead of a blur: cheap to draw on every focus move.
-            LinearGradient(colors: [.black.opacity(expanded ? 0.97 : 0.85), .black.opacity(expanded ? 0.9 : 0.55)],
-                           startPoint: .leading, endPoint: .trailing)
-                .ignoresSafeArea()
+            RoundedRectangle(cornerRadius: 30, style: .continuous)
+                .fill(Self.panelColor.opacity(expanded ? 0.94 : 0.6))
         }
         .focusSection()
         .defaultFocus(focus, selection)
-        .animation(.easeOut(duration: 0.18), value: expanded)
+        // Menu on the sidebar leaves the app (the system handles it: no handler here).
     }
 
     private func row(_ destination: TVDestination, _ title: String, _ icon: String, selected: Bool? = nil) -> some View {
         Button { onSelect(destination) } label: {
-            HStack(spacing: 22) {
+            HStack(spacing: 18) {
                 Image(systemName: icon)
-                    .font(.system(size: 28, weight: .semibold))
-                    .frame(width: 52)
+                    .font(.system(size: 24, weight: .semibold))
+                    .frame(width: 46)
                 if expanded {
                     Text(title)
-                        .font(.system(size: 26, weight: .semibold))
+                        .font(.system(size: 25, weight: .semibold))
                         .lineLimit(1)
                     Spacer(minLength: 0)
                 }
             }
         }
-        .buttonStyle(SidebarButtonStyle(selected: selected ?? (selection == destination)))
+        .buttonStyle(SidebarButtonStyle(selected: selected ?? (selection == destination), expanded: expanded))
         .focused(focus, equals: destination)
     }
 }
 
 private struct SidebarButtonStyle: ButtonStyle {
     let selected: Bool
+    let expanded: Bool
 
     func makeBody(configuration: Configuration) -> some View {
-        StyleBody(configuration: configuration, selected: selected)
+        StyleBody(configuration: configuration, selected: selected, expanded: expanded)
     }
 
     private struct StyleBody: View {
         let configuration: ButtonStyleConfiguration
         let selected: Bool
+        let expanded: Bool
         @Environment(\.isFocused) private var isFocused
 
         var body: some View {
+            // Focused: white pill. Selected: light pill with dark text. Otherwise plain.
+            let pill: Color = isFocused ? .white : (selected ? Color.white.opacity(0.78) : .clear)
+            let text: Color = (isFocused || selected) ? Color(red: 0.08, green: 0.1, blue: 0.13) : Color.white.opacity(0.7)
             configuration.label
-                .foregroundStyle(isFocused ? Color.black : (selected ? Color.white : Color.white.opacity(0.55)))
-                .padding(.vertical, 10)
+                .foregroundStyle(text)
+                .padding(.vertical, 8)
                 .padding(.horizontal, 12)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(isFocused ? Color.white : (selected ? Color.white.opacity(0.14) : Color.clear))
-                }
-                .scaleEffect(configuration.isPressed ? 0.97 : 1)
+                .background(Capsule().fill(pill))
+                .scaleEffect(configuration.isPressed ? 0.97 : (isFocused && expanded ? 1.03 : 1))
         }
     }
 }
@@ -372,11 +412,10 @@ struct HomeView: View {
                         }
                     }
                 }
-                LibrarySyncBanner()
             }
             .environment(focus)
         }
-        .task { await load() }
+        .task(id: filter.signature) { await load() }
         .onReceive(NotificationCenter.default.publisher(for: .plexPlaybackDidEnd)) { _ in
             Task { await load() }
         }
@@ -427,7 +466,7 @@ private struct HomeBackdrop: View {
                 .init(color: .black.opacity(0.92), location: 0),
                 .init(color: .black.opacity(0.55), location: 0.45),
                 .init(color: .black.opacity(0.1), location: 1),
-            ], startPoint: .leading, endPoint: .trailing)
+            ], startPoint: .trailing, endPoint: .leading)
             LinearGradient(stops: [
                 .init(color: .clear, location: 0.3),
                 .init(color: .black.opacity(0.85), location: 0.62),
@@ -435,6 +474,8 @@ private struct HomeBackdrop: View {
             ], startPoint: .top, endPoint: .bottom)
         }
         .animation(.easeInOut(duration: 0.35), value: url)
+        // Physical directions: the text (and the darkest side) is on the right in Arabic.
+        .environment(\.layoutDirection, .leftToRight)
         .ignoresSafeArea()
         .task(id: item?.ratingKey) {
             guard let item else { return }

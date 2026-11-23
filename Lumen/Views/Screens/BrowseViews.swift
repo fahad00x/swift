@@ -189,6 +189,7 @@ struct SettingsView: View {
     @Environment(ProfileStore.self) private var store
     @Environment(SidebarPrefs.self) private var sidebarPrefs
     @Environment(\.contentFilter) private var filter
+    @Environment(\.focusSidebar) private var focusSidebar
     @AppStorage(PlaybackSettings.forceTranscodeKey) private var forceTranscode = false
     @AppStorage(PlaybackSettings.engineKey) private var engine: PlaybackEngine = .mpv
     @AppStorage(PlaybackSettings.fastProfileKey) private var fastProfile = false
@@ -319,6 +320,8 @@ struct SettingsView: View {
             }
             .frame(maxWidth: 1300)
             .navigationTitle("الإعدادات")
+            // Menu on Settings goes to the sidebar (pushed pickers handle their own Back).
+            .onExitCommand(perform: focusSidebar)
             // Follow the profile to its other devices.
             .onChange(of: autoSkipIntro) { _, on in store.updateSettings { $0.autoSkipIntro = on } }
             .onChange(of: autoPlayNext) { _, on in store.updateSettings { $0.autoPlayNext = on } }

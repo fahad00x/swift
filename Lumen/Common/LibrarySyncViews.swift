@@ -1,24 +1,23 @@
 import SwiftUI
 
-/// Progress of the first library sync (later syncs run silently). Shared by both apps.
+/// Small pill with the first library sync's progress (later syncs run silently); the caller
+/// places it where it covers nothing. Shared by both apps.
 struct LibrarySyncBanner: View {
     @State private var sync = LibrarySync.shared
 
     var body: some View {
         if sync.isFirstSync && sync.isSyncing {
             HStack(spacing: 16) {
-                ProgressView(value: sync.progress)
-                    .frame(maxWidth: 260)
+                ProgressView(value: sync.progress.isFinite ? min(max(sync.progress, 0), 1) : 0)
+                    .frame(width: 160)
                 Text(sync.message.isEmpty ? "جارٍ تجهيز المكتبة على الجهاز…" : sync.message)
-                    .font(.callout)
+                    .font(.caption)
                     .lineLimit(1)
+                    .frame(maxWidth: 360, alignment: .leading)
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 12)
-            .background(Capsule().fill(Color.black.opacity(0.8)))
-            .padding(.horizontal, 16)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-            .padding(.bottom, 40)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 8)
+            .background(Capsule().fill(Color.black.opacity(0.75)))
             .allowsHitTesting(false)
         }
     }
@@ -32,7 +31,7 @@ struct LibrarySyncStatusRow: View {
         LabeledContent("المكتبة على الجهاز") {
             if sync.isSyncing {
                 HStack(spacing: 12) {
-                    Text("\(ArabicFormat.digits(Int(sync.progress * 100)))٪")
+                    Text("\(ArabicFormat.digits(Int((sync.progress.isFinite ? min(max(sync.progress, 0), 1) : 0) * 100)))٪")
                     ProgressView()
                 }
             } else if let last = sync.lastSync {

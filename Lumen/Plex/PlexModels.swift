@@ -492,6 +492,15 @@ struct PlexItem: Codable, Identifiable, Hashable {
     }
 }
 
+extension Array where Element == PlexItem {
+    /// Drops repeated items (same ratingKey), keeping the first. SwiftUI lists crash when an
+    /// id appears twice (e.g. a library listing that shifted while it was being paged).
+    func uniqued() -> [PlexItem] {
+        var seen = Set<String>()
+        return filter { seen.insert($0.ratingKey).inserted }
+    }
+}
+
 // MARK: - Per-profile data
 
 extension PlexItem {

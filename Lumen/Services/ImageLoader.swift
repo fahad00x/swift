@@ -15,9 +15,14 @@ actor ImageLoader {
     private let diskLimit: Int = 600 * 1024 * 1024
 
     init() {
-        memory.countLimit = 400
-        // Hero backdrops are 4K; bound decoded memory rather than item count alone.
-        memory.totalCostLimit = 320 * 1024 * 1024
+        memory.countLimit = 300
+        // Bound decoded memory rather than item count alone (the system also empties it under pressure).
+        memory.totalCostLimit = 160 * 1024 * 1024
+        #if canImport(UIKit)
+        let cache = memory
+        NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification,
+                                               object: nil, queue: nil) { _ in cache.removeAllObjects() }
+        #endif
         let config = URLSessionConfiguration.default
         config.urlCache = nil
         config.requestCachePolicy = .reloadIgnoringLocalCacheData

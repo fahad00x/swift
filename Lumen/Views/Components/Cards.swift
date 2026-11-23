@@ -82,8 +82,8 @@ struct LandscapeCard: View {
 // MARK: - Poster
 
 /// Artwork only (the title is drawn under the card by `MediaCardLink`), with the status
-/// overlays: unwatched triangle + progress bar, unwatched episode count, quality, rating and
-/// the «يُعرض» ribbon for shows with a recent episode.
+/// overlays: unwatched triangle + progress bar, unwatched episode count, quality and the
+/// «يُعرض» ribbon (no rating: posters often have it printed on them already) for shows with a recent episode.
 struct PosterCard: View {
     let item: PlexItem
     let client: PlexServerClient
@@ -122,7 +122,7 @@ struct PosterCard: View {
     }
 }
 
-/// Overlays drawn in physical positions (top-left count / quality, bottom rating / ribbon),
+/// Overlays drawn in physical positions (top-left count / quality, bottom ribbon),
 /// so they never collide with the top-right unwatched triangle in Arabic.
 private struct PosterBadges: View {
     let item: PlexItem
@@ -137,11 +137,6 @@ private struct PosterBadges: View {
         return f.string(from: Date().addingTimeInterval(-14 * 86_400))
     }
 
-    private var rating: String? {
-        guard let r = item.audienceRating ?? item.rating, r > 0 else { return nil }
-        return String(format: "%.1f", r)
-    }
-
     private var quality: String? {
         guard item.isPlayable else { return nil }
         return item.media.first?.resolutionBadge
@@ -149,7 +144,7 @@ private struct PosterBadges: View {
 
     var body: some View {
         ZStack {
-            if rating != nil || airing {
+            if airing {
                 LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .center, endPoint: .bottom)
             }
             VStack(alignment: .leading, spacing: 6) {
@@ -164,13 +159,6 @@ private struct PosterBadges: View {
             .padding(8)
 
             HStack(spacing: 6) {
-                if let rating {
-                    HStack(spacing: 3) {
-                        Image(systemName: "star.fill").font(.system(size: 12))
-                        Text(rating).font(.system(size: 15, weight: .bold))
-                    }
-                    .foregroundStyle(.white)
-                }
                 Spacer(minLength: 0)
                 if airing {
                     Text("يُعرض")
@@ -391,7 +379,8 @@ struct ShelfView: View {
     @State private var lastFocusedID: String?
 
     var body: some View {
-        let context = BrowseContext(rowID: shelf.id, items: shelf.items)
+        let items = shelf.items.uniqued()
+        let context = BrowseContext(rowID: shelf.id, items: items)
         VStack(alignment: .leading, spacing: 0) {
             Text(shelf.title)
                 .font(.system(size: 30, weight: .semibold))
@@ -401,7 +390,7 @@ struct ShelfView: View {
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(alignment: .top, spacing: CardKind.spacing) {
-                        ForEach(Array(shelf.items.enumerated()), id: \.element.id) { index, item in
+                        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                             MediaCardLink(item: item, kind: shelf.kind, client: client,
                                           rank: shelf.ranked ? index + 1 : nil,
                                           logoPath: shelf.logos[item.ratingKey],
@@ -419,7 +408,7 @@ struct ShelfView: View {
                 .onAppear { restoreFocus(proxy) }
             }
             .focusSection()
-            .defaultFocus($focusedID, lastFocusedID ?? shelf.items.first?.id, priority: .userInitiated)
+            .defaultFocus($focusedID, lastFocusedID ?? items.first?.id, priority: .userInitiated)
             .onChange(of: focusedID) { _, id in
                 if let id { lastFocusedID = id }
             }
@@ -451,6 +440,7 @@ struct PosterGrid: View {
     private let columns = Array(repeating: GridItem(.fixed(CardKind.poster.size.width), spacing: CardKind.spacing, alignment: .top), count: 7)
 
     var body: some View {
+        let items = self.items.uniqued()
         let context = BrowseContext(rowID: rowID, items: items)
         LazyVGrid(columns: columns, alignment: .center, spacing: 44) {
             ForEach(items) { item in

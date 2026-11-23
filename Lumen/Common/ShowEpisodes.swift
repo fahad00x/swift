@@ -12,8 +12,8 @@ struct ShowEpisodes {
     static func load(client: PlexServerClient, showKey: String, preferred: PlexItem?) async -> ShowEpisodes {
         async let seasonsTask = client.children(showKey)
         async let leavesTask = client.allLeaves(showKey)
-        let seasons = ((try? await seasonsTask) ?? []).filter(\.isSeason)
-        let leaves = await leavesTask
+        let seasons = ((try? await seasonsTask) ?? []).filter(\.isSeason).uniqued()
+        let leaves = (await leavesTask).uniqued()
         var bySeason: [String: [PlexItem]] = [:]
         for episode in leaves {
             bySeason[episode.parentRatingKey ?? "", default: []].append(episode)

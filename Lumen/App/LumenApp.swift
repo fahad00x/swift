@@ -48,9 +48,10 @@ struct RootView: View {
             case .ready:
                 if let client = session.client {
                     if let profile = profiles.activeProfile {
-                        // Rebuilt when the profile (or what it may see) changes.
+                        // Rebuilt only for another profile or server: editing the profile's libraries
+                        // in Settings must not tear down the screen that is presenting the editor.
                         MainTabView(client: client, sections: session.sections, profile: profile)
-                            .id("\(client.machineIdentifier)|\(profile.id)|\(profile.contentSignature)")
+                            .id("\(client.machineIdentifier)|\(profile.id)")
                     } else {
                         ProfilePickerView(client: client, sections: session.sections)
                     }
