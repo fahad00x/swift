@@ -1,34 +1,75 @@
 import SwiftUI
 
-/// Apple TV–style details page for a movie or a show.
+/// Apple TV app–style details page, mirrored for Arabic.
 ///
-/// State 1 (on open): full-screen artwork; eyebrow, clear logo, genres, summary, info line,
-/// quality badges, Play / + / ⋯ buttons and the cast line; the next row peeks at the bottom.
-/// State 2 (after moving down): the artwork stays fixed and blurs/darkens, the logo shrinks
-/// to the top centre and stays there; seasons + episodes (or related movies), extras, cast and
-/// file info scroll underneath. Moving back up to the buttons (or pressing Menu) returns to state 1.
+/// State 1, a CARD: on a flat dark-grey background, the title's artwork fills a rounded card
+/// (120 pt side margins, 40 pt from the top, running past the bottom edge) with the text on the
+/// reading side (right) and the cast on the other. The row's neighbouring titles peek at the
+/// sides; Left / Right slide the strip to the next / previous one (next comes from the left).
+/// The artwork cycles through 2–3 of the title's backgrounds.
+///
+/// State 2, EPISODES (Down, or the episodes button): the card grows to the full screen and
+/// turns into a blurred colour wash; a small logo at the top, the season labels, the episodes
+/// and «ذات صلة». Up from the seasons, or Back, returns to the card.
 struct DetailPage: View {
     let client: PlexServerClient
-    /// Row the page was opened from; swiping past the buttons pages through it (no wrap-around).
+    /// Row the page was opened from; Left / Right page through it (no wrap-around).
     let context: BrowseContext?
     /// Zoom source of the card that opened the page (when there is no row context).
     let sourceID: String?
 
-    @Environment(\.layoutDirection) private var appDirection
     @Environment(\.detailNamespace) private var zoomNamespace
     @Environment(BrowseReturnState.self) private var returnState
     @Environment(ProfileStore.self) private var store
     @Environment(\.contentFilter) private var filter
     @Environment(\.dismiss) private var dismiss
-    @Namespace private var logoNamespace
 
     /// The row item currently shown (movie, show, season or episode).
     @State private var current: PlexItem
-    @State private var step = 1
-    @State private var generation = 0
-    @State private var backdrops: [String: UIImage] = [:]
-    @State private var logos: [String: UIImage] = [:]
     @State private var metadataCache: [String: PlexItem] = [:]
+    @State private var logos: [String: UIImage] = [:]
+    /// Background artworks of a movie / show (paths), cycled on its card.
+    @State private var artworks: [String: [String]] = [:]
+    @State private var artIndex = 0
+
+    @State private var item: PlexItem?
+    @State private var playTarget: PlexItem?
+    @State private var seasons: [PlexItem] = []
+    @State private var selectedSeasonKey: String?
+    @State private var episodesBySeason: [String: [PlexItem]] = [:]
+    @State private var related: [PlexItem] = []
+    @State private var extras: [PlexItem] = []
+    @State private var revealed = false
+    @State private var expanded = false
+    /// The episodes view finished appearing (Up to the card works only then, so focus landing
+    /// on the top strip while it appears doesn't close it again).
+    @State private var episodesReady = false
+    @State private var audioSelection = -1
+    @State private var subtitleSelection = -1
+    /// Selection last loaded from the profile (changes from the menu differ from it).
+    @State private var shownStreams: (audio: Int, subtitle: Int) = (-1, -1)
+
+    @FocusState private var heroFocus: HeroButton?
+    @FocusState private var seasonFocus: String?
+    @FocusState private var lowerFocus: String?
+
+    enum HeroButton: Hashable { case play, watchlist, episodes, edgeStart, edgeEnd, down, backToTop }
+
+    /// Side inset of rows on the full-screen episodes view.
+    static let sideInset: CGFloat = CardKind.inset
+
+    // Card geometry (px at 1920×1080).
+    private static let screen = CGSize(width: 1920, height: 1080)
+    private static let cardMargin: CGFloat = 120
+    private static let cardTop: CGFloat = 40
+    private static let cardGap: CGFloat = 22
+    private static let cardRadius: CGFloat = 36
+    private static var cardWidth: CGFloat { screen.width - 2 * cardMargin }
+    /// Runs 40 pt past the bottom edge.
+    private static var cardHeight: CGFloat { screen.height }
+    private static var pitch: CGFloat { cardWidth + cardGap }
+    /// Text 40 pt inside the card edge.
+    private static var textInset: CGFloat { cardMargin + 40 }
 
     init(client: PlexServerClient, entry: PlexItem, context: BrowseContext? = nil, sourceID: String? = nil) {
         self.client = client
@@ -38,13 +79,7 @@ struct DetailPage: View {
     }
 
     /// Movie or show the page describes (episodes and seasons open their show).
-    private var ratingKey: String {
-        switch current.type {
-        case "episode": return current.grandparentRatingKey ?? current.ratingKey
-        case "season": return current.parentRatingKey ?? current.ratingKey
-        default: return current.ratingKey
-        }
-    }
+    private var ratingKey: String { displayKey(current) }
     private var initialSeasonKey: String? {
         switch current.type {
         case "episode": return current.parentRatingKey
@@ -61,97 +96,28 @@ struct DetailPage: View {
         guard let context, let i = currentIndex else { return false }
         return i + 1 < context.items.count
     }
-    /// +1 when the incoming artwork should enter from the right edge ("next" reads leftwards in RTL).
-    private var entrySign: CGFloat { CGFloat(step) * (appDirection == .rightToLeft ? -1 : 1) }
-
-    @State private var item: PlexItem?
-    @State private var playTarget: PlexItem?
-    @State private var seasons: [PlexItem] = []
-    @State private var selectedSeasonKey: String?
-    @State private var episodesBySeason: [String: [PlexItem]] = [:]
-    @State private var related: [PlexItem] = []
-    @State private var extras: [PlexItem] = []
-    @State private var revealed = false
-    @State private var expanded = false
-    @State private var audioSelection = -1
-    @State private var subtitleSelection = -1
-    /// Selection last loaded from the profile (changes from the menu differ from it).
-    @State private var shownStreams: (audio: Int, subtitle: Int) = (-1, -1)
-
-    @FocusState private var heroFocus: HeroButton?
-    @FocusState private var seasonFocus: String?
-    @FocusState private var lowerFocus: String?
-
-    enum HeroButton: Hashable { case play, watchlist, more, edgeStart, edgeEnd, backToTop }
-
-    /// Full screen (the artwork runs under the floating sidebar); text and rows start after
-    /// the sidebar through the environment's `sidebarInset`.
-    private let width: CGFloat = 1920
-    /// One side inset (after the sidebar) for the hero text, section titles and every
-    /// horizontal row, the same as Home's rows, so they all start on the same line.
-    static let sideInset: CGFloat = CardKind.inset
-    private let height: CGFloat = 1080
-    /// Hero height in state 1; the rest of the screen shows the next row ("peek").
-    private let heroHeight: CGFloat = 930
 
     var body: some View {
         ZStack(alignment: .top) {
-            DetailBackdrop(key: displayKey(current), image: backdrops[displayKey(current)], url: backdropURL(current),
-                           expanded: expanded, entrySign: entrySign, generation: generation,
-                           colors: nil)
+            // Flat dark grey behind the cards.
+            Color(red: 0.149, green: 0.149, blue: 0.149)
+
+            cardStrip
 
             if let item {
-                ScrollViewReader { proxy in
-                    ScrollView(.vertical) {
-                        VStack(alignment: .leading, spacing: 0) {
-                            hero(item)
-                                .frame(width: width, height: heroHeight, alignment: .bottom)
-                                .background(GeometryReader { geo in
-                                    Color.clear.preference(key: HeroOffsetKey.self,
-                                                           value: geo.frame(in: .named("detail")).minY)
-                                })
-                                .id("hero")
-
-                            Color.clear.frame(height: 1).id("browse")
-                            browse(item)
-                                .padding(.bottom, 140)
-                        }
-                    }
-                    .coordinateSpace(name: "detail")
-                    .scrollClipDisabled()
-                    .onPreferenceChange(HeroOffsetKey.self) { minY in
-                        if minY < -120, heroFocus == nil { setExpanded(true) }
-                    }
-                    .onChange(of: expanded) { _, isExpanded in
-                        withAnimation(.easeInOut(duration: 0.5)) {
-                            if isExpanded {
-                                proxy.scrollTo("browse", anchor: UnitPoint(x: 0.5, y: 0.2))
-                            } else {
-                                proxy.scrollTo("hero", anchor: .top)
-                            }
-                        }
-                    }
-                    .onChange(of: heroFocus) { _, focus in
-                        if focus != nil {
-                            setExpanded(false)
-                            withAnimation(.easeInOut(duration: 0.5)) { proxy.scrollTo("hero", anchor: .top) }
-                        }
-                    }
-                }
-                .ignoresSafeArea()
+                cardText(item)
+                    .opacity(revealed && !expanded ? 1 : 0)
+                    .offset(y: revealed ? 0 : 24)
 
                 if expanded {
-                    LogoView(image: logos[item.ratingKey], title: item.title, maxSize: CGSize(width: 560, height: 150), fontSize: 64)
-                        .matchedGeometryEffect(id: "logo", in: logoNamespace)
-                        .padding(.top, 54)
-                        .frame(maxWidth: .infinity)
-                        .allowsHitTesting(false)
+                    episodesView(item)
+                        .transition(.asymmetric(
+                            insertion: .offset(y: 260).combined(with: .opacity),
+                            removal: .offset(y: 200).combined(with: .opacity)))
                 }
-            } else {
-                LoadingView()
             }
         }
-        .frame(width: width, height: height)
+        .frame(width: Self.screen.width, height: Self.screen.height)
         .ignoresSafeArea()
         .onExitCommand(perform: exitAction)
         .onChange(of: audioSelection) { _, id in
@@ -165,39 +131,33 @@ struct DetailPage: View {
             saveStreams(subtitle: id)
         }
         .onChange(of: seasonFocus) { _, key in
-            guard let key else { return }
-            selectedSeasonKey = key
-            setExpanded(true)
+            if let key { selectedSeasonKey = key }
         }
-        .onChange(of: lowerFocus) { _, focus in
-            if focus != nil { setExpanded(true) }
-        }
-        .onChange(of: heroFocus) { old, new in handleEdgeFocus(from: old, to: new) }
+        .onChange(of: heroFocus) { old, new in handleHeroFocus(from: old, to: new) }
         .task(id: current.id) {
-            // Artwork alone first (0.4 s on open, until the slide lands when paging),
-            // then the text and buttons fade in once the data is ready.
+            // Artwork alone first, then the text fades in (+0.3 s) once the data is ready.
             let start = Date()
-            // What's saved on disk first (instant), then the server.
             await PlexResponseCache.$policy.withValue(.cacheOnly) { await load() }
             let cacheMiss = item == nil || item?.ratingKey != ratingKey
             if cacheMiss { await load() }
-            let minimum = generation == 0 ? 0.4 : 0.8
+            let minimum = 0.65
             let wait = minimum - Date().timeIntervalSince(start)
             if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
             guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.5)) { revealed = true }
+            withAnimation(.easeOut(duration: 0.3)) { revealed = true }
             if !cacheMiss { await load() }
             await preloadNeighbours()
         }
-        .zoomDestination(id: zoomSourceID, namespace: context?.rowID == "hero" ? nil : zoomNamespace)
+        .task(id: "\(current.id)|\(expanded)") { await cycleArtwork() }
+        .zoomDestination(id: zoomSourceID,
+                         namespace: (context?.rowID.hasPrefix("banner") ?? false) ? nil : zoomNamespace)
         .onReceive(NotificationCenter.default.publisher(for: .plexPlaybackDidEnd)) { _ in
             Task { await load() }
         }
         .defaultFocus($heroFocus, .play)
     }
 
-    /// Menu/Back goes one step back: from seasons/episodes (state 2) to the top of the page,
-    /// from the top (state 1) back to the screen the page was opened from.
+    /// Back goes one step back: from the episodes to the card, from the card to the poster.
     private func exitAction() {
         if expanded {
             setExpanded(false)
@@ -207,75 +167,120 @@ struct DetailPage: View {
         }
     }
 
+    /// Card ↔ episodes (~1.15 s with the Apple curve).
     private func setExpanded(_ value: Bool) {
         guard expanded != value else { return }
-        withAnimation(.easeInOut(duration: 0.5)) { expanded = value }
+        episodesReady = false
+        withAnimation(.spring(response: 0.75, dampingFraction: 1.0)) { expanded = value }
+        if value {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { if expanded { episodesReady = true } }
+        }
     }
 
-    // MARK: - State 1
+    // MARK: - Cards
 
-    private func hero(_ item: PlexItem) -> some View {
-        HStack(alignment: .bottom, spacing: 60) {
-            VStack(alignment: .leading, spacing: 18) {
-                if let eyebrow {
-                    Text(eyebrow)
-                        .font(.callout.weight(.semibold))
+    /// The current card and its neighbours as one strip (physical coordinates: in Arabic the
+    /// next title sits on the left). On the episodes view the current card fills the screen.
+    private var cardStrip: some View {
+        let items = context?.items ?? [current]
+        let i = currentIndex ?? 0
+        let window = items.indices.filter { abs($0 - i) <= 2 }.map { items[$0] }
+        return ZStack(alignment: .top) {
+            ForEach(window, id: \.id) { entry in
+                let offset = (items.firstIndex { $0.id == entry.id } ?? i) - i
+                let isCurrent = entry.id == current.id
+                let full = isCurrent && expanded
+                DetailCardArt(url: artURL(for: entry, isCurrent: isCurrent),
+                              isCurrent: isCurrent, expanded: full, dimmed: !isCurrent)
+                    .frame(width: full ? Self.screen.width : Self.cardWidth,
+                           height: full ? Self.screen.height : Self.cardHeight)
+                    .clipShape(RoundedRectangle(cornerRadius: full ? 0 : Self.cardRadius, style: .continuous))
+                    .offset(x: -CGFloat(offset) * Self.pitch, y: full ? 0 : Self.cardTop)
+                    .opacity(expanded && !isCurrent ? 0 : 1)
+                    .zIndex(isCurrent ? 1 : 0)
+            }
+        }
+        .frame(width: Self.screen.width, height: Self.screen.height, alignment: .top)
+        .environment(\.layoutDirection, .leftToRight)
+        .allowsHitTesting(false)
+    }
+
+    /// Current card: one of its artworks (cycled); neighbours: their main backdrop.
+    private func artURL(for entry: PlexItem, isCurrent: Bool) -> URL? {
+        let key = displayKey(entry)
+        var path = metadataCache[key]?.backdropPath ?? (entry.isEpisode ? (entry.grandparentArt ?? entry.art) : entry.backdropPath)
+        if isCurrent, let list = artworks[key], !list.isEmpty {
+            path = list[artIndex % list.count]
+        }
+        return client.imageURL(path, width: 1920, height: 1080)
+    }
+
+    /// Text block (right) and cast (left) at the bottom of the card.
+    private func cardText(_ item: PlexItem) -> some View {
+        ZStack(alignment: .bottom) {
+            VStack(alignment: .leading, spacing: 16) {
+                LogoView(image: logos[item.ratingKey], title: item.title,
+                         maxSize: CGSize(width: 680, height: 200), fontSize: 80)
+                    .frame(height: 200, alignment: .bottomLeading)
+
+                HStack(spacing: 12) {
+                    Text(genreLine(item))
+                        .font(.system(size: 24, weight: .medium))
                         .foregroundStyle(.white.opacity(0.85))
+                    if let rating = item.normalizedContentRating { AgeBadge(text: rating) }
                 }
-
-                if expanded {
-                    Color.clear.frame(width: 10, height: 200)
-                } else {
-                    LogoView(image: logos[item.ratingKey], title: item.title, maxSize: CGSize(width: 760, height: 220), fontSize: 92)
-                        .matchedGeometryEffect(id: "logo", in: logoNamespace)
-                }
-
-                Text(genreLine(item))
-                    .font(.callout.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.85))
 
                 if let summary = item.summary, !summary.isEmpty {
                     Text(summary)
-                        .font(.callout)
-                        .foregroundStyle(.white.opacity(0.85))
+                        .font(.system(size: 24))
+                        .foregroundStyle(.white.opacity(0.75))
                         .lineLimit(4)
                         .multilineTextAlignment(.leading)
-                        .frame(maxWidth: 980, alignment: .leading)
+                        .frame(maxWidth: 680, alignment: .leading)
                 }
 
-                // Cast with the rest of the information, under the summary.
-                if !item.roles.isEmpty {
-                    Text("بطولة: " + ArabicFormat.list(item.roles.prefix(4).map(\.tag)))
-                        .font(.callout)
-                        .foregroundStyle(.white.opacity(0.7))
-                        .lineLimit(1)
-                        .frame(maxWidth: 980, alignment: .leading)
+                HStack(spacing: 10) {
+                    Text(techLine(item))
+                        .font(.system(size: 22, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.75))
+                    ForEach(badges, id: \.self) { MediaBadge(text: $0) }
                 }
 
-                HStack(spacing: 14) {
-                    Text(infoLine(item))
-                        .font(.callout)
-                        .foregroundStyle(.white.opacity(0.85))
-                    ForEach(badges, id: \.self) { Badge(text: $0) }
-                }
+                buttons(item).padding(.top, 8)
 
-                buttons(item)
-                    .padding(.top, 14)
+                // Down from the buttons opens the episodes view.
+                Color.white.opacity(0.001)
+                    .frame(width: 900, height: 8)
+                    .focusable(revealed && !expanded)
+                    .focused($heroFocus, equals: .down)
             }
-            .frame(width: 1020, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.leading, Self.textInset)
 
-            Spacer(minLength: 0)
+            if !item.roles.isEmpty {
+                VStack(alignment: .trailing, spacing: 6) {
+                    Text("بطولة")
+                        .font(.system(size: 22, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.55))
+                    ForEach(item.roles.prefix(3)) { role in
+                        Text(role.tag)
+                            .font(.system(size: 22, weight: .regular))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.trailing, Self.textInset)
+                .padding(.bottom, 120)
+            }
         }
-        .padding(.horizontal, Self.sideInset)
-        .sidebarPadding()
-        .padding(.bottom, 60)
+        .padding(.bottom, 56)
+        .frame(width: Self.screen.width, height: Self.screen.height, alignment: .bottom)
         .shadow(color: .black.opacity(0.35), radius: 10)
-        .opacity(revealed && !expanded ? 1 : 0)
-        .offset(y: revealed ? 0 : 36)
     }
 
     private func buttons(_ item: PlexItem) -> some View {
-        HStack(spacing: 22) {
+        HStack(spacing: 20) {
             edgeTarget(.edgeStart, enabled: hasPrevious)
 
             Button { play(playTarget) } label: {
@@ -284,23 +289,26 @@ struct DetailPage: View {
                     Text(playTitle)
                 }
             }
-            .buttonStyle(HeroPillButtonStyle())
+            .buttonStyle(GlassPillButtonStyle())
             .focused($heroFocus, equals: .play)
+            // Long press: audio, subtitles, watched mark, play from the start.
+            .contextMenu { moreMenu(item) }
 
             // «قائمتي» of the current profile.
             Button(action: toggleWatchlist) {
                 Image(systemName: store.isOnMyList(item.ratingKey) ? "checkmark" : "plus")
             }
-            .buttonStyle(HeroCircleButtonStyle())
+            .buttonStyle(GlassCircleButtonStyle())
             .focused($heroFocus, equals: .watchlist)
 
-            Menu {
-                moreMenu(item)
+            Button {
+                setExpanded(true)
+                focusEpisodes()
             } label: {
-                Image(systemName: "ellipsis")
+                Image(systemName: item.isShow ? "list.bullet.rectangle" : "rectangle.stack")
             }
-            .buttonStyle(HeroCircleButtonStyle())
-            .focused($heroFocus, equals: .more)
+            .buttonStyle(GlassCircleButtonStyle())
+            .focused($heroFocus, equals: .episodes)
 
             edgeTarget(.edgeEnd, enabled: hasNext)
         }
@@ -308,23 +316,26 @@ struct DetailPage: View {
     }
 
     /// Invisible focus target just past the end of the button row: moving onto it pages to the
-    /// previous / next item of the row. Disabled at either end of the row and in state 2.
+    /// previous / next title of the row. Disabled at either end of the row and on the episodes view.
     private func edgeTarget(_ edge: HeroButton, enabled: Bool) -> some View {
         Color.white.opacity(0.001)
-            .frame(width: 6, height: 80)
+            .frame(width: 6, height: 76)
             .focusable(enabled && !expanded && revealed)
             .focused($heroFocus, equals: edge)
     }
 
-    private func handleEdgeFocus(from old: HeroButton?, to new: HeroButton?) {
-        let buttons: [HeroButton] = [.play, .watchlist, .more]
+    private func handleHeroFocus(from old: HeroButton?, to new: HeroButton?) {
+        let buttons: [HeroButton] = [.play, .watchlist, .episodes]
         switch new {
         case .edgeStart?:
             if let old, buttons.contains(old) { page(-1) }
             DispatchQueue.main.async { heroFocus = .play }
         case .edgeEnd?:
             if let old, buttons.contains(old) { page(+1) }
-            DispatchQueue.main.async { heroFocus = .more }
+            DispatchQueue.main.async { heroFocus = .episodes }
+        case .down?:
+            setExpanded(true)
+            focusEpisodes()
         case .backToTop?:
             setExpanded(false)
             DispatchQueue.main.async { heroFocus = .play }
@@ -333,19 +344,26 @@ struct DetailPage: View {
         }
     }
 
-    /// Slides to a sibling of the row: the new artwork slides in from the side while the text
-    /// fades out, and the text returns once the artwork has arrived. Stops at the row's ends.
+    /// After the episodes view appears: focus the episode Play starts (or the first row).
+    private func focusEpisodes() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            let episodes = currentEpisodes
+            if let entry = entryEpisode(episodes) {
+                lowerFocus = "ep-\(entry.id)"
+            }
+        }
+    }
+
+    /// Slides to a sibling of the row (~0.86 s): the text fades out, the cards slide as a
+    /// strip, the new text fades in. Stops at the row's ends.
     private func page(_ delta: Int) {
         guard let context, let i = currentIndex, context.items.indices.contains(i + delta) else { return }
         let next = context.items[i + delta]
-        step = delta
         withAnimation(.easeOut(duration: 0.2)) { revealed = false }
         returnState.set(rowID: context.rowID, itemID: next.id)
+        artIndex = 0
         DispatchQueue.main.async {
-            withAnimation(.timingCurve(0.22, 0.61, 0.36, 1, duration: 0.8)) {
-                generation += 1
-                current = next
-            }
+            withAnimation(.spring(response: 0.55, dampingFraction: 1.0)) { current = next }
         }
     }
 
@@ -363,23 +381,32 @@ struct DetailPage: View {
         }
     }
 
-    private func backdropURL(_ item: PlexItem) -> URL? {
-        let path = metadataCache[displayKey(item)]?.backdropPath ?? (item.isEpisode ? (item.grandparentArt ?? item.art) : item.backdropPath)
-        return client.imageURL(path, width: 1920, height: 1080)
+    /// Every ~2.5 s the next artwork, with a 0.25 s cross-fade (preloaded first). Not on the
+    /// episodes view.
+    private func cycleArtwork() async {
+        guard !expanded else { return }
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(2.5))
+            guard !Task.isCancelled, let list = artworks[ratingKey], list.count > 1 else { continue }
+            let next = (artIndex + 1) % list.count
+            if let url = client.imageURL(list[next], width: 1920, height: 1080) {
+                _ = await ImageLoader.shared.image(for: url)
+            }
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeInOut(duration: 0.25)) { artIndex = next }
+        }
     }
 
-    /// Artwork + logo of the previous and next items, so paging never shows a blank frame.
+    /// Metadata and artwork of the previous and next titles, so paging never shows a blank card.
     private func preloadNeighbours() async {
         guard let context, let i = currentIndex else { return }
         for j in [i + 1, i - 1] where context.items.indices.contains(j) {
             let neighbour = context.items[j]
             let key = displayKey(neighbour)
             if metadataCache[key] == nil, let meta = try? await client.metadata(key) { metadataCache[key] = meta }
-            await loadArtwork(for: neighbour)
+            if let url = artURL(for: neighbour, isCurrent: false) { _ = await ImageLoader.shared.image(for: url) }
+            await loadLogo(key)
         }
-        // Keep only the current item and its neighbours' 4K artwork in memory.
-        let keep = Set(([i - 1, i, i + 1].filter { context.items.indices.contains($0) }).map { displayKey(context.items[$0]) })
-        backdrops = backdrops.filter { keep.contains($0.key) }
     }
 
     @ViewBuilder
@@ -407,53 +434,10 @@ struct DetailPage: View {
         }
     }
 
-    // MARK: - State 2
+    // MARK: - Episodes view
 
-    @ViewBuilder
-    private func browse(_ item: PlexItem) -> some View {
-        VStack(alignment: .leading, spacing: 26) {
-            // The buttons above are hidden in state 2 (and hidden views can't take focus), so
-            // Up from the first row lands on this full-width strip, which goes back to the top.
-            Color.white.opacity(0.001)
-                .frame(width: width, height: 10)
-                .focusable(expanded)
-                .focused($heroFocus, equals: .backToTop)
-
-            if item.isShow {
-                if seasons.count > 1 { seasonChips }
-                episodesRow
-            } else if !related.isEmpty {
-                ShelfView(shelf: Shelf(id: "related-\(item.ratingKey)", title: "أفلام مشابهة",
-                                       kind: .poster, items: related),
-                          client: client)
-            }
-
-            if !extras.isEmpty { extrasRow }
-            if !item.roles.isEmpty { castRow(item.roles) }
-            if let target = playTarget ?? (item.isShow ? nil : item), !target.media.isEmpty {
-                fileInfo(target)
-            }
-        }
-        .opacity(revealed ? 1 : 0)
-    }
-
-    private var seasonChips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 18) {
-                ForEach(seasons) { season in
-                    Button { selectedSeasonKey = season.ratingKey } label: {
-                        Text(seasonTitle(season))
-                    }
-                    .buttonStyle(ChipButtonStyle(isSelected: season.ratingKey == selectedSeasonKey))
-                    .focused($seasonFocus, equals: season.ratingKey)
-                }
-            }
-            .padding(.horizontal, DetailPage.sideInset)
-            .padding(.vertical, 24)
-        }
-        .sidebarSafeArea()
-        .scrollClipDisabled()
-        .focusSection()
+    private var currentEpisodes: [PlexItem] {
+        (selectedSeasonKey.flatMap { episodesBySeason[$0] } ?? []).uniqued()
     }
 
     /// Episode focus lands on when entering the row: the one Play starts, else the first unwatched.
@@ -463,39 +447,95 @@ struct DetailPage: View {
             ?? episodes.first
     }
 
-    private var episodesRow: some View {
-        let episodes = (selectedSeasonKey.flatMap { episodesBySeason[$0] } ?? []).uniqued()
+    private func episodesView(_ item: PlexItem) -> some View {
+        VStack(spacing: 0) {
+            // Up from the first row lands here and returns to the card.
+            Color.white.opacity(0.001)
+                .frame(width: Self.screen.width, height: 8)
+                .focusable(expanded && episodesReady)
+                .focused($heroFocus, equals: .backToTop)
+
+            LogoView(image: logos[item.ratingKey], title: item.title,
+                     maxSize: CGSize(width: 200, height: 90), fontSize: 40)
+                .frame(height: 90)
+                .padding(.top, 40)
+
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 34) {
+                    if item.isShow {
+                        if !seasons.isEmpty { seasonLabels }
+                        episodesRow(item)
+                    }
+                    if !related.isEmpty {
+                        ShelfView(shelf: Shelf(id: "related-\(item.ratingKey)", title: "ذات صلة",
+                                               kind: .poster, items: related),
+                                  client: client)
+                    }
+                    if !item.isShow && !extras.isEmpty { extrasRow }
+                }
+                .padding(.top, 30)
+                .padding(.bottom, 120)
+            }
+            .scrollClipDisabled()
+        }
+        .frame(width: Self.screen.width, height: Self.screen.height, alignment: .top)
+    }
+
+    /// «الموسم ١  الموسم ٢»: grey labels, the current / focused one white.
+    private var seasonLabels: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 44) {
+                ForEach(seasons) { season in
+                    Button { selectedSeasonKey = season.ratingKey } label: {
+                        Text(seasonTitle(season))
+                    }
+                    .buttonStyle(SeasonLabelStyle(isSelected: season.ratingKey == selectedSeasonKey))
+                    .focused($seasonFocus, equals: season.ratingKey)
+                }
+            }
+            .padding(.horizontal, Self.sideInset)
+            .padding(.vertical, 10)
+        }
+        .scrollClipDisabled()
+        .focusSection()
+    }
+
+    private func episodesRow(_ item: PlexItem) -> some View {
+        let episodes = currentEpisodes
         let entry = entryEpisode(episodes)
         return ScrollViewReader { proxy in
-        ScrollView(.horizontal, showsIndicators: false) {
-            LazyHStack(alignment: .top, spacing: 48) {
-                ForEach(episodes) { episode in
-                    Button { play(episode) } label: {
-                        EpisodeTile(episode: episode, client: client)
-                    }
-                    .buttonStyle(.borderless)
-                    .focused($lowerFocus, equals: "ep-\(episode.id)")
-                    .contextMenu {
-                        Button(episode.isWatched ? "تحديد كغير مُشاهَد" : "تحديد كمُشاهَد",
-                               systemImage: episode.isWatched ? "eye.slash" : "checkmark.circle") {
-                            Task { await setWatched(episode, !episode.isWatched) }
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(alignment: .top, spacing: 40) {
+                    ForEach(episodes) { episode in
+                        Button { play(episode) } label: {
+                            EpisodeCard(episode: episode, client: client, contentRating: item.normalizedContentRating)
                         }
-                        Button("التشغيل من البداية", systemImage: "arrow.counterclockwise") {
-                            play(episode, fromBeginning: true)
+                        .buttonStyle(PlainCardStyle())
+                        .focused($lowerFocus, equals: "ep-\(episode.id)")
+                        .contextMenu {
+                            let watched = store.state(for: episode.ratingKey)?.watched ?? episode.isWatched
+                            Button(watched ? "تحديد كغير مُشاهَد" : "تحديد كمُشاهَد",
+                                   systemImage: watched ? "eye.slash" : "checkmark.circle") {
+                                Task { await setWatched(episode, !watched) }
+                            }
+                            Button(store.isOnMyList(item.ratingKey) ? "إزالة من قائمتي" : "إضافة إلى قائمتي",
+                                   systemImage: store.isOnMyList(item.ratingKey) ? "minus" : "plus") {
+                                store.toggleMyList(item.mediaInfo)
+                            }
+                            Button("التشغيل من البداية", systemImage: "arrow.counterclockwise") {
+                                play(episode, fromBeginning: true)
+                            }
                         }
                     }
                 }
+                .padding(.horizontal, Self.sideInset)
+                .padding(.vertical, 24)
             }
-            .padding(.horizontal, DetailPage.sideInset)
-            .padding(.top, 30)
-            .padding(.bottom, 40)
-        }
-        .sidebarSafeArea()
-        .scrollClipDisabled()
-        .onAppear {
-            // Show the episode you're up to (e.g. E7), not the start of the season.
-            if let entry { proxy.scrollTo(entry.id, anchor: .center) }
-        }
+            .scrollClipDisabled()
+            .onAppear {
+                // Show the episode you're up to, not the start of the season.
+                if let entry { proxy.scrollTo(entry.id, anchor: .center) }
+            }
         }
         .focusSection()
         .defaultFocus($lowerFocus, entry.map { "ep-\($0.id)" }, priority: .userInitiated)
@@ -506,77 +546,25 @@ struct DetailPage: View {
 
     private var extrasRow: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SectionTitle("العروض الدعائية والإضافات")
+            Text("العروض الدعائية والإضافات")
+                .font(.system(size: 30, weight: .regular))
+                .foregroundStyle(.white.opacity(0.6))
+                .padding(.horizontal, Self.sideInset)
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(alignment: .top, spacing: 48) {
+                LazyHStack(alignment: .top, spacing: 40) {
                     ForEach(extras) { extra in
                         Button { play(extra) } label: {
                             ExtraTile(extra: extra, client: client)
                         }
-                        .buttonStyle(.borderless)
+                        .buttonStyle(PosterButtonStyle())
                         .focused($lowerFocus, equals: "extra-\(extra.id)")
                     }
                 }
-                .padding(.horizontal, DetailPage.sideInset)
-                .padding(.top, 30)
+                .padding(.horizontal, Self.sideInset)
+                .padding(.top, 34)
                 .padding(.bottom, 40)
             }
-            .sidebarSafeArea()
             .scrollClipDisabled()
-            .focusSection()
-        }
-    }
-
-    private func castRow(_ roles: [PlexTag]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            SectionTitle("طاقم التمثيل")
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(alignment: .top, spacing: 40) {
-                    ForEach(roles.prefix(30)) { role in
-                        Button {} label: {
-                            CastTile(role: role, client: client)
-                        }
-                        // Circular focus drawn by the tile itself (no rectangular card / highlight).
-                        .buttonStyle(CastButtonStyle())
-                        .focused($lowerFocus, equals: "cast-\(role.id)")
-                    }
-                }
-                .padding(.horizontal, DetailPage.sideInset)
-                .padding(.top, 30)
-                .padding(.bottom, 40)
-            }
-            .sidebarSafeArea()
-            .scrollClipDisabled()
-            .focusSection()
-        }
-    }
-
-    private func fileInfo(_ target: PlexItem) -> some View {
-        let media = target.media.first
-        let part = target.primaryPart
-        var video: [String] = []
-        if let res = media?.resolutionBadge { video.append(res) }
-        if let codec = media?.videoCodec { video.append(codec.uppercased()) }
-        if let hdr = target.dynamicRangeBadge { video.append(hdr) }
-        if let fps = target.videoStream?.frameRate { video.append(ArabicFormat.digits(String(format: "%.3g", fps)) + " fps") }
-        let audio = target.audioStreams.map(\.label)
-        let subs = target.subtitleStreams.map(\.label)
-        var file: [String] = []
-        if let container = (part?.container ?? media?.container)?.uppercased() { file.append(container) }
-        if let size = part?.size { file.append(ArabicFormat.digits(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))) }
-        if let bitrate = media?.bitrate { file.append(ArabicFormat.digits(String(format: "%.1f", Double(bitrate) / 1000)) + " Mbps") }
-
-        return VStack(alignment: .leading, spacing: 0) {
-            SectionTitle("معلومات الملف")
-            HStack(alignment: .top, spacing: 30) {
-                InfoTile(title: "الفيديو", lines: video.isEmpty ? ["—"] : [ArabicFormat.joined(video)])
-                InfoTile(title: "الصوت", lines: audio.isEmpty ? ["—"] : Array(audio.prefix(5)))
-                InfoTile(title: "الترجمات", lines: subs.isEmpty ? ["لا توجد"] : Array(subs.prefix(5)))
-                InfoTile(title: "الملف", lines: (file.isEmpty ? ["—"] : file) + (target.isEpisode ? [target.introSkipSourceText] : []))
-            }
-            .padding(.horizontal, DetailPage.sideInset)
-            .sidebarPadding()
-            .padding(.top, 26)
             .focusSection()
         }
     }
@@ -586,12 +574,12 @@ struct DetailPage: View {
     private func load() async {
         let key = ratingKey
         let pageItem = current
-        Task { await loadArtwork(for: pageItem) }
-        // A show's details, seasons and episodes all at once (not one after another).
         let isShowPage = pageItem.isShow || pageItem.isEpisode || pageItem.isSeason
         let preferred = preferredEpisode
+        // A show's details, seasons and episodes all at once (not one after another).
         async let showTask: ShowEpisodes? = isShowPage
             ? ShowEpisodes.load(client: client, showKey: key, preferred: preferred) : nil
+        async let artTask = client.artworks(key)
         guard let detailed = try? await client.metadata(key) else { return }
         guard key == ratingKey else { return } // paged away meanwhile
         metadataCache[key] = detailed
@@ -606,10 +594,14 @@ struct DetailPage: View {
             expanded = false
         }
         item = detailed
-        Task { await loadArtwork(for: pageItem) }
+        Task { await loadLogo(key) }
+
+        // 2–3 backgrounds to cycle: the title's own first, then the alternatives.
+        var arts = await artTask
+        if let own = detailed.backdropPath { arts.removeAll { $0 == own }; arts.insert(own, at: 0) }
+        artworks[key] = Array(arts.prefix(3))
 
         if detailed.isShow {
-            // Seasons + every episode in two parallel requests; shown before the file details.
             guard let show = await showTask, key == self.ratingKey else { return }
             seasons = show.seasons
             episodesBySeason = show.bySeason
@@ -617,32 +609,26 @@ struct DetailPage: View {
             if selectedSeasonKey == nil {
                 selectedSeasonKey = initialSeasonKey ?? show.playTarget?.parentRatingKey ?? show.seasons.first?.ratingKey
             }
-            // Full details of the episode Play starts (tracks, quality badges, file info).
+            // Full details of the episode Play starts (tracks, quality badges).
             if let t = show.playTarget, let full = try? await client.metadata(t.ratingKey), key == self.ratingKey {
                 playTarget = full
             }
         } else {
             playTarget = detailed
-            related = await filter.resolve(await client.related(ratingKey), client: client)
         }
-
         syncStreamSelection()
-        extras = await client.extras(ratingKey)
+        related = await filter.resolve(await client.related(key), client: client)
+        if !detailed.isShow { extras = await client.extras(key) }
     }
 
-    private func loadArtwork(for item: PlexItem) async {
-        let key = displayKey(item)
-        if backdrops[key] == nil, let url = backdropURL(item), let image = await ImageLoader.shared.image(for: url) {
-            backdrops[key] = image
-        }
-        if logos[key] == nil, let meta = metadataCache[key],
-           let url = client.imageURL(meta.clearLogoPath, width: 1520, height: 440, png: true),
-           let image = await ImageLoader.shared.image(for: url) {
-            logos[key] = image
-        }
+    private func loadLogo(_ key: String) async {
+        guard logos[key] == nil, let meta = metadataCache[key],
+              let url = client.imageURL(meta.clearLogoPath, width: 1360, height: 400, png: true),
+              let image = await ImageLoader.shared.image(for: url) else { return }
+        logos[key] = image
     }
 
-    /// Shows the profile's track choice for this file in the ⋯ menu (its own choice, else its
+    /// Shows the profile's track choice for this file in the menu (its own choice, else its
     /// preferred languages, else the file's defaults). Changes are saved for this profile only.
     private func syncStreamSelection() {
         guard let target = playTarget else { return }
@@ -693,61 +679,42 @@ struct DetailPage: View {
 
     // MARK: - Text
 
+    /// «▶ تشغيل الحلقة ١» / «متابعة م١ ح٣» for shows, «تشغيل» / «متابعة» for movies.
     private var playTitle: String {
         guard let item else { return "تشغيل" }
-        let inProgress = playTarget?.progress != nil && playTarget?.isWatched == false
-        guard item.isShow, let episode = playTarget else { return inProgress ? "استئناف" : "تشغيل" }
-        if inProgress { return "استئناف \(episodeShortCode(episode))" }
-        if (item.viewedLeafCount ?? 0) == 0, (episode.parentIndex ?? 1) <= 1, (episode.index ?? 1) <= 1 {
-            return "تشغيل الحلقة الأولى"
+        let inProgress = playTarget.map { store.progress(of: $0) != nil } ?? false
+        guard item.isShow, let episode = playTarget else { return inProgress ? "متابعة" : "تشغيل" }
+        if inProgress {
+            let code = ArabicFormat.shortEpisodeCode(season: episode.parentIndex, episode: episode.index) ?? ""
+            return "متابعة " + code
         }
-        return "تشغيل \(episodeShortCode(episode))"
-    }
-
-    /// "ح٥", or "م٢  •  ح٥" past the first season.
-    private func episodeShortCode(_ episode: PlexItem) -> String {
-        let season = episode.parentIndex.flatMap { $0 > 1 ? $0 : nil }
-        return ArabicFormat.shortEpisodeCode(season: season, episode: episode.index ?? 1) ?? ""
-    }
-
-    private var eyebrow: String? {
-        guard let item else { return nil }
-        let now = Date().timeIntervalSince1970
-        func recent(_ addedAt: Int?, days: Double) -> Bool {
-            guard let addedAt else { return false }
-            return now - Double(addedAt) < days * 86_400
-        }
-        if let target = playTarget, target.progress != nil, !target.isWatched { return "لم تكمله" }
-        if item.isShow, let target = playTarget, !target.isWatched, recent(target.addedAt, days: 14) { return "حلقة جديدة" }
-        if recent(item.addedAt, days: 30) { return "أضيف مؤخراً" }
-        return nil
+        return "تشغيل الحلقة \(ArabicFormat.digits(episode.index ?? 1))"
     }
 
     private func genreLine(_ item: PlexItem) -> String {
         let kind = item.isShow ? "مسلسل" : "فيلم"
-        let genres = ArabicFormat.genres(item.genres.map(\.tag), limit: 3)
-        return genres.isEmpty ? kind : kind + ArabicFormat.separator + ArabicFormat.list(genres)
+        return ArabicFormat.joined([kind] + ArabicFormat.genres(item.genres.map(\.tag), limit: 2))
     }
 
-    private func infoLine(_ item: PlexItem) -> String {
+    /// Year · duration (the episode Play starts for a show).
+    private func techLine(_ item: PlexItem) -> String {
         var parts: [String] = []
         if let year = item.year { parts.append(ArabicFormat.digits(year)) }
-        if item.isShow {
-            if let seasons = item.childCount { parts.append(seasonsText(seasons)) }
-        } else if let duration = item.duration {
+        if let duration = (item.isShow ? playTarget?.duration : item.duration) {
             parts.append(ArabicFormat.duration(ms: duration))
         }
-        if let rating = item.normalizedContentRating { parts.append(rating) }
+        if item.isShow, let seasons = item.childCount { parts.append(seasonsText(seasons)) }
         return ArabicFormat.joined(parts)
     }
 
-    /// 4K / HD, HDR or Dolby Vision, Atmos, 5.1 / 7.1, CC — from the file that Play starts.
+    /// 4K / 1080p, HDR / Dolby Vision, Atmos / 5.1, CC / subtitle languages — from the file Play starts.
     private var badges: [String] {
         guard let target = playTarget ?? item else { return [] }
         var out: [String] = []
         switch target.media.first?.resolutionBadge {
         case "4K": out.append("4K")
-        case "1080p", "720p": out.append("HD")
+        case "1080p": out.append("1080p")
+        case "720p": out.append("720p")
         default: break
         }
         switch target.dynamicRangeBadge {
@@ -755,10 +722,16 @@ struct DetailPage: View {
         case "HDR10", "HLG": out.append("HDR")
         default: break
         }
-        if target.audioStreams.contains(where: \.isAtmos) { out.append("Dolby Atmos") }
-        let channels = target.audioStreams.compactMap(\.channels).max() ?? target.media.first?.audioChannels ?? 0
-        if channels >= 8 { out.append("7.1") } else if channels >= 6 { out.append("5.1") }
-        if !target.subtitleStreams.isEmpty { out.append("CC") }
+        if target.audioStreams.contains(where: \.isAtmos) {
+            out.append("Atmos")
+        } else {
+            let channels = target.audioStreams.compactMap(\.channels).max() ?? target.media.first?.audioChannels ?? 0
+            if channels >= 8 { out.append("7.1") } else if channels >= 6 { out.append("5.1") }
+        }
+        let languages = Set(target.subtitleStreams.compactMap(\.languageCode).map { $0.prefix(2).uppercased() })
+        if !languages.isEmpty {
+            out.append(languages.count <= 3 ? "CC " + languages.sorted().joined(separator: " ") : "CC")
+        }
         return out
     }
 
@@ -777,108 +750,39 @@ struct DetailPage: View {
     }
 }
 
-private struct BackdropSlide: ViewModifier {
-    var x: CGFloat
-    var opacity: Double
+// MARK: - Card artwork
 
-    func body(content: Content) -> some View {
-        content.offset(x: x).opacity(opacity)
-    }
-}
-
-private struct HeroOffsetKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-}
-
-// MARK: - Background
-
-/// Fixed full-screen artwork: sharp with text scrims in state 1; blurred and darker in state 2.
-private struct DetailBackdrop: View {
-    /// Identity of the artwork; a new key slides in from the side (paging).
-    let key: String
-    let image: UIImage?
+/// One card's artwork: sharp with a dark gradient at the bottom-right (text side) on the card;
+/// a heavily blurred colour wash of it on the full-screen episodes view.
+private struct DetailCardArt: View {
     let url: URL?
+    let isCurrent: Bool
     let expanded: Bool
-    /// +1: the new artwork enters from the right edge, -1: from the left.
-    let entrySign: CGFloat
-    let generation: Int
-    /// Plex UltraBlur colours of the title: the artwork fades into them at the bottom and they
-    /// fill state 2 (Plex style). Without them, the darkened / blurred artwork as before.
-    var colors: PlexUltraBlurColors? = nil
-
-    @Environment(\.layoutDirection) private var appDirection
+    let dimmed: Bool
 
     var body: some View {
         ZStack {
-            Color.black
-            if let colors {
-                UltraBlurBackground(colors: colors)
-                    .id(colors)
-                    .transition(.opacity)
+            Color(white: 0.1)
+            RemoteImage(url: url)
+                .id(url)
+                .transition(.opacity)
+                .blur(radius: expanded ? 70 : 0, opaque: true)
+                .saturation(expanded ? 1.3 : 1)
+            Color.black.opacity(expanded ? 0.45 : (dimmed ? 0.35 : 0))
+            if !expanded {
+                // Bottom-right (physical): under the text.
+                LinearGradient(stops: [
+                    .init(color: .black.opacity(0.75), location: 0),
+                    .init(color: .black.opacity(0.35), location: 0.4),
+                    .init(color: .clear, location: 0.7),
+                ], startPoint: .bottomTrailing, endPoint: .topLeading)
+                LinearGradient(stops: [
+                    .init(color: .clear, location: 0.45),
+                    .init(color: .black.opacity(0.55), location: 1),
+                ], startPoint: .top, endPoint: .bottom)
             }
-            ZStack {
-                Group {
-                    if let image {
-                        Image(uiImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                    } else {
-                        RemoteImage(url: url)
-                    }
-                }
-                .frame(width: 1920, height: 1080)
-                .clipped()
-                .id(key)
-                .transition(.asymmetric(
-                    insertion: .modifier(active: BackdropSlide(x: entrySign * 1920, opacity: 1),
-                                         identity: BackdropSlide(x: 0, opacity: 1)),
-                    removal: .modifier(active: BackdropSlide(x: -entrySign * 1920 * 0.35, opacity: 0.5),
-                                       identity: BackdropSlide(x: 0, opacity: 1))))
-                .zIndex(Double(generation))
-            }
-            .frame(width: 1920, height: 1080)
-            .blur(radius: expanded ? 60 : 0, opaque: colors == nil)
-            .scaleEffect(expanded ? 1.06 : 1)
-            .clipped()
-            .mask {
-                if colors != nil {
-                    LinearGradient(stops: [
-                        .init(color: .black, location: 0),
-                        .init(color: .black, location: 0.45),
-                        .init(color: .clear, location: 0.9),
-                    ], startPoint: .top, endPoint: .bottom)
-                } else {
-                    Color.black
-                }
-            }
-            .opacity(colors != nil && expanded ? 0.35 : 1)
-
-            Color.black.opacity(expanded ? (colors == nil ? 0.5 : 0.2) : 0)
-
-            // Text side + bottom scrims (physical sides; see environment below).
-            LinearGradient(stops: [
-                .init(color: .black.opacity(0.92), location: 0),
-                .init(color: .black.opacity(0.7), location: 0.35),
-                .init(color: .black.opacity(0.25), location: 0.62),
-                .init(color: .clear, location: 0.8),
-            ], startPoint: appDirection == .rightToLeft ? .trailing : .leading,
-               endPoint: appDirection == .rightToLeft ? .leading : .trailing)
-                .opacity(expanded ? 0.4 : 1)
-            LinearGradient(stops: colors == nil ? [
-                .init(color: .clear, location: 0.3),
-                .init(color: .black.opacity(0.7), location: 0.62),
-                .init(color: .black.opacity(0.95), location: 1),
-            ] : [
-                .init(color: .clear, location: 0.45),
-                .init(color: .black.opacity(0.35), location: 1),
-            ], startPoint: .top, endPoint: .bottom)
         }
-        .frame(width: 1920, height: 1080)
-        .environment(\.layoutDirection, .leftToRight)
-        .animation(.easeInOut(duration: 0.55), value: expanded)
-        .animation(.easeInOut(duration: 0.4), value: colors)
-        .ignoresSafeArea()
+        .animation(.easeInOut(duration: 0.25), value: url)
     }
 }
 
@@ -902,69 +806,154 @@ private struct LogoView: View {
                 .foregroundStyle(.white)
                 .lineLimit(2)
                 .minimumScaleFactor(0.5)
-                .multilineTextAlignment(.center)
                 .frame(maxWidth: maxSize.width * 1.3)
         }
     }
 }
 
-private struct SectionTitle: View {
+private struct AgeBadge: View {
     let text: String
-    init(_ text: String) { self.text = text }
-
     var body: some View {
         Text(text)
-            .font(.title3.weight(.semibold))
-            .foregroundStyle(.white.opacity(0.78))
-            .padding(.horizontal, DetailPage.sideInset)
-            .sidebarPadding()
+            .font(.system(size: 17, weight: .bold))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.white.opacity(0.7), lineWidth: 1.5))
+            .foregroundStyle(.white.opacity(0.85))
     }
 }
 
-/// 16:9 episode still; the still lifts with the native highlight effect, the text stays below.
-private struct EpisodeTile: View {
+private struct MediaBadge: View {
+    let text: String
+    var body: some View {
+        Text(text)
+            .font(.system(size: 17, weight: .bold))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(RoundedRectangle(cornerRadius: 5).fill(Color.white.opacity(0.18)))
+            .foregroundStyle(.white.opacity(0.85))
+            .environment(\.layoutDirection, .leftToRight)
+    }
+}
+
+/// Season labels: grey, the selected / focused one white.
+private struct SeasonLabelStyle: ButtonStyle {
+    let isSelected: Bool
+
+    func makeBody(configuration: Configuration) -> some View { LabelBody(configuration: configuration, isSelected: isSelected) }
+
+    private struct LabelBody: View {
+        let configuration: ButtonStyleConfiguration
+        let isSelected: Bool
+        @Environment(\.isFocused) private var isFocused
+
+        var body: some View {
+            configuration.label
+                .font(.system(size: 30, weight: isFocused || isSelected ? .semibold : .regular))
+                .foregroundStyle(isFocused || isSelected ? Color.white : Color.white.opacity(0.5))
+                .scaleEffect(isFocused ? 1.08 : 1)
+                .animation(.easeOut(duration: 0.15), value: isFocused)
+        }
+    }
+}
+
+/// No system focus effect: the card draws its own (`EpisodeCard`).
+private struct PlainCardStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
+    }
+}
+
+/// 16:9 episode still (410×230, radius 14) with its duration, ✓ / progress; below it the
+/// episode number, title, a 4–5 line description and the air date. Focused: the still scales
+/// and lifts with a glass rim and shadow; the text gets a frosted panel and moves down a little.
+private struct EpisodeCard: View {
     let episode: PlexItem
     let client: PlexServerClient
+    let contentRating: String?
 
-    private let size = CGSize(width: 440, height: 248)
+    @Environment(\.isFocused) private var isFocused
+    @Environment(ProfileStore.self) private var store
+
+    private let size = CGSize(width: 410, height: 230)
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ZStack(alignment: .bottom) {
+        VStack(alignment: .leading, spacing: 14) {
+            ZStack {
                 Color(white: 0.14)
-                RemoteImage(url: client.imageURL(episode.thumb ?? episode.art, width: 880, height: 496))
+                RemoteImage(url: client.imageURL(episode.thumb ?? episode.art, width: 820, height: 460))
             }
             .frame(width: size.width, height: size.height)
-            .artworkStatus(episode, triangleFraction: 0.08, barHeight: 6)
-            .clipShape(RoundedRectangle(cornerRadius: CardKind.cornerRadius, style: .continuous))
-            .hoverEffect(.highlight)
-
-            Text("الحلقة \(ArabicFormat.digits(episode.index ?? 0))")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.6))
-                .padding(.top, 8)
-            Text(episode.title)
-                .font(.callout.weight(.semibold))
-                .lineLimit(1)
-            if let summary = episode.summary, !summary.isEmpty {
-                Text(summary)
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.7))
-                    .lineLimit(3)
-                    .multilineTextAlignment(.leading)
+            .overlay(alignment: .bottomLeading) {
+                // Physical bottom-left (mirrored from Apple's bottom-right).
+                HStack(spacing: 6) {
+                    if store.state(for: episode.ratingKey)?.watched == true {
+                        Image(systemName: "checkmark.circle.fill")
+                    }
+                    if let duration = episode.duration {
+                        Text(ArabicFormat.duration(ms: duration))
+                    }
+                }
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(Color.black.opacity(0.6)))
+                .padding(12)
+                .environment(\.layoutDirection, .leftToRight)
             }
-            Text(details)
-                .font(.caption2)
-                .foregroundStyle(.white.opacity(0.55))
+            .artworkStatus(episode, barHeight: 5)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(LinearGradient(colors: [.white.opacity(0.55), .white.opacity(0.08), .white.opacity(0.25)],
+                                                 startPoint: .top, endPoint: .bottom), lineWidth: 1.5)
+                    .opacity(isFocused ? 1 : 0)
+            }
+            .scaleEffect(isFocused ? 1.12 : 1)
+            .offset(y: isFocused ? -8 : 0)
+            .shadow(color: .black.opacity(isFocused ? 0.5 : 0), radius: isFocused ? 24 : 0, y: isFocused ? 16 : 0)
+            .zIndex(1)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("الحلقة \(ArabicFormat.digits(episode.index ?? 0))")
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.55))
+                Text(episode.title)
+                    .font(.system(size: 26, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                if let summary = episode.summary, !summary.isEmpty {
+                    Text(summary)
+                        .font(.system(size: 22))
+                        .foregroundStyle(.white.opacity(0.65))
+                        .lineLimit(5)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                HStack(spacing: 10) {
+                    if let date = ArabicFormat.date(plex: episode.originallyAvailableAt) {
+                        Text(date)
+                            .font(.system(size: 19))
+                            .foregroundStyle(.white.opacity(0.55))
+                    }
+                    if let contentRating { AgeBadge(text: contentRating) }
+                }
+            }
+            .padding(14)
+            .frame(width: size.width + 20, alignment: .leading)
+            .background {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .opacity(isFocused ? 1 : 0)
+            }
+            .offset(y: isFocused ? 6 : 0)
+            .padding(.horizontal, -10)
         }
         .frame(width: size.width, alignment: .leading)
-    }
-
-    private var details: String {
-        var parts: [String] = []
-        if let date = ArabicFormat.date(plex: episode.originallyAvailableAt) { parts.append(date) }
-        if let duration = episode.duration { parts.append(ArabicFormat.duration(ms: duration)) }
-        return ArabicFormat.joined(parts)
+        .animation(.easeOut(duration: 0.2), value: isFocused)
     }
 }
 
@@ -972,28 +961,27 @@ private struct ExtraTile: View {
     let extra: PlexItem
     let client: PlexServerClient
 
-    private let size = CGSize(width: 440, height: 248)
+    private let size = CGSize(width: 410, height: 230)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ZStack {
                 Color(white: 0.14)
-                RemoteImage(url: client.imageURL(extra.thumb ?? extra.art, width: 880, height: 496))
+                RemoteImage(url: client.imageURL(extra.thumb ?? extra.art, width: 820, height: 460))
                 Image(systemName: "play.circle.fill")
                     .font(.system(size: 54))
                     .foregroundStyle(.white.opacity(0.85))
                     .shadow(radius: 8)
             }
             .frame(width: size.width, height: size.height)
-            .clipShape(RoundedRectangle(cornerRadius: CardKind.cornerRadius, style: .continuous))
-            .hoverEffect(.highlight)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
 
             Text(extra.title)
-                .font(.callout.weight(.semibold))
+                .font(.system(size: 24, weight: .semibold))
                 .lineLimit(1)
                 .padding(.top, 8)
             Text(ArabicFormat.joined([kind, extra.duration.map(ArabicFormat.duration(ms:))].compactMap { $0 }))
-                .font(.caption2)
+                .font(.system(size: 19))
                 .foregroundStyle(.white.opacity(0.6))
         }
         .frame(width: size.width, alignment: .leading)
@@ -1010,88 +998,5 @@ private struct ExtraTile: View {
         case "short": return "قصير"
         default: return nil
         }
-    }
-}
-
-/// No system focus effect: `CastTile` draws a circular one around the photo.
-private struct CastButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.96 : 1)
-            .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
-    }
-}
-
-private struct CastTile: View {
-    let role: PlexTag
-    let client: PlexServerClient
-    /// Focus of the enclosing button.
-    @Environment(\.isFocused) private var isFocused
-
-    var body: some View {
-        VStack(spacing: 10) {
-            ZStack {
-                Circle().fill(Color.white.opacity(0.1))
-                Text(String(role.tag.prefix(1))).font(.title).foregroundStyle(.white.opacity(0.6))
-                RemoteImage(url: client.imageURL(role.thumb, width: 320, height: 320))
-            }
-            .frame(width: 170, height: 170)
-            .clipShape(Circle())
-            .contentShape(Circle())
-            .overlay(Circle().strokeBorder(Color.white, lineWidth: isFocused ? 5 : 0))
-            .scaleEffect(isFocused ? 1.1 : 1)
-            .shadow(color: .black.opacity(isFocused ? 0.5 : 0), radius: 16, y: 8)
-            .animation(.easeOut(duration: 0.15), value: isFocused)
-
-            Text(role.tag)
-                .font(.caption.weight(.semibold))
-                .lineLimit(1)
-                .padding(.top, 8)
-            if let character = role.role, !character.isEmpty {
-                Text(character)
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.6))
-                    .lineLimit(1)
-            }
-        }
-        .frame(width: 200)
-    }
-}
-
-/// Focusable so the remote can reach (and scroll to) the file info at the bottom.
-private struct InfoTile: View {
-    let title: String
-    let lines: [String]
-
-    var body: some View {
-        InfoTileBody(title: title, lines: lines)
-            .focusable()
-    }
-}
-
-private struct InfoTileBody: View {
-    let title: String
-    let lines: [String]
-    @Environment(\.isFocused) private var isFocused
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.6))
-            ForEach(lines, id: \.self) { line in
-                Text(line)
-                    .font(.caption)
-                    .lineLimit(2)
-            }
-        }
-        .padding(24)
-        .frame(width: 400, height: 260, alignment: .topLeading)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.white.opacity(isFocused ? 0.2 : 0.07))
-        )
-        .scaleEffect(isFocused ? 1.04 : 1)
-        .animation(.easeOut(duration: 0.15), value: isFocused)
     }
 }

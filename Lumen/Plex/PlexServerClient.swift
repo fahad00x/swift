@@ -270,6 +270,21 @@ final class PlexServerClient: Sendable {
         }
     }
 
+    /// Artwork choices of a movie / show (Plex "arts": the selected background and the
+    /// agents' alternatives), as paths for `imageURL`. Selected first.
+    func artworks(_ ratingKey: String) async -> [String] {
+        guard let url = url("/library/metadata/\(ratingKey)/arts"),
+              let data = try? await PlexHTTP.data(for: PlexHTTP.request(url, token: token)) else { return [] }
+        struct Response: Decodable {
+            struct Container: Decodable { let Metadata: [Art]? }
+            struct Art: Decodable { let key: String?; let selected: Bool? }
+            let MediaContainer: Container
+        }
+        guard let arts = (try? JSONDecoder().decode(Response.self, from: data))?.MediaContainer.Metadata else { return [] }
+        let ordered = arts.filter { $0.selected == true } + arts.filter { $0.selected != true }
+        return ordered.compactMap(\.key).filter { !$0.isEmpty }
+    }
+
     /// Trailers and extras attached to a movie or show.
     func extras(_ ratingKey: String) async -> [PlexItem] {
         let items = (try? await container("/library/metadata/\(ratingKey)/extras").metadata) ?? []
