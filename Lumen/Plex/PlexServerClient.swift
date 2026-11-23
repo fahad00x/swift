@@ -203,7 +203,10 @@ final class PlexServerClient: Sendable {
     /// Every episode of a show, in order.
     func allLeaves(_ showKey: String) async -> [PlexItem] {
         if let stored = await local.leaves(server: machineIdentifier, show: showKey) { return applied(stored) }
-        return ((try? await container("/library/metadata/\(showKey)/allLeaves").metadata) ?? []).filter(\.isEpisode)
+        let fetched = ((try? await container("/library/metadata/\(showKey)/allLeaves").metadata) ?? []).filter(\.isEpisode)
+        // Cached on the device: the show opens instantly next time.
+        if !fetched.isEmpty { await local.cache(server: machineIdentifier, show: showKey, episodes: fetched) }
+        return fetched
     }
 
     /// First episode after `episodeKey` that the active profile hasn't watched.
@@ -220,7 +223,11 @@ final class PlexServerClient: Sendable {
 
     func children(_ ratingKey: String) async throws -> [PlexItem] {
         if let stored = await local.children(server: machineIdentifier, of: ratingKey) { return applied(stored) }
-        return try await container("/library/metadata/\(ratingKey)/children").metadata
+        let fetched = try await container("/library/metadata/\(ratingKey)/children").metadata
+        if fetched.contains(where: \.isSeason) {
+            await local.cache(server: machineIdentifier, show: ratingKey, seasons: fetched.filter(\.isSeason))
+        }
+        return fetched
     }
 
     /// Next episode in the show after `episode` (crosses season boundaries).

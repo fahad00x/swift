@@ -123,6 +123,11 @@ actor LocalLibrary {
         if let data = try? JSONEncoder().encode(episodes) { try? data.write(to: file, options: .atomic) }
     }
 
+    static func seasonsFile(_ server: String, _ section: String, show: String) -> URL {
+        sectionDirectory(server, section).appendingPathComponent("episodes", isDirectory: true)
+            .appendingPathComponent("\(show).seasons.json")
+    }
+
     static func readEpisodes(server: String, section: String, show: String) -> [PlexItem]? {
         guard let data = try? Data(contentsOf: episodeFile(server, section, show: show)) else { return nil }
         return try? JSONDecoder().decode([PlexItem].self, from: data)
@@ -197,6 +202,22 @@ actor LocalLibrary {
         }.value
     }
 
+    /// Stores a show's seasons / episodes fetched when it was opened (or prefetched).
+    func cache(server: String, show: String, seasons: [PlexItem]? = nil, episodes: [PlexItem]? = nil) {
+        guard serverID == server, let section = index.showSection[show] else { return }
+        let fm = FileManager.default
+        if let seasons {
+            let file = Self.seasonsFile(server, section, show: show)
+            try? fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if let data = try? JSONEncoder().encode(seasons.uniqued()) { try? data.write(to: file, options: .atomic) }
+        }
+        if let episodes {
+            Self.writeEpisodes(episodes.uniqued(), server: server, section: section, show: show)
+            episodeCache[show] = nil
+            cacheOrder.removeAll { $0 == show }
+        }
+    }
+
     /// Deletes a library's local copy.
     func remove(server: String, key: String) {
         guard serverID == server, index.sections[key] != nil else { return }
@@ -217,11 +238,9 @@ actor LocalLibrary {
     func item(server: String, key: String) -> PlexItem? {
         guard serverID == server else { return nil }
         if let item = index.byKey[key] { return item }
-        // An episode: from its show's file.
-        for section in index.sections.values {
-            if let show = section.episodeShows[key] {
-                return episodes(server: server, show: show)?.first { $0.ratingKey == key }
-            }
+        // An episode of a show opened recently.
+        for episodes in episodeCache.values {
+            if let episode = episodes.first(where: { $0.ratingKey == key }) { return episode }
         }
         return nil
     }
@@ -243,8 +262,10 @@ actor LocalLibrary {
     func children(server: String, of key: String) -> [PlexItem]? {
         guard serverID == server, let parent = index.byKey[key] else { return nil }
         if parent.isShow {
-            guard index.section(ofShow: key)?.episodeCounts[key] != nil else { return nil }
-            return index.seasonsOf[key] ?? []
+            guard let section = index.showSection[key],
+                  let data = try? Data(contentsOf: Self.seasonsFile(server, section, show: key)),
+                  let seasons = try? JSONDecoder().decode([PlexItem].self, from: data) else { return nil }
+            return seasons.sorted { ($0.index ?? 0) < ($1.index ?? 0) }
         }
         guard parent.isSeason, let show = parent.parentRatingKey,
               let all = episodes(server: server, show: show) else { return nil }
@@ -279,8 +300,10 @@ actor LocalLibrary {
     /// A show's episodes in order, from its file (a few shows are kept in memory).
     private func episodes(server: String, show: String) -> [PlexItem]? {
         if let cached = episodeCache[show] { return cached }
-        guard let section = index.section(ofShow: show), section.episodeCounts[show] != nil,
-              let stored = Self.readEpisodes(server: server, section: section.key, show: show) else { return nil }
+        guard let section = index.showSection[show],
+              let stored = Self.readEpisodes(server: server, section: section, show: show) else { return nil }
+        // New episodes since it was cached (the show's count comes with every library refresh).
+        if let leaves = index.byKey[show]?.leafCount, leaves != stored.count { return nil }
         let sorted = stored.uniqued().sorted {
             (($0.parentIndex ?? 0), ($0.index ?? 0)) < (($1.parentIndex ?? 0), ($1.index ?? 0))
         }
@@ -405,17 +428,21 @@ final class LibrarySync {
         progress = 1
         message = ""
         if changed { NotificationCenter.default.post(name: .localLibraryDidChange, object: nil) }
-        await prefetchArtwork(client: client, sections: video.map(\.key))
+        await prefetchShows(client: client)
     }
 
-    /// Posters of the newest titles of the enabled libraries, so the first screens draw from disk.
-    private func prefetchArtwork(client: PlexServerClient, sections: [String]) async {
-        var urls: [URL] = []
-        for key in sections {
-            let items = await LocalLibrary.shared.recentlyAdded(server: client.machineIdentifier, section: key, limit: 30) ?? []
-            urls += items.compactMap { client.posterURL($0) }
+    /// Episodes of the shows the active profile is following (Continue Watching, My List),
+    /// fetched and cached ahead; other shows are fetched when opened. Images load on screen.
+    private func prefetchShows(client: PlexServerClient) async {
+        let store = ProfileStore.shared
+        let following = store.activeStates.sorted { $0.lastViewedAt > $1.lastViewedAt }.compactMap(\.showKey)
+        let listed = store.myList.filter { $0.type == "show" }.map(\.ratingKey)
+        var seen = Set<String>()
+        let shows = (following + listed).filter { seen.insert($0).inserted }.prefix(20)
+        for show in shows {
+            _ = await client.allLeaves(show)
+            _ = try? await client.children(show)
         }
-        await ImageLoader.shared.prefetch(urls, concurrency: 3)
     }
 
     // MARK: Server requests (off the main actor)
@@ -468,25 +495,50 @@ final class LibrarySync {
         return c.totalSize ?? c.size ?? 0
     }
 
-    /// Every item of one type, in pages of 200 (movies, shows or seasons; never episodes).
+    /// Every item of one type: pages of 500, three requests at a time.
     nonisolated private static func all(_ client: PlexServerClient, section: String, type: Int,
                                         extra: [(String, String)] = [],
                                         report: (Int, Int) -> Void = { _, _ in }) async throws -> [PlexItem] {
-        var out: [PlexItem] = []
-        var start = 0
-        while true {
+        let size = 500
+        func page(_ start: Int) async throws -> MediaContainer {
+            try await fetch(client, "/library/sections/\(section)/all",
+                            [("type", "\(type)"), ("includeGuids", "1"),
+                             ("X-Plex-Container-Start", "\(start)"), ("X-Plex-Container-Size", "\(size)")] + extra)
+        }
+        let first = try await page(0)
+        var out = first.metadata
+        let total = first.totalSize ?? first.size ?? out.count
+        report(out.count, total)
+        var starts = Array(stride(from: size, to: total, by: size))
+        while !starts.isEmpty {
             try Task.checkCancellation()
-            let c = try await fetch(client, "/library/sections/\(section)/all",
-                                    [("type", "\(type)"), ("includeGuids", "1"),
-                                     ("X-Plex-Container-Start", "\(start)"), ("X-Plex-Container-Size", "200")] + extra)
-            out += c.metadata
-            start += c.metadata.count
-            let total = c.totalSize ?? c.size ?? 0
-            report(start, total)
-            if c.metadata.isEmpty || start >= total { break }
+            let batch = Array(starts.prefix(3))
+            starts.removeFirst(batch.count)
+            let pages = try await withThrowingTaskGroup(of: (Int, [PlexItem]).self) { group in
+                for start in batch {
+                    group.addTask {
+                        let c = try await fetch(client, "/library/sections/\(section)/all",
+                                                [("type", "\(type)"), ("includeGuids", "1"),
+                                                 ("X-Plex-Container-Start", "\(start)"), ("X-Plex-Container-Size", "\(size)")] + extra)
+                        return (start, c.metadata)
+                    }
+                }
+                var got: [(Int, [PlexItem])] = []
+                for try await result in group { got.append(result) }
+                return got.sorted { $0.0 < $1.0 }
+            }
+            for (_, items) in pages { out += items }
+            report(out.count, total)
         }
         // Paging can repeat an item when the library changes meanwhile.
         return out.uniqued()
+    }
+
+    /// Newest episodes of a library in one request (new-episode dates for sorting and «يُعرض»).
+    nonisolated private static func recentEpisodes(_ client: PlexServerClient, section: String) async throws -> [PlexItem] {
+        try await fetch(client, "/library/sections/\(section)/all",
+                        [("type", "4"), ("sort", "addedAt:desc"),
+                         ("X-Plex-Container-Start", "0"), ("X-Plex-Container-Size", "1000")]).metadata
     }
 
     /// One show's episodes.
@@ -537,65 +589,20 @@ final class LibrarySync {
             return
         }
 
-        // Shows and seasons in full (small), then episodes show by show.
-        let shows = try await all(client, section: stamp.key, type: 2)
+        // Shows in bulk; seasons and episodes are fetched when a show is opened.
+        let shows = try await all(client, section: stamp.key, type: 2) { d, t in
+            report(t > 0 ? 0.9 * Double(d) / Double(t) : 0.9)
+        }
         section.items = shows
-        section.seasons = try await all(client, section: stamp.key, type: 3)
-        report(0.05)
-
-        // Shows no longer on the server.
-        let current = Set(shows.map(\.ratingKey))
-        for gone in section.episodeCounts.keys where !current.contains(gone) {
-            try? FileManager.default.removeItem(at: LocalLibrary.episodeFile(server, stamp.key, show: gone))
-            section.episodeCounts[gone] = nil
-            section.latestAdded[gone] = nil
-            section.latestAired[gone] = nil
+        section.seasons = []
+        // One request for the newest episodes: when each show last got one.
+        for episode in (try? await recentEpisodes(client, section: stamp.key)) ?? [] {
+            guard let show = episode.grandparentRatingKey else { continue }
+            if let added = episode.addedAt, added > (section.latestAdded[show] ?? 0) { section.latestAdded[show] = added }
+            if let aired = episode.originallyAvailableAt, aired > (section.latestAired[show] ?? "") { section.latestAired[show] = aired }
         }
-        section.episodeShows = section.episodeShows.filter { current.contains($0.value) }
-
-        // Shows whose episodes changed (new / removed episodes, or edited since last time).
-        let todo = shows.filter { show in
-            guard let stored = section.episodeCounts[show.ratingKey] else { return true }
-            return stored != (show.leafCount ?? stored) || (show.updatedAt ?? 0) > previousHighWater
-        }
-
-        var done = 0
-        var changedShows: [String] = []
-        // Two shows at a time; each show's episodes are written to disk and released.
-        for start in stride(from: 0, to: todo.count, by: 2) {
-            try Task.checkCancellation()
-            let batch = Array(todo[start..<min(start + 2, todo.count)])
-            let results = await withTaskGroup(of: (String, [PlexItem]?).self) { group in
-                for show in batch {
-                    group.addTask { (show.ratingKey, try? await leaves(client, show: show.ratingKey, section: stamp.key)) }
-                }
-                var out: [(String, [PlexItem]?)] = []
-                for await result in group { out.append(result) }
-                return out
-            }
-            for (show, episodes) in results {
-                guard let episodes else { continue }
-                LocalLibrary.writeEpisodes(episodes, server: server, section: stamp.key, show: show)
-                if section.episodeCounts[show] != nil {
-                    // Updating a show: forget its old episodes first (first downloads skip this).
-                    section.episodeShows = section.episodeShows.filter { $0.value != show }
-                }
-                for episode in episodes { section.episodeShows[episode.ratingKey] = show }
-                section.episodeCounts[show] = episodes.count
-                section.latestAdded[show] = episodes.compactMap(\.addedAt).max()
-                section.latestAired[show] = episodes.compactMap(\.originallyAvailableAt).max()
-                changedShows.append(show)
-            }
-            done += batch.count
-            if done % 10 == 0 || done == todo.count {
-                report(0.05 + 0.95 * Double(done) / Double(max(todo.count, 1)))
-            }
-            // Save progress now and then, so the library fills in and an interruption resumes here.
-            if done % 100 == 0 {
-                await library.store(section, server: server, changedShows: changedShows)
-                changedShows = []
-            }
-        }
+        report(1)
+        let changedShows: [String] = []
 
         section.highWater = max(previousHighWater, (shows + section.seasons).compactMap { $0.updatedAt ?? $0.addedAt }.max() ?? 0)
         section.contentChangedAt = stamp.contentChangedAt
