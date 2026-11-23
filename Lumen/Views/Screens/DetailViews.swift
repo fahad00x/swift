@@ -85,9 +85,14 @@ struct DetailPage: View {
     /// Height of the season labels line.
     private static let labelsHeight: CGFloat = 64
     private static let rowSpacing: CGFloat = 34
-    /// From the top of the rows block to the top of the episode stills
-    /// (top strip 8 + season labels + spacing + the row's own top padding 24).
-    private static var leadIn: CGFloat { 8 + labelsHeight + rowSpacing + 24 }
+    /// From the top of the rows block to the top of the first row's images. Shows: top strip 8
+    /// + season labels + spacing + the row's own top padding 24. Movies: top strip 8 + the
+    /// «ذات صلة» header + padding 24 (or the extras header 36 + padding 34).
+    private var leadIn: CGFloat {
+        if item?.isShow ?? current.isShow { return 8 + Self.labelsHeight + Self.rowSpacing + 24 }
+        if !related.isEmpty { return 8 + Self.labelsHeight + 24 }
+        return 8 + 36 + 34
+    }
     private static let lowerTopID = "detail-lower-top"
     /// ~0.8 s ease-out, most of the motion in the first 0.4 s.
     private static func scrollCurve(_ duration: Double) -> Animation {
@@ -144,7 +149,7 @@ struct DetailPage: View {
 
                 // The rows: the first one peeks at the bottom, then scrolls up under the title.
                 lowerContent(item)
-                    .offset(y: (scrolled ? Self.episodesTop : Self.peekTop) - Self.leadIn)
+                    .offset(y: (scrolled ? Self.episodesTop : Self.peekTop) - leadIn)
                     .opacity(revealed ? 1 : 0)
                     // Focusable only once scrolled (Down from the buttons scrolls first): at the
                     // top the peeking row is display-only, so Down from the card lands on Play and
@@ -430,12 +435,16 @@ struct DetailPage: View {
         }
     }
 
-    /// After the episodes view appears: focus the episode Play starts (or the first row).
+    /// After scrolling down: focus the episode Play starts; a movie (or a show without
+    /// episodes) its first related title, else its first extra.
     private func focusEpisodes() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            let episodes = currentEpisodes
-            if let entry = entryEpisode(episodes) {
+            if let entry = entryEpisode(currentEpisodes) {
                 lowerFocus = "ep-\(entry.id)"
+            } else if let first = related.uniqued().first {
+                lowerFocus = "rel-\(first.id)"
+            } else if let first = extras.first {
+                lowerFocus = "extra-\(first.id)"
             }
         }
     }
@@ -540,11 +549,7 @@ struct DetailPage: View {
                             .disabled(!scrolled)
                             episodesRow(item)
                         }
-                        if !related.isEmpty {
-                            ShelfView(shelf: Shelf(id: "related-\(item.ratingKey)", title: "ذات صلة",
-                                                   kind: .poster, items: related),
-                                      client: client)
-                        }
+                        if !related.isEmpty { relatedRow(item) }
                         if !item.isShow && !extras.isEmpty { extrasRow }
                     }
                     .padding(.bottom, 120)
@@ -558,7 +563,7 @@ struct DetailPage: View {
             }
         }
         .frame(width: Self.screen.width,
-               height: Self.screen.height - (Self.episodesTop - Self.leadIn), alignment: .top)
+               height: Self.screen.height - (Self.episodesTop - leadIn), alignment: .top)
     }
 
     /// «الموسم ١  الموسم ٢»: grey labels, the current / focused one white.
@@ -624,12 +629,41 @@ struct DetailPage: View {
         .animation(.easeInOut(duration: 0.25), value: selectedSeasonKey)
     }
 
+    /// «ذات صلة»: posters with the page's own focus (Down from a movie's buttons lands on the
+    /// first one). The header shows once scrolled, so at the top only the posters peek.
+    private func relatedRow(_ item: PlexItem) -> some View {
+        let items = related.uniqued()
+        let context = BrowseContext(rowID: "related-\(item.ratingKey)", items: items)
+        return VStack(alignment: .leading, spacing: 0) {
+            Text("ذات صلة")
+                .font(.system(size: 30, weight: .regular))
+                .foregroundStyle(.white.opacity(0.6))
+                .frame(height: Self.labelsHeight, alignment: .bottom)
+                .padding(.horizontal, Self.sideInset)
+                .opacity(scrolled ? 1 : 0)
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(alignment: .top, spacing: CardKind.spacing) {
+                    ForEach(items) { entry in
+                        MediaCardLink(item: entry, client: client,
+                                      sourceID: context.sourceID(for: entry), context: context)
+                            .focused($lowerFocus, equals: "rel-\(entry.id)")
+                    }
+                }
+                .padding(.horizontal, Self.sideInset)
+                .padding(.vertical, 24)
+            }
+            .scrollClipDisabled()
+            .focusSection()
+        }
+    }
+
     private var extrasRow: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("العروض الدعائية والإضافات")
                 .font(.system(size: 30, weight: .regular))
                 .foregroundStyle(.white.opacity(0.6))
                 .padding(.horizontal, Self.sideInset)
+                .opacity(scrolled ? 1 : 0)
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(alignment: .top, spacing: 40) {
                     ForEach(extras) { extra in

@@ -439,6 +439,17 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
+                // Page title as the list's first header, so it scrolls away with the rows (a
+                // navigation title stays put and the rows run under it).
+                Section {
+                } header: {
+                    Text("الإعدادات")
+                        .font(.system(size: 57, weight: .bold))
+                        .foregroundStyle(.white)
+                        .textCase(nil)
+                        .frame(maxWidth: .infinity)
+                }
+
                 if let profile = store.activeProfile {
                     Section {
                         HStack(spacing: 24) {
@@ -559,7 +570,6 @@ struct SettingsView: View {
             // Centred in the area next to the sidebar.
             .frame(maxWidth: .infinity)
             .sidebarPadding()
-            .navigationTitle("الإعدادات")
             // Menu on Settings goes to the sidebar (pushed pickers handle their own Back).
             .onExitCommand(perform: focusSidebar)
             // Follow the profile to its other devices.

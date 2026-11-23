@@ -510,6 +510,8 @@ extension View {
             .font(.system(size: 28, weight: .semibold))
             .buttonStyle(.bordered)
             .buttonBorderShape(.capsule)
+            // System colours: the app's amber tint would colour the label and the fill alike (blank buttons).
+            .tint(nil)
     }
 
     /// The system tvOS button as a circle (+, ⓘ, ›, episodes).
@@ -518,6 +520,7 @@ extension View {
             .font(.system(size: 28, weight: .semibold))
             .buttonStyle(.bordered)
             .buttonBorderShape(.circle)
+            .tint(nil)
     }
 }
 
