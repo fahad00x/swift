@@ -29,4 +29,14 @@ for fw in "$APP"/Frameworks/*.framework; do
   printf '%-28s %-10s %-10s %s\n' "$name" "$bin_min" "$plist_min" "$status"
 done
 echo "Highest framework minos: $highest"
+if [ "$bad" != 0 ]; then
+  # Diagnostics for the first framework, to see what the binary actually contains.
+  fw=$(ls -d "$APP"/Frameworks/*.framework | head -1); name=$(basename "$fw" .framework)
+  echo "--- diagnostics: $name"
+  ls -la "$fw"
+  file "$fw/$name"
+  xcrun vtool -show-build "$fw/$name" 2>&1 | head -20
+  otool -l "$fw/$name" 2>&1 | grep -A6 -E "LC_BUILD_VERSION|LC_VERSION_MIN" | head -20
+  codesign -dv "$fw" 2>&1 | head -5
+fi
 if [ "$bad" != 0 ]; then echo "::error::Embedded framework minimum OS mismatch in $(basename "$APP") (see table)"; exit 1; fi
