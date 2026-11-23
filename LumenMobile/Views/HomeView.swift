@@ -41,6 +41,7 @@ struct HomeView: View {
             .overlay {
                 if isLoading && feed.isEmpty { LoadingView() }
             }
+            .overlay { LibrarySyncBanner() }
             .refreshable { await load(showCached: false) }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { profileButton }
@@ -66,6 +67,9 @@ struct HomeView: View {
             Task { await load() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .libraryShouldRefresh)) { _ in
+            Task { await load(showCached: false) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .localLibraryDidChange)) { _ in
             Task { await load(showCached: false) }
         }
         .onReceive(NotificationCenter.default.publisher(for: .myListDidChange)) { _ in

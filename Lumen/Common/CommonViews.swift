@@ -22,7 +22,7 @@ struct RemoteImage: View {
             .task(id: url) {
                 guard let url else { image = nil; return }
                 let loaded = await ImageLoader.shared.image(for: url)
-                withAnimation(.easeOut(duration: 0.25)) { image = loaded }
+                withAnimation(.easeOut(duration: 0.15)) { image = loaded }
             }
     }
 }

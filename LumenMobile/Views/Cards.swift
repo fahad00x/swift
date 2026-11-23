@@ -31,7 +31,7 @@ struct PosterCard: View {
             Image(systemName: item.isShow || item.isEpisode ? "tv" : "film")
                 .font(.title)
                 .foregroundStyle(.white.opacity(0.2))
-            RemoteImage(url: client.imageURL(item.posterPath, width: 360, height: 540))
+            RemoteImage(url: client.posterURL(item))
         }
         .aspectRatio(2 / 3, contentMode: .fit)
         .overlay(alignment: .bottomLeading) {

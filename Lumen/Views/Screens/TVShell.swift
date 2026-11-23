@@ -405,29 +405,6 @@ struct HomeView: View {
     }
 }
 
-/// Progress of the first library sync (later syncs run silently).
-private struct LibrarySyncBanner: View {
-    @State private var sync = LibrarySync.shared
-
-    var body: some View {
-        if sync.isFirstSync && sync.isSyncing {
-            HStack(spacing: 16) {
-                ProgressView(value: sync.progress)
-                    .frame(width: 260)
-                Text(sync.message.isEmpty ? "جارٍ تجهيز المكتبة على الجهاز…" : sync.message)
-                    .font(.system(size: 22))
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 12)
-            .background(Capsule().fill(Color.black.opacity(0.75)))
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-            .padding(.bottom, 40)
-            .allowsHitTesting(false)
-        }
-    }
-}
-
 /// Backdrop of the focused item, changed only after focus rests briefly (no work while scrolling fast).
 private struct HomeBackdrop: View {
     let item: PlexItem?

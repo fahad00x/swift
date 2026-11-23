@@ -5,18 +5,26 @@ import CoreImage.CIFilterBuiltins
 
 struct BackdropView: View {
     let url: URL?
+    /// Follows `url` only once focus rests briefly, so scrolling a grid loads no images.
+    @State private var shown: URL?
 
     var body: some View {
         ZStack {
             Color.black
-            RemoteImage(url: url)
-                .id(url)
+            RemoteImage(url: shown)
+                .id(shown)
                 .transition(.opacity)
             LinearGradient(colors: [.black.opacity(0.35), .black.opacity(0.75), .black.opacity(0.95)],
                            startPoint: .top, endPoint: .bottom)
         }
-        .animation(.easeInOut(duration: 0.6), value: url)
+        .animation(.easeInOut(duration: 0.35), value: shown)
         .ignoresSafeArea()
+        .task(id: url) {
+            if shown == nil { shown = url; return }
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            shown = url
+        }
     }
 }
 

@@ -83,6 +83,7 @@ struct SettingsView: View {
                 Section("الخادم") {
                     LabeledContent("متصل بـ", value: client.name)
                     LabeledContent("نوع الاتصال", value: client.isLocal ? "شبكة محلية" : "عن بُعد")
+                    LibrarySyncStatusRow()
                     // Full reload: connection, libraries and every screen from the server.
                     Button {
                         Task { await session.refreshLibrary() }

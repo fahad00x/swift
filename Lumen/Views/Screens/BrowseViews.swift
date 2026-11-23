@@ -93,6 +93,9 @@ struct LibraryView: View {
         .onReceive(NotificationCenter.default.publisher(for: .libraryShouldRefresh)) { _ in
             Task { await reload() }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .localLibraryDidChange)) { _ in
+            Task { await reload() }
+        }
     }
 
     /// Cached first page right away, then the server's; more pages from the server on scroll.
@@ -262,6 +265,7 @@ struct SettingsView: View {
                 Section("الخادم") {
                     LabeledContent("متصل بـ", value: client.name)
                     LabeledContent("نوع الاتصال", value: client.isLocal ? "شبكة محلية" : "عن بُعد")
+                    LibrarySyncStatusRow()
                     // Full reload: connection, libraries and every screen from the server.
                     Button {
                         Task { await session.refreshLibrary() }
