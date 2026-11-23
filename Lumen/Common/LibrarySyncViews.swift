@@ -10,7 +10,7 @@ struct LibrarySyncBanner: View {
             HStack(spacing: 16) {
                 ProgressView(value: sync.progress.isFinite ? min(max(sync.progress, 0), 1) : 0)
                     .frame(width: 160)
-                Text(sync.message.isEmpty ? "جارٍ تجهيز المكتبة على الجهاز…" : sync.message)
+                Text(sync.message.isEmpty ? "جارٍ تحميل المكتبة…" : sync.message)
                     .font(.caption)
                     .lineLimit(1)
                     .frame(maxWidth: 360, alignment: .leading)

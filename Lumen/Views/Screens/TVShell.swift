@@ -415,7 +415,11 @@ struct HomeView: View {
             }
             .environment(focus)
         }
-        .task(id: filter.signature) { await load() }
+        .task(id: filter.signature) {
+            // A library just enabled starts downloading in the background.
+            LibrarySync.shared.start(client: client, force: true)
+            await load()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .plexPlaybackDidEnd)) { _ in
             Task { await load() }
         }

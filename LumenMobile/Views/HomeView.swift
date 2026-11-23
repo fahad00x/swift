@@ -57,6 +57,8 @@ struct HomeView: View {
         .task(id: filter.signature) {
             if let shown = shownSignature, shown != filter.signature { feed = HomeFeed() }
             shownSignature = filter.signature
+            // A library just enabled starts downloading in the background.
+            LibrarySync.shared.start(client: client, force: true)
             await load()
         }
         .onReceive(NotificationCenter.default.publisher(for: .plexPlaybackDidEnd)) { _ in
