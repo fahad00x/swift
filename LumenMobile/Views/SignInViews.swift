@@ -105,7 +105,9 @@ struct LinkAccountView: View {
                     try await Task.sleep(for: .seconds(2))
                     let checked = try await PlexAccount.checkPin(id: newPin.id)
                     if let token = checked.authToken, !token.isEmpty {
-                        await session.completeSignIn(token: token)
+                        // Not awaited here: signing in replaces this screen, which cancels this
+                        // view's task (and any request still running in it).
+                        session.beginSignIn(token: token)
                         return
                     }
                 }

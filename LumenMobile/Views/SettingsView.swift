@@ -13,10 +13,24 @@ struct SettingsView: View {
     @AppStorage(PlaybackSettings.maxBitrateKey) private var maxBitrate = PlaybackSettings.defaultBitrate
     @State private var editing: UserProfile?
     @State private var pin: PinRequest?
+    @State private var showLibraries = false
 
     var body: some View {
-        NavigationStack {
+        BrowseStack(client: client) {
             Form {
+                Section {
+                    Button {
+                        openLibraries()
+                    } label: {
+                        HStack {
+                            Label("المكتبات", systemImage: "square.stack.fill")
+                            Spacer()
+                            Image(systemName: "chevron.left").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                        }
+                    }
+                    .foregroundStyle(.primary)
+                }
+
                 if let profile = store.activeProfile {
                     Section {
                         HStack(spacing: 14) {
@@ -110,11 +124,23 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("الإعدادات")
+            .navigationDestination(isPresented: $showLibraries) {
+                LibrariesSettingsView(client: client, sections: sections)
+            }
         }
         .sheet(item: $editing) { profile in
             ProfileEditorView(client: client, sections: sections, existing: profile)
         }
         .pinRequest($pin)
+    }
+
+    /// A kids profile needs the main profile's PIN to change its libraries.
+    private func openLibraries() {
+        guard let profile = store.activeProfile, profile.isKids else { showLibraries = true; return }
+        let editors = ProfileGate.editors(for: profile, store: store)
+        guard !editors.isEmpty else { showLibraries = true; return }
+        pin = PinRequest(title: "رمز المستخدم الرئيسي", subtitle: "مطلوب لتغيير مكتبات حساب الأطفال",
+                         profiles: editors) { showLibraries = true }
     }
 
     /// A kids profile needs the main profile's PIN to open its settings.

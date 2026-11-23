@@ -8,6 +8,7 @@ struct HomeView: View {
     @State private var feed = HomeFeed()
     @State private var isLoading = true
     @State private var isRefreshing = false
+    @State private var shownSignature: String?
 
     var body: some View {
         BrowseStack(client: client) {
@@ -50,7 +51,13 @@ struct HomeView: View {
             }
             .toolbarBackground(.hidden, for: .navigationBar)
         }
-        .task { await load() }
+        // Re-runs when the profile's visible libraries / kids mode / genres change; then it
+        // starts from that content's own saved Home, never keeping rows from hidden libraries.
+        .task(id: filter.signature) {
+            if let shown = shownSignature, shown != filter.signature { feed = HomeFeed() }
+            shownSignature = filter.signature
+            await load()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .plexPlaybackDidEnd)) { _ in
             Task { await load() }
         }

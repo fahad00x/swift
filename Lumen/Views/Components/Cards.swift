@@ -49,10 +49,6 @@ struct LandscapeCard: View {
                     Text(caption)
                         .font(.caption2.weight(.semibold))
                         .lineLimit(1)
-                    if let progress = item.progress {
-                        ThinProgress(value: progress)
-                            .frame(width: 64, height: 5)
-                    }
                 }
                 .foregroundStyle(.white.opacity(0.9))
             }
@@ -61,6 +57,7 @@ struct LandscapeCard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(width: size.width, height: size.height)
+        .artworkStatus(item, triangleFraction: 0.08, barHeight: 6)
         .clipShape(RoundedRectangle(cornerRadius: CardKind.cornerRadius, style: .continuous))
     }
 
@@ -117,7 +114,8 @@ struct PosterCard: View {
             .padding(.bottom, 16)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .overlay(alignment: .topLeading) {
+        // Rank at the top-left (the trailing side in Arabic); the unwatched triangle is top-right.
+        .overlay(alignment: .topTrailing) {
             if let rank {
                 Text(ArabicFormat.digits(rank))
                     .font(.system(size: 120, weight: .heavy, design: .rounded))
@@ -127,8 +125,8 @@ struct PosterCard: View {
                     .offset(y: -18)
             }
         }
-        .overlay(alignment: .topTrailing) { watchState.padding(12) }
         .frame(width: size.width, height: size.height)
+        .artworkStatus(item, barHeight: 6)
         .clipShape(RoundedRectangle(cornerRadius: CardKind.cornerRadius, style: .continuous))
     }
 
@@ -137,21 +135,6 @@ struct PosterCard: View {
         let genres = item.genres.prefix(2).map { ArabicFormat.genre($0.tag) }
         if !genres.isEmpty { return genres.joined(separator: "، ") }
         return item.year.map { ArabicFormat.digits($0) }
-    }
-
-    @ViewBuilder private var watchState: some View {
-        if let count = item.unwatchedCount {
-            Text(ArabicFormat.digits(count))
-                .font(.caption2.weight(.bold))
-                .padding(.horizontal, 10).padding(.vertical, 4)
-                .background(Capsule().fill(Color.accentColor))
-                .foregroundStyle(.black)
-        } else if item.isWatched {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.title3)
-                .symbolRenderingMode(.palette)
-                .foregroundStyle(.white, Color.accentColor)
-        }
     }
 }
 
@@ -202,18 +185,6 @@ private struct LogoImage: View {
         .task(id: url) {
             image = await ImageLoader.shared.image(for: url)
             failed = image == nil
-        }
-    }
-}
-
-private struct ThinProgress: View {
-    let value: Double
-    var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.white.opacity(0.3))
-                Capsule().fill(Color.white).frame(width: geo.size.width * value)
-            }
         }
     }
 }

@@ -865,21 +865,9 @@ private struct EpisodeTile: View {
             ZStack(alignment: .bottom) {
                 Color(white: 0.14)
                 RemoteImage(url: client.imageURL(episode.thumb ?? episode.art, width: 880, height: 496))
-                if let progress = episode.progress, !episode.isWatched {
-                    LinearGradient(colors: [.clear, .black.opacity(0.6)], startPoint: .center, endPoint: .bottom)
-                    ProgressBar(value: progress).padding(.horizontal, 14).padding(.bottom, 12)
-                }
-            }
-            .overlay(alignment: .topTrailing) {
-                if episode.isWatched {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.title3)
-                        .symbolRenderingMode(.palette)
-                        .foregroundStyle(.black, .white)
-                        .padding(10)
-                }
             }
             .frame(width: size.width, height: size.height)
+            .artworkStatus(episode, triangleFraction: 0.08, barHeight: 6)
             .clipShape(RoundedRectangle(cornerRadius: CardKind.cornerRadius, style: .continuous))
             .hoverEffect(.highlight)
 

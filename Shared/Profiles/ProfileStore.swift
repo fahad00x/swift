@@ -199,6 +199,12 @@ final class ProfileStore {
         return states.values.filter { $0.profileID == activeProfileID }
     }
 
+    /// Episodes of a show or season the active profile has watched (observable: re-read on change).
+    func watchedEpisodeCount(under parentKey: String) -> Int {
+        _ = revision
+        return snapshot.watchedCount(under: parentKey)
+    }
+
     func state(for ratingKey: String) -> MediaState? {
         _ = revision
         guard let activeProfileID else { return nil }

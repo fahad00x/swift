@@ -48,8 +48,10 @@ struct RootView: View {
             case .ready:
                 if let client = session.client {
                     if let profile = profiles.activeProfile {
+                        // Not rebuilt when the profile's libraries change (that would close Settings);
+                        // screens reload from the new content filter instead.
                         MainTabView(client: client, sections: session.sections, profile: profile)
-                            .id("\(client.machineIdentifier)|\(profile.id)|\(profile.contentSignature)")
+                            .id("\(client.machineIdentifier)|\(profile.id)")
                     } else {
                         ProfilePickerView(client: client, sections: session.sections)
                     }
@@ -97,8 +99,8 @@ struct MainTabView: View {
         TabView {
             HomeView(client: client)
                 .tabItem { Label("الرئيسية", systemImage: "house.fill") }
-            LibrariesView(client: client)
-                .tabItem { Label("المكتبات", systemImage: "square.stack.fill") }
+            MyListView(client: client)
+                .tabItem { Label("قائمتي", systemImage: "plus.rectangle.on.rectangle") }
             SearchView(client: client)
                 .tabItem { Label("بحث", systemImage: "magnifyingglass") }
             SettingsView(client: client, sections: sections)

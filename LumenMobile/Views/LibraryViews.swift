@@ -1,30 +1,5 @@
 import SwiftUI
 
-/// The profile's libraries (and anime scopes), in its own order.
-struct LibrariesView: View {
-    let client: PlexServerClient
-    @Environment(\.contentFilter) private var filter
-
-    var body: some View {
-        BrowseStack(client: client) {
-            List {
-                if filter.scopes.isEmpty {
-                    ContentUnavailableView("لا توجد مكتبات مفتوحة", systemImage: "lock",
-                                           description: Text("افتحها من الإعدادات ← إعدادات المستخدم."))
-                }
-                ForEach(filter.scopes) { scope in
-                    NavigationLink(value: scope) {
-                        Label(scope.title, systemImage: scope.icon)
-                            .font(.headline)
-                            .padding(.vertical, 6)
-                    }
-                }
-            }
-            .navigationTitle("المكتبات")
-        }
-    }
-}
-
 struct LibraryGridView: View {
     let client: PlexServerClient
     let scope: LibraryScope

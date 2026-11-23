@@ -34,7 +34,6 @@ struct PosterCard: View {
             RemoteImage(url: client.imageURL(item.posterPath, width: 360, height: 540))
         }
         .aspectRatio(2 / 3, contentMode: .fit)
-        .overlay(alignment: .topTrailing) { watchState.padding(6) }
         .overlay(alignment: .bottomLeading) {
             if let rank {
                 Text(ArabicFormat.digits(rank))
@@ -45,11 +44,7 @@ struct PosterCard: View {
                     .offset(y: 10)
             }
         }
-        .overlay(alignment: .bottom) {
-            if let progress = item.progress, !item.isWatched {
-                ProgressBar(value: progress).padding(6)
-            }
-        }
+        .artworkStatus(item)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
@@ -58,20 +53,6 @@ struct PosterCard: View {
         let genres = item.genres.prefix(2).map { ArabicFormat.genre($0.tag) }
         if !genres.isEmpty { return genres.joined(separator: "، ") }
         return item.year.map { ArabicFormat.digits($0) }
-    }
-
-    @ViewBuilder private var watchState: some View {
-        if let count = item.unwatchedCount {
-            Text(ArabicFormat.digits(count))
-                .font(.caption2.weight(.bold))
-                .padding(.horizontal, 7).padding(.vertical, 2)
-                .background(Capsule().fill(Theme.accent))
-                .foregroundStyle(.black)
-        } else if item.isWatched {
-            Image(systemName: "checkmark.circle.fill")
-                .symbolRenderingMode(.palette)
-                .foregroundStyle(.white, Theme.accent)
-        }
     }
 }
 
@@ -94,13 +75,8 @@ struct LandscapeCard: View {
                         .padding(10)
                         .padding(.bottom, 8)
                 }
-                if let progress = item.progress {
-                    ProgressBar(value: progress)
-                        .padding(.horizontal, 10)
-                        .padding(.bottom, 8)
-                        .frame(maxHeight: .infinity, alignment: .bottom)
-                }
             }
+            .artworkStatus(item, triangleFraction: 0.08)
             .frame(width: width, height: width * 9 / 16)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 

@@ -121,6 +121,19 @@ final class AppSession {
         await loadAccount()
     }
 
+    /// Called by the sign-in screen once plex.tv approves the PIN. Runs in a task the screen
+    /// doesn't own, so replacing the screen doesn't cancel the account / server requests.
+    func beginSignIn(token: String) {
+        Task { await completeSignIn(token: token) }
+    }
+
+    /// A cancelled request (the screen that started it went away) is not a failure to show.
+    private static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let url = error as? URLError, url.code == .cancelled { return true }
+        return false
+    }
+
     func retry() async {
         if token == nil { phase = .signedOut } else { await loadAccount() }
     }
@@ -135,6 +148,10 @@ final class AppSession {
             servers = try await serversTask
         } catch PlexError.unauthorized {
             signOut()
+            return
+        } catch where Self.isCancellation(error) {
+            // Retry in a fresh task instead of showing «مُلغى».
+            Task { await self.loadAccount() }
             return
         } catch {
             phase = .failed(error.localizedDescription)
@@ -174,6 +191,8 @@ final class AppSession {
                 Task { await ProfileMigration.run(client: client, sections: sections, store: self.profiles, into: owner.id) }
             }
             phase = .ready
+        } catch where Self.isCancellation(error) {
+            Task { await self.connect(to: server) }
         } catch {
             phase = .failed(error.localizedDescription)
         }

@@ -93,6 +93,11 @@ struct ContentFilter {
         allowsEverything = false
     }
 
+    /// Changes whenever what the profile may see changes (libraries, kids mode, genre focus).
+    var signature: String {
+        scopes.map(\.id).joined(separator: ",") + "|\(isKids)|" + focusGenres.sorted().joined(separator: ",")
+    }
+
     /// Distinct libraries behind the enabled scopes, in tab order.
     var sections: [PlexDirectory] {
         var seen = Set<String>()

@@ -433,20 +433,10 @@ private struct EpisodeRow: View {
             ZStack(alignment: .bottom) {
                 Color(white: 0.14)
                 RemoteImage(url: client.imageURL(episode.thumb ?? episode.art, width: 420, height: 236))
-                if let progress = episode.progress, !episode.isWatched {
-                    ProgressBar(value: progress).padding(6)
-                }
             }
             .frame(width: 150, height: 84)
+            .artworkStatus(episode, triangleFraction: 0.12, barHeight: 3)
             .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(alignment: .topTrailing) {
-                if episode.isWatched {
-                    Image(systemName: "checkmark.circle.fill")
-                        .symbolRenderingMode(.palette)
-                        .foregroundStyle(.black, .white)
-                        .padding(4)
-                }
-            }
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("\(ArabicFormat.digits(episode.index ?? 0)). \(episode.title)")
