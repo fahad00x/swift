@@ -12,15 +12,15 @@ enum CardKind {
     /// Sized for the content area next to the sidebar rail.
     var size: CGSize {
         switch self {
-        case .poster: return CGSize(width: 210, height: 315)
+        case .poster: return CGSize(width: 240, height: 358)
         case .landscape: return CGSize(width: 340, height: 191)
         }
     }
 
     static let cornerRadius: CGFloat = 10
-    static let spacing: CGFloat = 28
+    static let spacing: CGFloat = 30
     /// Side inset of rows and grids (inside the content area, next to the rail).
-    static let inset: CGFloat = 50
+    static let inset: CGFloat = 20
 }
 
 // MARK: - Landscape (Continue Watching)
@@ -83,7 +83,10 @@ struct LandscapeCard: View {
 
 /// Artwork only (the title is drawn under the card by `MediaCardLink`), with the status
 /// overlays: unwatched triangle + progress bar, unwatched episode count, quality and the
-/// «يُعرض» ribbon (no rating: posters often have it printed on them already) for shows with a recent episode.
+/// Poster artwork with Plex-style overlays (mirrored for Arabic): network / airing ribbon in
+/// the top-right corner, unwatched-episode count (or ✓) top-left, resolution and rating along
+/// the bottom, and a thin progress bar once started. No text under the card: the focused
+/// item's details show at the top of Home.
 struct PosterCard: View {
     let item: PlexItem
     let client: PlexServerClient
@@ -104,30 +107,75 @@ struct PosterCard: View {
             RemoteImage(url: size == CardKind.poster.size
                         ? client.posterURL(item)
                         : client.imageURL(item.posterPath, width: Int(size.width * 2), height: Int(size.height * 2)))
-            PosterBadges(item: item, unwatchedEpisodes: unwatchedEpisodes, airing: airing)
+            PosterOverlays(item: item, watchBox: watchBox, ribbon: ribbon)
         }
         .frame(width: size.width, height: size.height)
-        .artworkStatus(item, triangleFraction: 0.14, barHeight: 5)
+        .artworkStatus(item, barHeight: 4)
         .clipShape(RoundedRectangle(cornerRadius: CardKind.cornerRadius, style: .continuous))
         .task(id: item.ratingKey) {
             guard item.isShow, let aired = await client.latestAired(show: item.ratingKey) else { return }
-            airing = aired >= PosterBadges.airingCutoff
+            airing = aired >= PosterOverlays.airingCutoff
         }
     }
 
-    private var unwatchedEpisodes: Int? {
-        guard item.isShow || item.isSeason, let leaves = item.leafCount, leaves > 0 else { return nil }
-        let remaining = leaves - store.watchedEpisodeCount(under: item.ratingKey)
-        return remaining > 0 ? remaining : nil
+    /// Unwatched episodes of a show / season, or ✓ when everything is watched.
+    private var watchBox: String? {
+        if item.isShow || item.isSeason {
+            guard let leaves = item.leafCount, leaves > 0 else { return nil }
+            let remaining = leaves - store.watchedEpisodeCount(under: item.ratingKey)
+            return remaining > 0 ? ArabicFormat.digits(remaining) : "✓"
+        }
+        return (store.state(for: item.ratingKey)?.watched ?? false) ? "✓" : nil
+    }
+
+    /// Network and status (the server doesn't say whether a show ended, only when it last aired).
+    private var ribbon: String? {
+        guard item.isShow else { return nil }
+        let parts = [item.studio, airing ? "يُعرض" : nil].compactMap { $0 }.filter { !$0.isEmpty }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 }
 
-/// Overlays drawn in physical positions (top-left count / quality, bottom ribbon),
-/// so they never collide with the top-right unwatched triangle in Arabic.
-private struct PosterBadges: View {
+/// Small dark box (count, ✓, or an episode number), shared by posters and episode stills.
+struct CornerBox: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 17, weight: .bold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 8)
+            .frame(minWidth: 30, minHeight: 28)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.black.opacity(0.75)))
+    }
+}
+
+/// Source + value, e.g. «IMDb 7.8».
+struct RatingBox: View {
     let item: PlexItem
-    let unwatchedEpisodes: Int?
-    let airing: Bool
+    var fontSize: CGFloat = 15
+
+    var body: some View {
+        if let rating = item.ratingDisplay {
+            HStack(spacing: 5) {
+                Text(rating.source)
+                    .font(.system(size: fontSize - 2, weight: .heavy))
+                    .padding(.horizontal, 4)
+                    .background(RoundedRectangle(cornerRadius: 3).fill(Color(red: 0.96, green: 0.77, blue: 0.09)))
+                    .foregroundStyle(.black)
+                Text(rating.value)
+                    .font(.system(size: fontSize, weight: .bold))
+                    .foregroundStyle(.white)
+            }
+            .environment(\.layoutDirection, .leftToRight)
+        }
+    }
+}
+
+private struct PosterOverlays: View {
+    let item: PlexItem
+    let watchBox: String?
+    let ribbon: String?
 
     /// Shows with an episode aired in the last 14 days count as airing.
     static var airingCutoff: String {
@@ -137,88 +185,52 @@ private struct PosterBadges: View {
         return f.string(from: Date().addingTimeInterval(-14 * 86_400))
     }
 
-    private var quality: String? {
-        guard item.isPlayable else { return nil }
-        return item.media.first?.resolutionBadge
-    }
+    private var quality: String? { item.media.first?.resolutionBadge }
 
     var body: some View {
+        // Physical positions, mirrored for Arabic: ribbon top-right, box top-left.
         ZStack {
-            if airing {
-                LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .center, endPoint: .bottom)
+            if let ribbon {
+                Text(ribbon)
+                    .font(.system(size: 12, weight: .heavy))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .frame(width: 150, height: 22)
+                    .background(Color.black.opacity(0.78))
+                    .rotationEffect(.degrees(45))
+                    .offset(x: 42, y: -42)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
             }
-            VStack(alignment: .leading, spacing: 6) {
-                if let unwatchedEpisodes {
-                    badge(ArabicFormat.digits(unwatchedEpisodes), font: .system(size: 18, weight: .bold))
-                }
-                if let quality {
-                    badge(quality, font: .system(size: 14, weight: .heavy))
-                }
+            if let watchBox {
+                CornerBox(text: watchBox)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .padding(8)
-
-            HStack(spacing: 6) {
-                Spacer(minLength: 0)
-                if airing {
-                    Text("يُعرض")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.black)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Color(red: 0.35, green: 0.85, blue: 0.45)))
+            if quality != nil || item.ratingDisplay != nil {
+                HStack(spacing: 6) {
+                    RatingBox(item: item)
+                    Spacer(minLength: 0)
+                    if let quality {
+                        Text(quality)
+                            .font(.system(size: 14, weight: .heavy))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5)
+                            .background(RoundedRectangle(cornerRadius: 3).stroke(Color.white.opacity(0.8), lineWidth: 1.5))
+                    }
                 }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 7)
+                .background(LinearGradient(colors: [.clear, .black.opacity(0.8)], startPoint: .top, endPoint: .bottom))
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .padding(.bottom, 4)
             }
-            .frame(maxHeight: .infinity, alignment: .bottom)
-            .padding(.horizontal, 8)
-            .padding(.bottom, 12)
         }
         .environment(\.layoutDirection, .leftToRight)
         .allowsHitTesting(false)
     }
-
-    private func badge(_ text: String, font: Font) -> some View {
-        Text(text)
-            .font(font)
-            .foregroundStyle(.white)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(Color.black.opacity(0.72)))
-    }
 }
 
-/// Title and year / episode under a poster.
-private struct CardCaption: View {
-    let item: PlexItem
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(item.cardTitle)
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.9))
-                .lineLimit(1)
-            if let detail {
-                Text(detail)
-                    .font(.system(size: 18))
-                    .foregroundStyle(.white.opacity(0.55))
-                    .lineLimit(1)
-            }
-        }
-    }
-
-    private var detail: String? {
-        if item.isEpisode {
-            var code: [String] = []
-            if let s = item.parentIndex { code.append("م\(ArabicFormat.digits(s))") }
-            if let e = item.index { code.append("ح\(ArabicFormat.digits(e))") }
-            return code.isEmpty ? nil : code.joined(separator: " · ")
-        }
-        if item.isSeason { return item.parentTitle }
-        return item.year.map { ArabicFormat.digits($0) }
-    }
-}
-
-/// Focus: a slight lift and a white border, no heavy shadow or parallax (cheap to draw).
+/// Focus: slight lift, white 3 pt border and a soft shadow.
 struct PosterButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         StyleBody(configuration: configuration)
@@ -232,9 +244,10 @@ struct PosterButtonStyle: ButtonStyle {
             configuration.label
                 .overlay {
                     RoundedRectangle(cornerRadius: CardKind.cornerRadius, style: .continuous)
-                        .strokeBorder(Color.white, lineWidth: isFocused ? 5 : 0)
+                        .strokeBorder(Color.white, lineWidth: isFocused ? 3 : 0)
                 }
                 .scaleEffect(configuration.isPressed ? 0.97 : (isFocused ? 1.08 : 1))
+                .shadow(color: .black.opacity(isFocused ? 0.5 : 0), radius: 16, y: 10)
                 .animation(.easeOut(duration: 0.12), value: isFocused)
         }
     }
@@ -336,10 +349,6 @@ struct MediaCardLink: View {
             }
             .buttonStyle(PosterButtonStyle())
 
-            if kind == .poster {
-                CardCaption(item: item)
-                    .frame(width: posterSize.width, alignment: .leading)
-            }
         }
     }
 }
@@ -382,10 +391,15 @@ struct ShelfView: View {
         let items = shelf.items.uniqued()
         let context = BrowseContext(rowID: shelf.id, items: items)
         VStack(alignment: .leading, spacing: 0) {
-            Text(shelf.title)
-                .font(.system(size: 30, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.85))
-                .padding(.horizontal, CardKind.inset)
+            HStack(spacing: 10) {
+                Text(shelf.title)
+                    .font(.system(size: 30, weight: .semibold))
+                    .foregroundStyle(.white)
+                Text("· \(client.name)")
+                    .font(.system(size: 22, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.4))
+            }
+            .padding(.horizontal, CardKind.inset)
 
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -401,8 +415,8 @@ struct ShelfView: View {
                     }
                     // Room for the 8% focus lift, so cards never cover the title.
                     .padding(.horizontal, CardKind.inset)
-                    .padding(.top, 24)
-                    .padding(.bottom, 30)
+                    .padding(.top, 34)
+                    .padding(.bottom, 48)
                 }
                 .scrollClipDisabled()
                 .onAppear { restoreFocus(proxy) }
@@ -437,7 +451,7 @@ struct PosterGrid: View {
     @FocusState private var focusedID: String?
 
     private let rowID = "grid"
-    private let columns = Array(repeating: GridItem(.fixed(CardKind.poster.size.width), spacing: CardKind.spacing, alignment: .top), count: 7)
+    private let columns = Array(repeating: GridItem(.fixed(CardKind.poster.size.width), spacing: CardKind.spacing, alignment: .top), count: 6)
 
     var body: some View {
         let items = self.items.uniqued()

@@ -398,6 +398,9 @@ struct PlexItem: Codable, Identifiable, Hashable {
     let contentRating: String?
     let audienceRating: Double?
     let rating: Double?
+    /// Where the ratings come from, e.g. "imdb://image.rating", "themoviedb://image.rating".
+    let audienceRatingImage: String?
+    let ratingImage: String?
     let studio: String?
     let originallyAvailableAt: String?
     let media: [PlexMedia]
@@ -431,7 +434,7 @@ struct PlexItem: Codable, Identifiable, Hashable {
         case ratingKey, key, type, title, summary, tagline, year, thumb, art, parentThumb, grandparentThumb,
              grandparentArt, duration, viewOffset, viewCount, leafCount, viewedLeafCount, childCount, index,
              parentIndex, parentTitle, grandparentTitle, parentRatingKey, grandparentRatingKey, contentRating,
-             audienceRating, rating, studio, originallyAvailableAt, guid, addedAt, updatedAt, subtype, lastViewedAt, librarySectionID
+             audienceRating, rating, audienceRatingImage, ratingImage, studio, originallyAvailableAt, guid, addedAt, updatedAt, subtype, lastViewedAt, librarySectionID
         case media = "Media", genres = "Genre", directors = "Director", roles = "Role", markers = "Marker", images = "Image"
         case countries = "Country", labels = "Label", collections = "Collection", chapters = "Chapter", guids = "Guid"
     }
@@ -468,6 +471,8 @@ struct PlexItem: Codable, Identifiable, Hashable {
         contentRating = c.lenientString(forKey: .contentRating)
         audienceRating = c.lenientDouble(forKey: .audienceRating)
         rating = c.lenientDouble(forKey: .rating)
+        audienceRatingImage = c.lenientString(forKey: .audienceRatingImage)
+        ratingImage = c.lenientString(forKey: .ratingImage)
         studio = c.lenientString(forKey: .studio)
         originallyAvailableAt = c.lenientString(forKey: .originallyAvailableAt)
         media = c.lossyArray(PlexMedia.self, forKey: .media) ?? []
@@ -600,6 +605,23 @@ extension PlexItem {
         let h = minutes / 60, m = minutes % 60
         if h > 0 { return m > 0 ? "\(h) س \(m) د" : "\(h) س" }
         return "\(max(1, m)) د"
+    }
+
+    /// Rating with its source label (IMDb, TMDB, MAL…), as the server's agent provided it.
+    var ratingDisplay: (source: String, value: String)? {
+        func source(_ image: String?) -> String {
+            let s = (image ?? "").lowercased()
+            if s.contains("imdb") { return "IMDb" }
+            if s.contains("themoviedb") || s.contains("tmdb") { return "TMDB" }
+            if s.contains("myanimelist") || s.hasPrefix("mal") { return "MAL" }
+            if s.contains("anidb") { return "AniDB" }
+            if s.contains("tvdb") { return "TVDB" }
+            if s.contains("rottentomatoes") { return "RT" }
+            return "★"
+        }
+        if let v = audienceRating, v > 0 { return (source(audienceRatingImage), String(format: "%.1f", v)) }
+        if let v = rating, v > 0 { return (source(ratingImage), String(format: "%.1f", v)) }
+        return nil
     }
 
     var primaryPart: PlexPart? { media.first?.parts.first }

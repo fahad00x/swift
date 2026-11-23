@@ -382,9 +382,9 @@ final class PlexServerClient: Sendable {
 /// Pixel size of the poster artwork requested from Plex's photo transcoder.
 enum ArtworkSize {
     #if os(tvOS)
-    // 2× the 210 × 315 pt Apple TV poster card.
-    static let posterWidth = 420
-    static let posterHeight = 630
+    // 2× the 240 × 358 pt Apple TV poster card.
+    static let posterWidth = 480
+    static let posterHeight = 716
     #else
     static let posterWidth = 360
     static let posterHeight = 540

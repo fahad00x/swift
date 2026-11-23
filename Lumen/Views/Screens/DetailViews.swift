@@ -888,6 +888,7 @@ private struct SectionTitle: View {
 private struct EpisodeTile: View {
     let episode: PlexItem
     let client: PlexServerClient
+    @Environment(ProfileStore.self) private var store
 
     private let size = CGSize(width: 440, height: 248)
 
@@ -898,7 +899,13 @@ private struct EpisodeTile: View {
                 RemoteImage(url: client.imageURL(episode.thumb ?? episode.art, width: 880, height: 496))
             }
             .frame(width: size.width, height: size.height)
-            .artworkStatus(episode, triangleFraction: 0.08, barHeight: 6)
+            .overlay(alignment: .topLeading) {
+                // Like Plex: episode number, with ✓ once watched (mirrored corner for Arabic).
+                CornerBox(text: "E\(episode.index ?? 0)" + (store.state(for: episode.ratingKey)?.watched == true ? " ✓" : ""))
+                    .padding(10)
+                    .environment(\.layoutDirection, .leftToRight)
+            }
+            .artworkStatus(episode, barHeight: 5)
             .clipShape(RoundedRectangle(cornerRadius: CardKind.cornerRadius, style: .continuous))
             .hoverEffect(.highlight)
 

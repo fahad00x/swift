@@ -84,8 +84,9 @@ struct MainTabView: View {
     let sections: [PlexDirectory]
     let profile: UserProfile
 
-    /// Room the collapsed rail takes at the screen's edge (the right, in Arabic).
-    static let railInset: CGFloat = 140
+    /// Room the collapsed pill takes at the screen's edge (the right, in Arabic): 22 pt margin +
+    /// 54 pt pill; rows and grids add their own 20 pt inset after it.
+    static let railInset: CGFloat = 76
 
     @Environment(ProfileStore.self) private var store
     @State private var newSections: [PlexDirectory] = []
@@ -119,7 +120,7 @@ struct MainTabView: View {
 
             // The content dims while the menu is open.
             Color.black
-                .opacity(sidebarOpen ? 0.55 : 0)
+                .opacity(sidebarOpen ? 0.6 : 0)
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
 
@@ -131,8 +132,10 @@ struct MainTabView: View {
                 // Hand focus to the chosen screen; the panel collapses to the rail.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { sidebarFocus = nil }
             }
-            .padding(.leading, 34)
-            .padding(.top, 34)
+            .padding(.leading, 22)
+            .padding(.vertical, 24)
+            .ignoresSafeArea(edges: .vertical)
+            .zIndex(2)
         }
         .animation(.easeOut(duration: 0.2), value: sidebarOpen)
         .focusScope(shellNamespace)
@@ -224,7 +227,8 @@ private struct TVSidebar: View {
         return !pinned.contains { $0.id == id }
     }
 
-    static let panelColor = Color(red: 0.13, green: 0.16, blue: 0.21)
+    /// Neutral charcoal (#1C1C1E), like Plex's menu.
+    static let panelColor = Color(red: 0.11, green: 0.11, blue: 0.118)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -248,7 +252,7 @@ private struct TVSidebar: View {
             }
             .buttonStyle(SidebarButtonStyle(selected: false, expanded: expanded))
             .focused(focus, equals: .profile)
-            .padding(.bottom, 10)
+            .padding(.bottom, 8)
 
             row(.myList, "قائمتي", "bookmark")
             row(.search, "بحث", "magnifyingglass")
@@ -277,20 +281,25 @@ private struct TVSidebar: View {
                 row(.more, "المزيد", "ellipsis", selected: selection == .more || selectedIsUnpinnedLibrary)
             }
 
+            if expanded { Spacer(minLength: 12) }
             Rectangle()
                 .fill(Color.white.opacity(expanded ? 0.18 : 0))
                 .frame(height: 1)
                 .padding(.horizontal, 14)
-                .padding(.vertical, 10)
+                .padding(.vertical, 8)
 
             row(.settings, "الإعدادات", "gearshape")
         }
-        .padding(12)
-        .frame(width: expanded ? 400 : 96, alignment: .leading)
-        .fixedSize(horizontal: false, vertical: true)
+        .padding(.vertical, expanded ? 14 : 6)
+        .padding(.horizontal, expanded ? 12 : 4)
+        // Expanded: ~20% of the screen wide, nearly full height. Collapsed: a 54 pt pill.
+        .frame(width: expanded ? 384 : 54, alignment: .leading)
+        .frame(maxHeight: expanded ? .infinity : nil, alignment: .top)
         .background {
-            RoundedRectangle(cornerRadius: 30, style: .continuous)
-                .fill(Self.panelColor.opacity(expanded ? 0.94 : 0.6))
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(expanded ? AnyShapeStyle(.regularMaterial) : AnyShapeStyle(Color.clear))
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Self.panelColor.opacity(expanded ? 0.9 : 0.72))
         }
         .focusSection()
         .defaultFocus(focus, selection)
@@ -301,11 +310,11 @@ private struct TVSidebar: View {
         Button { onSelect(destination) } label: {
             HStack(spacing: 18) {
                 Image(systemName: icon)
-                    .font(.system(size: 24, weight: .semibold))
+                    .font(.system(size: 24, weight: .regular))
                     .frame(width: 46)
                 if expanded {
                     Text(title)
-                        .font(.system(size: 25, weight: .semibold))
+                        .font(.system(size: 25, weight: .medium))
                         .lineLimit(1)
                     Spacer(minLength: 0)
                 }
@@ -333,11 +342,11 @@ private struct SidebarButtonStyle: ButtonStyle {
         var body: some View {
             // Focused: white pill. Selected: light pill with dark text. Otherwise plain.
             let pill: Color = isFocused ? .white : (selected ? Color.white.opacity(0.78) : .clear)
-            let text: Color = (isFocused || selected) ? Color(red: 0.08, green: 0.1, blue: 0.13) : Color.white.opacity(0.7)
+            let text: Color = (isFocused || selected) ? Color(red: 0.08, green: 0.08, blue: 0.09) : .white
             configuration.label
                 .foregroundStyle(text)
-                .padding(.vertical, 8)
-                .padding(.horizontal, 12)
+                .padding(.vertical, 12)
+                .padding(.horizontal, expanded ? 12 : 0)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Capsule().fill(pill))
                 .scaleEffect(configuration.isPressed ? 0.97 : (isFocused && expanded ? 1.03 : 1))
@@ -349,9 +358,13 @@ private struct ClockView: View {
     var body: some View {
         TimelineView(.everyMinute) { context in
             Text(context.date, format: .dateTime.hour().minute())
-                .font(.system(size: 30, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.85))
+                .font(.system(size: 26, weight: .semibold))
+                .foregroundStyle(.white)
                 .monospacedDigit()
+                .padding(.horizontal, 16)
+                .padding(.vertical, 6)
+                // Readable over any backdrop.
+                .background(Capsule().fill(Color(white: 0.25).opacity(0.85)))
         }
     }
 }
@@ -392,8 +405,9 @@ struct HomeView: View {
                 } else {
                     VStack(alignment: .leading, spacing: 0) {
                         FocusedDetails(item: focus.item, client: client)
+                            .frame(width: 860, alignment: .leading)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .frame(height: 440, alignment: .bottomLeading)
+                            .frame(height: 470, alignment: .bottomLeading)
                             .padding(.horizontal, CardKind.inset)
                             .padding(.bottom, 8)
 
@@ -451,42 +465,68 @@ struct HomeView: View {
     }
 }
 
-/// Backdrop of the focused item, changed only after focus rests briefly (no work while scrolling fast).
+/// Backdrop of the focused item on the side opposite the text, fading into a solid colour
+/// sampled from the artwork; the whole background takes that tint. Changes once focus rests.
 private struct HomeBackdrop: View {
     let item: PlexItem?
     let client: PlexServerClient
-    @State private var url: URL?
+    @State private var image: UIImage?
+    @State private var tint = Color(white: 0.08)
 
     var body: some View {
-        ZStack {
-            Color.black
-            if let url {
-                RemoteImage(url: url)
-                    .id(url)
-                    .transition(.opacity)
+        GeometryReader { geo in
+            ZStack(alignment: .topLeading) {
+                tint
+                if let image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: geo.size.width * 0.66, height: geo.size.height * 0.66)
+                        .clipped()
+                        .mask(LinearGradient(stops: [.init(color: .black, location: 0.45), .init(color: .clear, location: 1)],
+                                             startPoint: .leading, endPoint: .trailing))
+                        .mask(LinearGradient(stops: [.init(color: .black, location: 0.5), .init(color: .clear, location: 1)],
+                                             startPoint: .top, endPoint: .bottom))
+                        .transition(.opacity)
+                        .id(ObjectIdentifier(image))
+                }
             }
-            // Darken towards the text (leading side) and the rows (bottom).
-            LinearGradient(stops: [
-                .init(color: .black.opacity(0.92), location: 0),
-                .init(color: .black.opacity(0.55), location: 0.45),
-                .init(color: .black.opacity(0.1), location: 1),
-            ], startPoint: .trailing, endPoint: .leading)
-            LinearGradient(stops: [
-                .init(color: .clear, location: 0.3),
-                .init(color: .black.opacity(0.85), location: 0.62),
-                .init(color: .black, location: 1),
-            ], startPoint: .top, endPoint: .bottom)
         }
-        .animation(.easeInOut(duration: 0.35), value: url)
-        // Physical directions: the text (and the darkest side) is on the right in Arabic.
+        // Physical sides: artwork top-left, text on the right (Arabic).
         .environment(\.layoutDirection, .leftToRight)
+        .animation(.easeInOut(duration: 0.4), value: image.map(ObjectIdentifier.init))
         .ignoresSafeArea()
         .task(id: item?.ratingKey) {
             guard let item else { return }
             try? await Task.sleep(for: .milliseconds(250))
-            guard !Task.isCancelled else { return }
-            url = client.imageURL(item.backdropPath, width: 1280, height: 720)
+            guard !Task.isCancelled, let url = client.imageURL(item.backdropPath, width: 1280, height: 720),
+                  let loaded = await ImageLoader.shared.image(for: url), !Task.isCancelled else { return }
+            let color = await Task.detached(priority: .utility) { ArtworkColor.average(loaded) }.value
+            withAnimation(.easeInOut(duration: 0.4)) {
+                image = loaded
+                if let color { tint = color }
+            }
         }
+    }
+}
+
+/// Average colour of an image, darkened so white text stays readable on it.
+enum ArtworkColor {
+    static func average(_ image: UIImage) -> Color? {
+        guard let cg = image.cgImage else { return nil }
+        var pixel = [UInt8](repeating: 0, count: 4)
+        let drawn: Bool = pixel.withUnsafeMutableBytes { buffer in
+            guard let ctx = CGContext(data: buffer.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            ctx.interpolationQuality = .medium
+            ctx.draw(cg, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+            return true
+        }
+        guard drawn else { return nil }
+        let scale = 0.42
+        return Color(red: Double(pixel[0]) / 255 * scale, green: Double(pixel[1]) / 255 * scale,
+                     blue: Double(pixel[2]) / 255 * scale)
     }
 }
 
@@ -505,15 +545,18 @@ private struct FocusedDetails: View {
                     .frame(height: 120, alignment: .bottomLeading)
 
                 if item.isEpisode {
-                    Text(episodeLine(item))
-                        .font(.system(size: 28, weight: .semibold))
+                    Text(item.title)
+                        .font(.system(size: 30, weight: .semibold))
                         .lineLimit(1)
                 }
 
-                Text(metaLine(item))
-                    .font(.system(size: 22, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.7))
-                    .lineLimit(1)
+                HStack(spacing: 14) {
+                    Text(metaLine(item))
+                        .font(.system(size: 22, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.75))
+                        .lineLimit(1)
+                    RatingBox(item: item, fontSize: 20)
+                }
 
                 if let summary = (item.summary?.isEmpty == false ? item.summary : owner?.summary) {
                     Text(summary)
@@ -558,6 +601,11 @@ private struct FocusedDetails: View {
 
     private func metaLine(_ item: PlexItem) -> String {
         var parts: [String] = []
+        if item.isEpisode {
+            let code = [item.parentIndex.map { "م\(ArabicFormat.digits($0))" }, item.index.map { "ح\(ArabicFormat.digits($0))" }]
+                .compactMap { $0 }.joined(separator: " • ")
+            if !code.isEmpty { parts.append(code) }
+        }
         if let date = item.originallyAvailableAt, item.isEpisode {
             parts.append(date)
         } else if let year = item.year {
@@ -568,7 +616,6 @@ private struct FocusedDetails: View {
         }
         if let duration = item.duration, item.isPlayable { parts.append(ArabicFormat.duration(ms: duration)) }
         if let rating = item.contentRating ?? owner?.contentRating, !rating.isEmpty { parts.append(rating) }
-        if let score = item.audienceRating ?? item.rating, score > 0 { parts.append("★ " + String(format: "%.1f", score)) }
         let genres = (item.genres.isEmpty ? owner?.genres ?? [] : item.genres).prefix(2).map { ArabicFormat.genre($0.tag) }
         if !genres.isEmpty { parts.append(genres.joined(separator: "، ")) }
         return parts.joined(separator: "  ·  ")
