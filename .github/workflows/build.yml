@@ -99,7 +99,10 @@ jobs:
             CODE_SIGNING_ALLOWED=NO build 2>&1 | tee build.log | grep -E "error:|BUILD" || true
           grep -q "BUILD SUCCEEDED" build.log
 
+      # iPhone steps run on GitHub runners only: the self-hosted Mac builds Apple TV only
+      # (no iOS platform installed there).
       - name: Build for iPhone device (Release)
+        if: runner.environment == 'github-hosted'
         run: |
           set -o pipefail
           xcodebuild -project Lumen.xcodeproj -scheme LumenMobile \
@@ -111,6 +114,7 @@ jobs:
           grep -q "BUILD SUCCEEDED" ios-device.log
 
       - name: Check iPhone app bundle
+        if: runner.environment == 'github-hosted'
         run: |
           APP=$(ls -d build/ios-device/Build/Products/Release-iphoneos/*.app | head -1)
           echo "App: $APP"
@@ -137,9 +141,11 @@ jobs:
           du -sh "$APP"
 
       - name: Embedded frameworks minimum OS (iOS)
+        if: runner.environment == 'github-hosted'
         run: bash scripts/check_framework_minos.sh "$(ls -d build/ios-device/Build/Products/Release-iphoneos/*.app | head -1)"
 
       - name: Build for iPhone Simulator
+        if: runner.environment == 'github-hosted'
         run: |
           set -o pipefail
           xcodebuild -project Lumen.xcodeproj -scheme LumenMobile \
