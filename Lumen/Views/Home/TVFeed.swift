@@ -182,8 +182,14 @@ enum TVFeed {
             let visible = await filter.resolve(plain, client: client, scope: scope)
             let items = visible + containers
             guard !items.isEmpty else { continue }
-            serverRows.append(Shelf(id: "hub-\(hub.hubIdentifier)", title: title(for: hub, sectionTitles: sectionTitles),
-                                    kind: .poster, items: items))
+            // Second header line on Home: the library, when the title doesn't name it already.
+            let rowTitle = title(for: hub, sectionTitles: sectionTitles)
+            let library = section == nil
+                ? items.lazy.compactMap { $0.librarySectionID.flatMap { sectionTitles[$0] } }.first
+                : nil
+            let subtitle = library.flatMap { rowTitle.contains($0) ? nil : ArabicFormat.isolated($0) }
+            serverRows.append(Shelf(id: "hub-\(hub.hubIdentifier)", title: rowTitle,
+                                    kind: .poster, items: items, subtitle: subtitle))
         }
 
         // The profile's own rows.

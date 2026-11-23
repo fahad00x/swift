@@ -289,7 +289,7 @@ struct DetailPage: View {
                     Text(playTitle)
                 }
             }
-            .buttonStyle(GlassPillButtonStyle())
+            .nativePillButton()
             .focused($heroFocus, equals: .play)
             // Long press: audio, subtitles, watched mark, play from the start.
             .contextMenu { moreMenu(item) }
@@ -298,7 +298,7 @@ struct DetailPage: View {
             Button(action: toggleWatchlist) {
                 Image(systemName: store.isOnMyList(item.ratingKey) ? "checkmark" : "plus")
             }
-            .buttonStyle(GlassCircleButtonStyle())
+            .nativeCircleButton()
             .focused($heroFocus, equals: .watchlist)
 
             Button {
@@ -307,7 +307,7 @@ struct DetailPage: View {
             } label: {
                 Image(systemName: item.isShow ? "list.bullet.rectangle" : "rectangle.stack")
             }
-            .buttonStyle(GlassCircleButtonStyle())
+            .nativeCircleButton()
             .focused($heroFocus, equals: .episodes)
 
             edgeTarget(.edgeEnd, enabled: hasNext)
@@ -510,7 +510,7 @@ struct DetailPage: View {
                         Button { play(episode) } label: {
                             EpisodeCard(episode: episode, client: client, contentRating: item.normalizedContentRating)
                         }
-                        .buttonStyle(PlainCardStyle())
+                        .buttonStyle(.borderless)
                         .focused($lowerFocus, equals: "ep-\(episode.id)")
                         .contextMenu {
                             let watched = store.state(for: episode.ratingKey)?.watched ?? episode.isWatched
@@ -556,7 +556,7 @@ struct DetailPage: View {
                         Button { play(extra) } label: {
                             ExtraTile(extra: extra, client: client)
                         }
-                        .buttonStyle(PosterButtonStyle())
+                        .buttonStyle(.card)
                         .focused($lowerFocus, equals: "extra-\(extra.id)")
                     }
                 }
@@ -867,8 +867,8 @@ private struct PlainCardStyle: ButtonStyle {
 }
 
 /// 16:9 episode still (410×230, radius 14) with its duration, ✓ / progress; below it the
-/// episode number, title, a 4–5 line description and the air date. Focused: the still scales
-/// and lifts with a glass rim and shadow; the text gets a frosted panel and moves down a little.
+/// episode number, title, a 4–5 line description and the air date. Focused: the still gets
+/// the native tvOS highlight; the text gets a frosted panel and moves down a little.
 private struct EpisodeCard: View {
     let episode: PlexItem
     let client: PlexServerClient
@@ -906,15 +906,9 @@ private struct EpisodeCard: View {
             }
             .artworkStatus(episode, barHeight: 5)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(LinearGradient(colors: [.white.opacity(0.55), .white.opacity(0.08), .white.opacity(0.25)],
-                                                 startPoint: .top, endPoint: .bottom), lineWidth: 1.5)
-                    .opacity(isFocused ? 1 : 0)
-            }
-            .scaleEffect(isFocused ? 1.12 : 1)
-            .offset(y: isFocused ? -8 : 0)
-            .shadow(color: .black.opacity(isFocused ? 0.5 : 0), radius: isFocused ? 24 : 0, y: isFocused ? 16 : 0)
+            // Native tvOS highlight on the still: lift, shadow, moving shine, parallax.
+            .contentShape(.hoverEffect, RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .hoverEffect(.highlight)
             .zIndex(1)
 
             VStack(alignment: .leading, spacing: 6) {

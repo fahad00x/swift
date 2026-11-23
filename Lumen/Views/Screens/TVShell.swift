@@ -482,9 +482,8 @@ struct HomeView: View {
                                                          : "أضف أفلاماً ومسلسلات إلى خادم Plex لتظهر هنا."))
             } else {
                 BannerPage(banner: banner, chipTitle: "الرئيسية", client: client, bannerFocus: $bannerFocus) {
-                    ForEach(Array(rows.enumerated()), id: \.element.id) { i, shelf in
-                        ShelfView(shelf: shelf, client: client)
-                            .id(i == 0 ? BannerPageID.firstRow : shelf.id)
+                    ForEach(rows) { shelf in
+                        ShelfView(shelf: shelf, client: client).id(shelf.id)
                     }
                 }
             }
@@ -546,6 +545,18 @@ extension EnvironmentValues {
     }
 }
 
+/// A row under a banner got focus (its id): the page scrolls it to its reading position.
+private struct RowFocusKey: EnvironmentKey {
+    static let defaultValue: ((String) -> Void)? = nil
+}
+
+extension EnvironmentValues {
+    var pageRowFocused: ((String) -> Void)? {
+        get { self[RowFocusKey.self] }
+        set { self[RowFocusKey.self] = newValue }
+    }
+}
+
 /// A banner page (Home, a library): the banner, then `content` (rows, a tab bar…).
 ///
 /// The page moves as one piece: with focus on the banner it shows full screen (the first row
@@ -565,8 +576,13 @@ struct BannerPage<Content: View>: View {
     @State private var chipVisible = false
     @State private var infoRoute: DetailRoute?
 
-    /// How far the page moves up for the rows.
-    private static var shift: CGFloat { 660 }
+    /// How far the page moves up for the rows: the rows area then starts ~200 pt from the top.
+    private static var shift: CGFloat { HeroBanner.height - 200 }
+    /// Room above the first row inside the rows area (focus lift).
+    private static var rowTopInset: CGFloat { 30 }
+    private var rowsHeight: CGFloat {
+        banner.isEmpty ? 990 : 1080 - (HeroBanner.height - Self.shift) + Self.rowTopInset
+    }
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -581,18 +597,31 @@ struct BannerPage<Content: View>: View {
                         infoRoute = DetailRoute(item: item.display, sourceID: "banner|\(item.id)",
                                                 context: BrowseContext(rowID: "banner-\(chipTitle)", items: banner.map(\.display)))
                     }
+                    // Scrolled into the rows: the banner stays visible above them, dimmed.
+                    .overlay(Color.black.opacity(atRows ? 0.5 : 0).allowsHitTesting(false))
                 }
 
-                ScrollView(.vertical) {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        content()
+                ScrollViewReader { proxy in
+                    ScrollView(.vertical) {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            content()
+                        }
+                        .padding(.top, Self.rowTopInset)
+                        // The last row stays fully visible with its focus lift.
+                        .padding(.bottom, 120)
                     }
-                    .padding(.top, 24)
-                    // The last row stays fully visible with its focus lift.
-                    .padding(.bottom, 120)
+                    .frame(height: rowsHeight)
+                    .padding(.top, -Self.rowTopInset)
+                    .environment(\.pageRowFocused, { id in
+                        // The focused row's header ~200 pt from the top of the screen, the
+                        // next row's header and the top of its posters visible below it.
+                        DispatchQueue.main.async {
+                            withAnimation(.appleScroll) {
+                                proxy.scrollTo(id, anchor: UnitPoint(x: 0.5, y: Self.rowTopInset / rowsHeight))
+                            }
+                        }
+                    })
                 }
-                .frame(height: banner.isEmpty ? 990 : 1080 - (HeroBanner.height - Self.shift) + 24)
-                .padding(.top, -24)
             }
             .offset(y: atRows && !banner.isEmpty ? -Self.shift : 0)
             .environment(\.pageContentFocused, {

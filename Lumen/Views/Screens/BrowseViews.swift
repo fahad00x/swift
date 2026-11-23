@@ -83,7 +83,7 @@ struct LibraryView: View {
                         if rows.isEmpty && loaded {
                             ContentUnavailableView("لا توجد عناصر", systemImage: "tray").frame(maxWidth: .infinity)
                         }
-                        ForEach(rows) { shelf in ShelfView(shelf: shelf, client: client) }
+                        ForEach(rows) { shelf in ShelfView(shelf: shelf, client: client).id(shelf.id) }
                     case .browse:
                         LibraryBrowseGrid(client: client, scope: scope, scrollProxy: proxy)
                     case .collections:
@@ -307,7 +307,7 @@ private struct CategoryGrid: View {
                         .background(RoundedRectangle(cornerRadius: CardKind.cornerRadius, style: .continuous)
                             .fill(Color.white.opacity(0.1)))
                 }
-                .buttonStyle(PosterButtonStyle())
+                .buttonStyle(.card)
             }
         }
         .padding(.horizontal, CardKind.inset)

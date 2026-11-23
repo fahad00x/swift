@@ -191,25 +191,25 @@ struct HeroBanner: View {
                     Text(playTitle)
                 }
             }
-            .buttonStyle(GlassPillButtonStyle())
+            .nativePillButton()
             .focused(focus, equals: .play)
 
             Button { store.toggleMyList(current.display.mediaInfo) } label: {
                 Image(systemName: store.isOnMyList(current.display.ratingKey) ? "checkmark" : "plus")
             }
-            .buttonStyle(GlassCircleButtonStyle())
+            .nativeCircleButton()
             .focused(focus, equals: .add)
 
             // A plain Button (pushed by the page), so the glyph renders in every state.
             Button { onInfo(current) } label: {
                 Image(systemName: "info")
             }
-            .buttonStyle(GlassCircleButtonStyle())
+            .nativeCircleButton()
             .focused(focus, equals: .info)
 
             if items.count > 1 {
                 Button { go(+1) } label: { Image(systemName: "chevron.forward") }
-                    .buttonStyle(GlassCircleButtonStyle())
+                    .nativeCircleButton()
                     .focused(focus, equals: .next)
             }
 
@@ -495,4 +495,25 @@ struct GlassCircleButtonStyle: ButtonStyle {
 extension Animation {
     /// Apple TV app scrolling: very fast start, long smooth ease-out, no overshoot.
     static var appleScroll: Animation { .spring(response: 0.5, dampingFraction: 1.0) }
+}
+
+// MARK: - Native tvOS buttons
+
+extension View {
+    /// The system tvOS button (translucent; focused: white with a dark label, lift, shine and
+    /// parallax), as a capsule.
+    func nativePillButton() -> some View {
+        self
+            .font(.system(size: 28, weight: .semibold))
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
+    }
+
+    /// The system tvOS button as a circle (+, ⓘ, ›, episodes).
+    func nativeCircleButton() -> some View {
+        self
+            .font(.system(size: 28, weight: .semibold))
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.circle)
+    }
 }

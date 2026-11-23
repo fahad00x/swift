@@ -89,8 +89,10 @@ struct ProfilePickerView: View {
         return VStack(spacing: 22) {
             Button { choose(profile) } label: {
                 ProfileInitialsCircle(profile: profile, size: circle)
+                    .nativeCircleFocus()
+                    .scaleEffect(chosenID == profile.id ? 1.12 : 1)
             }
-            .buttonStyle(PickerCircleStyle(chosen: chosenID == profile.id))
+            .buttonStyle(.borderless)
             .focused($focused, equals: profile.id)
             .contextMenu {
                 Button("تعديل", systemImage: "pencil") { authorize(profile) { editor = .edit(profile) } }
@@ -123,8 +125,9 @@ struct ProfilePickerView: View {
                         .foregroundStyle(.white.opacity(0.9))
                 }
                 .frame(width: circle, height: circle)
+                .nativeCircleFocus()
             }
-            .buttonStyle(PickerCircleStyle(chosen: false))
+            .buttonStyle(.borderless)
             .focused($focused, equals: "add")
 
             Text("إضافة")
@@ -216,5 +219,15 @@ private struct PickerGlassPillStyle: ButtonStyle {
                 .scaleEffect(isFocused ? 1.06 : 1)
                 .animation(.easeOut(duration: 0.15), value: isFocused)
         }
+    }
+}
+
+private extension View {
+    /// Native tvOS highlight (lift, shadow, shine, parallax) shaped as a circle.
+    func nativeCircleFocus() -> some View {
+        self
+            .clipShape(Circle())
+            .contentShape(.hoverEffect, Circle())
+            .hoverEffect(.highlight)
     }
 }

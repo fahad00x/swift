@@ -114,6 +114,8 @@ struct PosterCard: View {
     var size: CGSize = CardKind.poster.size
 
     @Environment(ProfileStore.self) private var store
+    /// Focus of the enclosing (native card) button.
+    @Environment(\.isFocused) private var isFocused
 
     var body: some View {
         ZStack {
@@ -125,11 +127,37 @@ struct PosterCard: View {
                         ? client.posterURL(item)
                         : client.imageURL(item.posterPath, width: Int(size.width * 2), height: Int(size.height * 2)))
             PosterBadges(corner: cornerText)
+            // Focused: a small caption inside the art at the bottom centre («مسلسل • كوميديا»).
+            if isFocused, let focusCaption {
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    Text(focusCaption)
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .padding(.horizontal, 10)
+                        .padding(.top, 40)
+                        .padding(.bottom, 16)
+                        .frame(maxWidth: .infinity)
+                        .background(LinearGradient(colors: [.clear, .black.opacity(0.75)], startPoint: .top, endPoint: .bottom))
+                }
+                .transition(.opacity)
+            }
         }
+        .animation(.easeOut(duration: 0.2), value: isFocused)
         .frame(width: size.width, height: size.height)
         // Thin progress bar when started (no unwatched triangle on Apple TV).
         .artworkStatus(item, barHeight: 5)
         .clipShape(RoundedRectangle(cornerRadius: CardKind.cornerRadius, style: .continuous))
+    }
+
+    /// «مسلسل • كوميديا» / «فيلم • أكشن»; the season and episode for an episode.
+    private var focusCaption: String? {
+        if item.isEpisode { return ArabicFormat.episodeCode(season: item.parentIndex, episode: item.index) }
+        guard item.isShow || item.type == "movie" else { return nil }
+        let kind = item.isShow ? "مسلسل" : "فيلم"
+        return ArabicFormat.joined([kind] + ArabicFormat.genres(item.genres.map(\.tag), limit: 1))
     }
 
     /// Unwatched-episode count, or ✓ when fully watched.
@@ -295,6 +323,7 @@ struct MediaCardLink: View {
     var context: BrowseContext?
 
     @Environment(BackdropState.self) private var backdrop
+    @Environment(\.pageContentFocused) private var pageContentFocused
     @Environment(\.detailNamespace) private var namespace
 
     private var zoomID: String { sourceID ?? item.id }
@@ -313,7 +342,8 @@ struct MediaCardLink: View {
                     }
                 }
             }
-            .buttonStyle(PosterButtonStyle())
+            // Native tvOS card focus: lift, soft shadow, moving shine and parallax tilt.
+            .buttonStyle(.card)
 
             // No text under posters (Apple TV app); landscape cards keep their title.
             if kind == .landscape {
@@ -338,6 +368,8 @@ struct MediaCardLink: View {
         }
         .background(FocusReporter { focused in
             guard focused else { return }
+            // Under a banner: focus in the rows moves the page up.
+            pageContentFocused?()
             // Grids show the focused item's artwork behind them (Home has its banner instead).
             backdrop.url = client.imageURL(item.backdropPath, width: 1280, height: 720)
         })
@@ -365,6 +397,8 @@ struct Shelf: Identifiable {
     var ranked = false
     /// ratingKey → clear logo path.
     var logos: [String: String] = [:]
+    /// Optional second header line in smaller grey (the library, «جديد هذا الأسبوع»…).
+    var subtitle: String?
 }
 
 /// Horizontally scrolling row. Starts on the reading side (right in Arabic), leaves room
@@ -375,6 +409,7 @@ struct ShelfView: View {
     let client: PlexServerClient
 
     @Environment(BrowseReturnState.self) private var returnState
+    @Environment(\.pageRowFocused) private var pageRowFocused
     @FocusState private var focusedID: String?
     @State private var lastFocusedID: String?
 
@@ -383,12 +418,20 @@ struct ShelfView: View {
         let context = BrowseContext(rowID: shelf.id, items: items)
         VStack(alignment: .leading, spacing: 0) {
             // Small grey header (Apple TV app), 34 pt above the posters.
-            Text(shelf.title)
-                .font(.system(size: 30, weight: .regular))
-                .foregroundStyle(.white.opacity(0.6))
-                .lineLimit(1)
-                .padding(.horizontal, CardKind.inset)
-                .sidebarPadding()
+            VStack(alignment: .leading, spacing: 2) {
+                Text(shelf.title)
+                    .font(.system(size: 30, weight: .regular))
+                    .foregroundStyle(.white.opacity(0.6))
+                    .lineLimit(1)
+                if let subtitle = shelf.subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 21, weight: .regular))
+                        .foregroundStyle(.white.opacity(0.4))
+                        .lineLimit(1)
+                }
+            }
+            .padding(.horizontal, CardKind.inset)
+            .sidebarPadding()
 
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -414,8 +457,10 @@ struct ShelfView: View {
             }
             .focusSection()
             .defaultFocus($focusedID, lastFocusedID ?? items.first?.id, priority: .userInitiated)
-            .onChange(of: focusedID) { _, id in
+            .onChange(of: focusedID) { old, id in
                 if let id { lastFocusedID = id }
+                // Focus entered this row: the page brings it to its reading position.
+                if old == nil, id != nil { pageRowFocused?(shelf.id) }
             }
         }
     }
