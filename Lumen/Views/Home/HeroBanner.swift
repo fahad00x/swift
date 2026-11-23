@@ -92,25 +92,31 @@ struct HeroBanner: View {
     /// paging; fades out at the bottom into the page tint (no hard edge).
     private var backdrop: some View {
         ZStack {
+            // The slides in their own stack: their zIndex (which grows with every page) only
+            // orders them, never lifts them over the gradients below.
             ZStack {
-                RemoteImage(url: Self.lowResURL(current, client: client))
-                    .blur(radius: 24, opaque: true)
-                RemoteImage(url: Self.fullResURL(current, client: client))
+                ZStack {
+                    RemoteImage(url: Self.lowResURL(current, client: client))
+                        .blur(radius: 24, opaque: true)
+                    RemoteImage(url: Self.fullResURL(current, client: client))
+                }
+                .frame(width: 1920, height: 1080)
+                .clipped()
+                .frame(width: 1920, height: Self.artHeight, alignment: .top)
+                .id(current.id)
+                .transition(.asymmetric(
+                    insertion: .modifier(active: PushModifier(x: CGFloat(step) * -1920), identity: PushModifier(x: 0)),
+                    removal: .modifier(active: PushModifier(x: CGFloat(step) * 1920 * 0.3), identity: PushModifier(x: 0))))
+                .zIndex(Double(generation))
             }
-            .frame(width: 1920, height: 1080)
-            .clipped()
-            .frame(width: 1920, height: Self.artHeight, alignment: .top)
-            .id(current.id)
-            .transition(.asymmetric(
-                insertion: .modifier(active: PushModifier(x: CGFloat(step) * -1920), identity: PushModifier(x: 0)),
-                removal: .modifier(active: PushModifier(x: CGFloat(step) * 1920 * 0.3), identity: PushModifier(x: 0))))
-            .zIndex(Double(generation))
 
-            // Dark only on the text side (bottom-right).
+            // Dark only on the text side (bottom-right): strong enough for the summary to read
+            // over bright, busy artwork.
             LinearGradient(stops: [
-                .init(color: .black.opacity(0.7), location: 0),
-                .init(color: .black.opacity(0.4), location: 0.3),
-                .init(color: .clear, location: 0.6),
+                .init(color: .black.opacity(0.85), location: 0),
+                .init(color: .black.opacity(0.6), location: 0.3),
+                .init(color: .black.opacity(0.2), location: 0.55),
+                .init(color: .clear, location: 0.7),
             ], startPoint: .trailing, endPoint: .leading)
             // Soft dark gradient at the bottom, under the first row's title and posters; it
             // reaches the page colour only at the very bottom edge, so scrolling shows no seam.

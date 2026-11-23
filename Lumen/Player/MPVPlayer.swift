@@ -29,12 +29,25 @@ struct MPVTrack: Identifiable, Hashable {
     /// Stream index inside the container (Plex's stream `index`).
     let ffIndex: Int?
 
+    /// «العربية • SRT • ملف خارجي», «الإنجليزية • AAC Stereo». Technical stream names
+    /// (textstream_ara=1000…) and titles repeating the language are left out.
     var displayName: String {
         var parts: [String] = []
-        if let language { parts.append(Self.languageName(language)) }
-        if let title, !title.isEmpty, title.lowercased() != language?.lowercased() { parts.append(title) }
+        let languageName = language.map(Self.languageName)
+        if let languageName { parts.append(languageName) }
+        if let title = title.flatMap(Self.readableTitle),
+           title.lowercased() != language?.lowercased(), title != languageName {
+            // «Arabic», «Chinese (China) [Original]»: the language again in English; keep only
+            // what it adds (the original track).
+            let english = language.flatMap { Locale(identifier: "en").localizedString(forLanguageCode: $0) }
+            if let english, title.lowercased().hasPrefix(english.lowercased()) {
+                if title.lowercased().contains("original") { parts.append("الأصلية") }
+            } else {
+                parts.append(title)
+            }
+        }
         var tech: [String] = []
-        if let codec { tech.append(codec.uppercased()) }
+        if let codec { tech.append(kind == .sub ? Self.subtitleFormat(codec) : codec.uppercased()) }
         if let channels {
             switch channels {
             case 8: tech.append("7.1")
@@ -45,8 +58,38 @@ struct MPVTrack: Identifiable, Hashable {
             }
         }
         if !tech.isEmpty { parts.append(tech.joined(separator: " ")) }
+        if isExternal { parts.append("ملف خارجي") }
         if parts.isEmpty { parts.append("مسار \(id)") }
         return parts.joined(separator: ArabicFormat.separator)
+    }
+
+    /// A track title worth showing: nil for stream ids like «textstream_ara=1000»; common
+    /// tags in Arabic.
+    static func readableTitle(_ raw: String) -> String? {
+        let title = raw.trimmingCharacters(in: .whitespaces)
+        let lower = title.lowercased()
+        guard !title.isEmpty, !title.contains("="), !lower.hasPrefix("textstream"),
+              !lower.hasPrefix("track "), lower != "und" else { return nil }
+        switch lower {
+        case "forced": return "إجبارية"
+        case "sdh", "cc": return "لضعاف السمع"
+        case "full": return "كاملة"
+        case "commentary": return "تعليق"
+        default: return title
+        }
+    }
+
+    /// Subtitle codec as people know it.
+    static func subtitleFormat(_ codec: String) -> String {
+        switch codec.lowercased() {
+        case "subrip", "srt": return "SRT"
+        case "ass", "ssa": return "ASS"
+        case "hdmv_pgs_subtitle", "pgs", "pgssub": return "PGS"
+        case "dvd_subtitle", "dvdsub", "vobsub": return "VobSub"
+        case "webvtt", "vtt": return "WebVTT"
+        case "mov_text", "tx3g": return "نص"
+        default: return codec.uppercased()
+        }
     }
 
     static func languageName(_ code: String) -> String {

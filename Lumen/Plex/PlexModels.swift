@@ -178,10 +178,82 @@ struct PlexDirectory: Codable, Identifiable, Hashable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         key = c.lenientString(forKey: .key) ?? ""
-        title = c.lenientString(forKey: .title) ?? ""
+        let rawTitle = c.lenientString(forKey: .title) ?? ""
         type = c.lenientString(forKey: .type) ?? ""
+        // Libraries in Arabic everywhere (sidebar, rows, settings): «Movies - 4K» → «أفلام 4K».
+        title = (type == "movie" || type == "show") ? LibraryName.arabic(rawTitle) : rawTitle
         art = c.lenientString(forKey: .art)
         thumb = c.lenientString(forKey: .thumb)
+    }
+}
+
+/// Arabic display names for libraries named in English («Movies - Kids» → «أفلام أطفال»,
+/// «TV - Arabic» → «مسلسلات عربية»). A name with an unknown word is kept as it is.
+enum LibraryName {
+    private static let bases: [String: String] = [
+        "movies": "أفلام", "movie": "أفلام", "films": "أفلام", "film": "أفلام",
+        "tv": "مسلسلات", "tv shows": "مسلسلات", "shows": "مسلسلات", "series": "مسلسلات",
+        "anime": "أنمي", "documentaries": "وثائقيات", "documentary": "وثائقيات",
+        "sports": "رياضة", "sport": "رياضة", "kids": "أطفال", "cartoons": "كرتون",
+        "music": "موسيقى", "concerts": "حفلات", "theater": "مسرح", "theatre": "مسرح",
+        "stand-up comedy": "ستاند أب كوميدي", "stand-up": "ستاند أب كوميدي", "standup": "ستاند أب كوميدي",
+        "home videos": "فيديوهات منزلية", "other videos": "فيديوهات أخرى",
+    ]
+    /// Whole qualifiers first (phrases), then word by word.
+    private static let phrases: [String: String] = [
+        "arabic dubbed": "مدبلجة عربي", "arabic dub": "مدبلجة عربي",
+        "kids dubbed": "أطفال مدبلجة", "kids dub": "أطفال مدبلجة",
+        "kids arabic": "أطفال عربية", "arabic kids": "أطفال عربية",
+        "stand-up comedy": "ستاند أب كوميدي",
+    ]
+    private static let words: [String: String] = [
+        "4k": "4K", "uhd": "4K", "hd": "HD", "hdr": "HDR", "anime": "أنمي", "arabic": "عربية",
+        "asian": "آسيوية", "korean": "كورية", "japanese": "يابانية", "chinese": "صينية",
+        "turkish": "تركية", "indian": "هندية", "hindi": "هندية", "english": "إنجليزية",
+        "french": "فرنسية", "spanish": "إسبانية", "documentary": "وثائقية", "documentaries": "وثائقية",
+        "doc": "وثائقية", "docs": "وثائقية", "kids": "أطفال", "family": "عائلية", "classic": "كلاسيكية",
+        "classics": "كلاسيكية", "dubbed": "مدبلجة", "dub": "مدبلجة", "unsubtitled": "بدون ترجمة",
+        "unsubbed": "بدون ترجمة", "subbed": "مترجمة", "reality": "واقع", "ramadan": "رمضان",
+        "comedy": "كوميدي", "horror": "رعب", "action": "أكشن", "christmas": "كريسماس",
+        "new": "جديدة", "old": "قديمة", "sports": "رياضة", "music": "موسيقى", "theater": "مسرح",
+    ]
+
+    /// Whole names that don't follow «base + qualifier».
+    private static let names: [String: String] = [
+        "theater arabic": "مسرح عربي", "arabic theater": "مسرح عربي", "theatre arabic": "مسرح عربي",
+        "tv - reality": "برامج الواقع", "reality": "برامج الواقع", "reality tv": "برامج الواقع",
+    ]
+
+    static func arabic(_ raw: String) -> String {
+        let name = raw.trimmingCharacters(in: .whitespaces)
+        if let known = names[name.lowercased()] { return known }
+        let parts = name.components(separatedBy: " - ")
+        guard let base = translate(base: parts[0]) else { return raw }
+        guard parts.count > 1 else { return base }
+        let rest = parts.dropFirst().joined(separator: " ")
+        guard let qualifier = translate(qualifier: rest) else { return raw }
+        return base + " " + qualifier
+    }
+
+    private static func translate(base: String) -> String? {
+        let lower = base.lowercased()
+        if let known = bases[lower] { return known }
+        // «Theater Arabic»: a known base followed by qualifier words.
+        let tokens = lower.split(separator: " ").map(String.init)
+        guard tokens.count > 1, let head = bases[tokens[0]],
+              let tail = translate(qualifier: tokens.dropFirst().joined(separator: " ")) else { return nil }
+        return head + " " + tail
+    }
+
+    private static func translate(qualifier: String) -> String? {
+        let lower = qualifier.lowercased()
+        if let phrase = phrases[lower] { return phrase }
+        var out: [String] = []
+        for token in lower.split(separator: " ") {
+            guard let word = words[String(token)] else { return nil }
+            out.append(word)
+        }
+        return out.isEmpty ? nil : out.joined(separator: " ")
     }
 }
 

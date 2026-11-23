@@ -156,6 +156,13 @@ struct DetailPage: View {
                     // scrolling back up hands focus back to the buttons.
                     .disabled(!scrolled)
 
+                // Rows scroll up under the small title: a dark fade keeps it readable.
+                LinearGradient(colors: [.black.opacity(0.75), .black.opacity(0.4), .clear],
+                               startPoint: .top, endPoint: .bottom)
+                    .frame(height: 190)
+                    .opacity(scrolled ? 1 : 0)
+                    .allowsHitTesting(false)
+
                 // The logo as a small title at the top once scrolled.
                 LogoView(image: logos[item.ratingKey], title: item.title,
                          maxSize: CGSize(width: 260, height: 70), fontSize: 36)
@@ -551,6 +558,8 @@ struct DetailPage: View {
                         }
                         if !related.isEmpty { relatedRow(item) }
                         if !item.isShow && !extras.isEmpty { extrasRow }
+                        if !item.roles.isEmpty { castRow(item) }
+                        infoBlock(item)
                     }
                     .padding(.bottom, 120)
                     .id(Self.lowerTopID)
@@ -654,6 +663,87 @@ struct DetailPage: View {
             }
             .scrollClipDisabled()
             .focusSection()
+        }
+    }
+
+    /// «طاقم العمل»: round photos with the name and the character (focusable, so the page
+    /// can scroll to them).
+    private func castRow(_ item: PlexItem) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("طاقم العمل")
+                .font(.system(size: 30, weight: .regular))
+                .foregroundStyle(.white.opacity(0.6))
+                .padding(.horizontal, Self.sideInset)
+                .opacity(scrolled ? 1 : 0)
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(alignment: .top, spacing: 44) {
+                    ForEach(item.roles.prefix(20)) { role in
+                        Button {} label: { CastCircle(role: role, client: client) }
+                            .buttonStyle(CastButtonStyle())
+                    }
+                }
+                .padding(.horizontal, Self.sideInset)
+                .padding(.vertical, 30)
+            }
+            .scrollClipDisabled()
+        }
+        .focusSection()
+    }
+
+    /// «معلومات»: director, studio, release, runtime, age rating, audio and subtitle
+    /// languages, quality (from the file Play starts).
+    private func infoBlock(_ item: PlexItem) -> some View {
+        let target = playTarget ?? item
+        let arabic = Locale(identifier: "ar")
+        func languages(_ streams: [PlexStream]) -> String? {
+            var seen: [String] = []
+            for code in streams.compactMap(\.languageCode) {
+                // «spa», «ara», «en»: the full code first, then its first two letters.
+                let name = arabic.localizedString(forLanguageCode: code)
+                    ?? arabic.localizedString(forLanguageCode: String(code.prefix(2))) ?? code
+                if !seen.contains(name) { seen.append(name) }
+            }
+            return seen.isEmpty ? nil : seen.prefix(4).joined(separator: "، ")
+        }
+        let facts: [(String, String?)] = [
+            ("المخرج", item.directors.isEmpty ? nil : item.directors.prefix(2).map(\.tag).joined(separator: "، ")),
+            ("الاستوديو", item.studio),
+            ("تاريخ الإصدار", ArabicFormat.date(plex: item.originallyAvailableAt)),
+            ("المدة", target.duration.map { ArabicFormat.duration(ms: $0) }),
+            ("التصنيف العمري", item.normalizedContentRating),
+            ("الصوت", languages(target.audioStreams)),
+            ("الترجمة", languages(target.subtitleStreams)),
+            ("الجودة", badges.isEmpty ? nil : badges.joined(separator: ArabicFormat.separator)),
+        ]
+        let shown = facts.compactMap { label, value in value.map { (label, $0) } }
+        return VStack(alignment: .leading, spacing: 0) {
+            Text("معلومات")
+                .font(.system(size: 30, weight: .regular))
+                .foregroundStyle(.white.opacity(0.6))
+                .padding(.horizontal, Self.sideInset)
+                .opacity(scrolled ? 1 : 0)
+            // One focus stop for the whole block, so the page scrolls down to it.
+            Button {} label: {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 40, alignment: .topLeading), count: 4),
+                          alignment: .leading, spacing: 30) {
+                    ForEach(shown, id: \.0) { label, value in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(label)
+                                .font(.system(size: 22, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.55))
+                            Text(value)
+                                .font(.system(size: 24))
+                                .foregroundStyle(.white.opacity(0.9))
+                                .lineLimit(2)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(30)
+            }
+            .buttonStyle(InfoBlockStyle())
+            .padding(.horizontal, Self.sideInset - 30)
+            .padding(.vertical, 20)
         }
     }
 
@@ -1103,6 +1193,75 @@ private struct ExtraTile: View {
         case "scene": return "مشهد"
         case "short": return "قصير"
         default: return nil
+        }
+    }
+}
+
+/// Round actor photo (initials while it loads or when missing), the name and the character.
+private struct CastCircle: View {
+    let role: PlexTag
+    let client: PlexServerClient
+
+    private let size: CGFloat = 150
+
+    var body: some View {
+        VStack(spacing: 12) {
+            ZStack {
+                Circle().fill(Color(white: 0.2))
+                Text(String(role.tag.prefix(1)))
+                    .font(.system(size: 54, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.5))
+                RemoteImage(url: client.imageURL(role.thumb, width: 300, height: 300))
+                    .clipShape(Circle())
+            }
+            .frame(width: size, height: size)
+            Text(role.tag)
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.9))
+                .lineLimit(1)
+            if let character = role.role, !character.isEmpty {
+                Text(character)
+                    .font(.system(size: 19))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .lineLimit(1)
+            }
+        }
+        .frame(width: size + 40)
+    }
+}
+
+/// Cast focus: the photo grows a little with a soft shadow (no tile behind it).
+private struct CastButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { StyleBody(configuration: configuration) }
+
+    private struct StyleBody: View {
+        let configuration: ButtonStyleConfiguration
+        @Environment(\.isFocused) private var isFocused
+
+        var body: some View {
+            configuration.label
+                .scaleEffect(isFocused ? 1.1 : 1)
+                .shadow(color: .black.opacity(isFocused ? 0.5 : 0), radius: 18, y: 10)
+                .animation(.easeOut(duration: 0.2), value: isFocused)
+        }
+    }
+}
+
+/// Info block focus: a faint glass panel behind it.
+private struct InfoBlockStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { StyleBody(configuration: configuration) }
+
+    private struct StyleBody: View {
+        let configuration: ButtonStyleConfiguration
+        @Environment(\.isFocused) private var isFocused
+
+        var body: some View {
+            configuration.label
+                .background {
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .fill(Color.white.opacity(isFocused ? 0.1 : 0))
+                }
+                .animation(.easeOut(duration: 0.2), value: isFocused)
         }
     }
 }

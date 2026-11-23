@@ -481,12 +481,12 @@ struct PosterGrid: View {
     let items: [PlexItem]
     let client: PlexServerClient
     var scrollProxy: ScrollViewProxy?
+    /// Return-to-item key (two grids on one page need different ones).
+    var rowID = "grid"
     var onItemAppear: (PlexItem) -> Void = { _ in }
 
     @Environment(BrowseReturnState.self) private var returnState
     @FocusState private var focusedID: String?
-
-    private let rowID = "grid"
     private let columns = Array(repeating: GridItem(.fixed(CardKind.poster.size.width), spacing: CardKind.spacing, alignment: .top), count: 6)
 
     var body: some View {
@@ -503,6 +503,9 @@ struct PosterGrid: View {
         .padding(.vertical, 30)
         // Starts on the same line as the rows; the enclosing ScrollView adds the sidebar inset.
         .frame(maxWidth: .infinity, alignment: .leading)
+        // Entering the grid lands on its first item (reading side), not the one under the bar.
+        .focusSection()
+        .defaultFocus($focusedID, items.first?.id, priority: .userInitiated)
         .onAppear {
             guard let id = returnState.take(for: rowID) else { return }
             scrollProxy?.scrollTo(id, anchor: .center)

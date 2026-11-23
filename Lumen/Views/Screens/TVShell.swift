@@ -146,6 +146,7 @@ struct MainTabView: View {
     @State private var shell = ShellState()
     @FocusState private var sidebarFocus: TVDestination?
     @FocusState private var edgeFocused: Bool
+    @State private var edgeArmed = false
     @Namespace private var shellNamespace
     @Environment(\.resetFocus) private var resetFocus
 
@@ -176,7 +177,9 @@ struct MainTabView: View {
             Color.clear
                 .frame(width: 12)
                 .frame(maxHeight: .infinity)
-                .focusable(!sidebarVisible && shell.pushedPages == 0)
+                // Armed once the first screen has loaded: at launch focus could land here
+                // first and open the sidebar over the banner.
+                .focusable(edgeArmed && !sidebarVisible && shell.pushedPages == 0)
                 .focused($edgeFocused)
                 .focusSection()
 
@@ -188,6 +191,11 @@ struct MainTabView: View {
                     selection = destination
                     // Hand focus to the chosen screen; the sidebar closes.
                     DispatchQueue.main.async { sidebarFocus = nil }
+                    // A screen with nothing to focus (an empty «قائمتي») sends focus back to the
+                    // sidebar's first row: keep it on the chosen one instead.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        if sidebarVisible, let focus = sidebarFocus, focus != destination { sidebarFocus = destination }
+                    }
                 } onClose: {
                     closeSidebar()
                 }
@@ -213,7 +221,13 @@ struct MainTabView: View {
         .environment(prefs)
         .environment(shell)
         .ignoresSafeArea(.container, edges: .horizontal)
-        .task { checkForNewLibraries() }
+        .task {
+            checkForNewLibraries()
+            // At launch Home puts focus on its banner first; only then can the edge catcher
+            // (which opens the sidebar) take focus.
+            try? await Task.sleep(for: .seconds(2))
+            edgeArmed = true
+        }
         .alert(newLibraryTitle, isPresented: Binding(get: { !newSections.isEmpty }, set: { if !$0 { newSections = [] } })) {
             Button("إضافة") { acknowledge(enable: true) }
             Button("لا", role: .cancel) { acknowledge(enable: false) }
@@ -256,7 +270,7 @@ struct MainTabView: View {
                 HomeView(client: client)
             }
         case .more:
-            MoreLibrariesView(scopes: rest) { scope in selection = .library(scope.id) }
+            MoreLibrariesView(client: client, scopes: rest) { scope in selection = .library(scope.id) }
                 .onExitCommand { openSidebar() }
         case .settings:
             SettingsView(client: client, sections: sections)
@@ -473,6 +487,8 @@ struct HomeView: View {
     @State private var rows: [Shelf] = []
     @State private var isLoading = true
     @FocusState private var bannerFocus: HeroBanner.Control?
+    /// Focus went to the banner's Play once, when Home first had content.
+    @State private var focusedBanner = false
 
     private var isEmpty: Bool { banner.isEmpty && rows.isEmpty }
 
@@ -504,6 +520,12 @@ struct HomeView: View {
             await load()
         }
         .onAppear { if !isEmpty { Task { await load(cached: false) } } }
+        // Opening the app lands on the banner's Play (like Apple's TV app), not on nothing.
+        .onChange(of: banner.isEmpty, initial: true) { _, empty in
+            guard !empty, !focusedBanner else { return }
+            focusedBanner = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { bannerFocus = .play }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .plexPlaybackDidEnd)) { _ in
             Task { await load(cached: false) }
         }
@@ -607,7 +629,14 @@ struct BannerPage<Content: View>: View {
                         // Scrolled into the rows: what's left of the banner (artwork included,
                         // down to the bottom edge) is dimmed.
                         .overlay(alignment: .top) {
-                            Color.black.opacity(atRows ? 0.5 : 0)
+                            // Fades out toward the artwork's bottom edge, which is already the
+                            // page colour (a flat dim there left a dark seam above the rows).
+                            LinearGradient(stops: [
+                                .init(color: .black.opacity(0.5), location: 0),
+                                .init(color: .black.opacity(0.5), location: 0.7),
+                                .init(color: .clear, location: 1),
+                            ], startPoint: .top, endPoint: .bottom)
+                                .opacity(atRows ? 1 : 0)
                                 .frame(height: HeroBanner.artHeight)
                                 .allowsHitTesting(false)
                         }
@@ -733,27 +762,25 @@ struct TVMyListView: View {
 // MARK: - More libraries
 
 struct MoreLibrariesView: View {
+    let client: PlexServerClient
     let scopes: [LibraryScope]
     let open: (LibraryScope) -> Void
+
+    private static let tile = CGSize(width: 520, height: 292)
+
+    /// Library key → backdrop of its newest title (libraries rarely have artwork of their own).
+    @State private var art: [String: String] = [:]
 
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 30) {
                 Text("المزيد من المكتبات")
                     .font(.system(size: 44, weight: .bold))
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 380), spacing: 40)], alignment: .leading, spacing: 40) {
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(Self.tile.width), spacing: 60), count: 3),
+                          alignment: .leading, spacing: 60) {
                     ForEach(scopes) { scope in
-                        Button { open(scope) } label: {
-                            HStack(spacing: 20) {
-                                Image(systemName: scope.icon).font(.system(size: 36))
-                                Text(scope.title).font(.system(size: 28, weight: .semibold)).lineLimit(1)
-                                Spacer(minLength: 0)
-                            }
-                            .padding(.horizontal, 30)
-                            .frame(width: 380, height: 130)
-                            .background(Color.white.opacity(0.08))
-                        }
-                        .buttonStyle(.card)
+                        Button { open(scope) } label: { tile(scope) }
+                            .buttonStyle(.card)
                     }
                 }
             }
@@ -762,5 +789,36 @@ struct MoreLibrariesView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .sidebarSafeArea()
+        .task {
+            await withTaskGroup(of: (String, String?).self) { group in
+                for scope in scopes where scope.section.art == nil {
+                    group.addTask {
+                        let newest = try? await client.recentlyAdded(section: scope.section, limit: 1)
+                        return (scope.section.key, newest?.first?.backdropPath)
+                    }
+                }
+                for await (key, path) in group { if let path { art[key] = path } }
+            }
+        }
+    }
+
+    /// 16:9 tile: the library's artwork darkened, its icon and full name (never cut).
+    private func tile(_ scope: LibraryScope) -> some View {
+        ZStack(alignment: .bottomLeading) {
+            Color(white: 0.16)
+            RemoteImage(url: client.imageURL(scope.section.art ?? art[scope.section.key], width: 1040, height: 584))
+            LinearGradient(colors: [.black.opacity(0.15), .black.opacity(0.75)], startPoint: .top, endPoint: .bottom)
+            HStack(spacing: 16) {
+                Image(systemName: scope.icon).font(.system(size: 34, weight: .semibold))
+                Text(scope.title)
+                    .font(.system(size: 32, weight: .bold))
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.75)
+                    .multilineTextAlignment(.leading)
+            }
+            .foregroundStyle(.white)
+            .padding(28)
+        }
+        .frame(width: Self.tile.width, height: Self.tile.height)
     }
 }

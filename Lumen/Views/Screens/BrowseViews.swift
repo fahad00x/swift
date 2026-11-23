@@ -22,6 +22,8 @@ struct BrowseContainer<Content: View>: View {
             }
             // Menu on a top-level screen goes to the sidebar (pushed pages handle their own Back).
             .onExitCommand(perform: focusSidebar)
+            // A new screen starts without the artwork focused on another one.
+            .onAppear { if showsBackdrop, backdrop.url != nil { backdrop.url = nil } }
             .navigationDestination(for: DetailRoute.self) { route in
                 // The page applies the zoom transition itself so it can follow paging.
                 DetailPage(client: client, entry: route.item, context: route.context, sourceID: route.sourceID)
@@ -72,7 +74,9 @@ struct LibraryView: View {
     var body: some View {
         BrowseContainer(client: client, showsBackdrop: false) {
             ScrollViewReader { proxy in
-                BannerPage(banner: banner, chipTitle: scope.title, client: client, bannerFocus: $bannerFocus,
+                // The banner only on «مقترح»: the other tabs open straight on their grid.
+                BannerPage(banner: tab == .suggested ? banner : [], chipTitle: scope.title, client: client,
+                           bannerFocus: $bannerFocus,
                            firstRowID: BannerPageID.firstRow) {
                     Color.clear.frame(height: 1).id(BannerPageID.firstRow)
                     LibraryTabBar(selection: $tab)
@@ -385,25 +389,46 @@ struct SearchView: View {
     @Environment(\.contentFilter) private var filter
     @State private var query = ""
     @State private var results: [PlexItem] = []
+    /// Query the current results are for (no «no results» before a search has run).
+    @State private var searched = ""
     @State private var isSearching = false
+    @State private var recent: [String] = RecentSearches.load()
+
+    private var trimmed: String { query.trimmingCharacters(in: .whitespaces) }
+    private var shows: [PlexItem] { results.filter { $0.isShow || $0.isSeason || $0.isEpisode } }
+    private var movies: [PlexItem] { results.filter { !($0.isShow || $0.isSeason || $0.isEpisode) } }
 
     var body: some View {
         BrowseContainer(client: client) {
             ScrollViewReader { proxy in
                 ScrollView {
-                    if results.isEmpty && !query.isEmpty && !isSearching {
-                        ContentUnavailableView.search(text: query)
+                    VStack(alignment: .leading, spacing: 30) {
+                        if trimmed.isEmpty {
+                            recentSearches
+                        } else if trimmed.count < 2 {
+                            hint("اكتب حرفين على الأقل")
+                        } else if results.isEmpty && searched == trimmed && !isSearching {
+                            ContentUnavailableView.search(text: trimmed)
+                        }
+                        // Shows, then movies, each under its own header.
+                        if !shows.isEmpty {
+                            header("مسلسلات")
+                            PosterGrid(items: shows, client: client, scrollProxy: proxy, rowID: "search-shows")
+                        }
+                        if !movies.isEmpty {
+                            header("أفلام")
+                            PosterGrid(items: movies, client: client, scrollProxy: proxy, rowID: "search-movies")
+                        }
                     }
-                    PosterGrid(items: results, client: client, scrollProxy: proxy)
-                        .padding(.top, 40)
+                    .padding(.top, 40)
                 }
                 .sidebarSafeArea()
                 .searchable(text: $query, prompt: "ابحث عن فيلم أو مسلسل")
             }
         }
         .task(id: query) {
-            let q = query.trimmingCharacters(in: .whitespaces)
-            guard q.count >= 2 else { results = []; return }
+            let q = trimmed
+            guard q.count >= 2 else { results = []; searched = ""; return }
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled else { return }
             isSearching = true
@@ -413,7 +438,65 @@ struct SearchView: View {
             let visible = await filter.resolve(found, client: client)
             guard !Task.isCancelled else { return }
             results = visible
+            searched = q
+            // Remembered once the term stays put a moment (not every partial word typed).
+            guard !visible.isEmpty else { return }
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            recent = RecentSearches.add(q)
         }
+    }
+
+    @ViewBuilder
+    private var recentSearches: some View {
+        if !recent.isEmpty {
+            header("عمليات البحث الأخيرة")
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 20) {
+                    ForEach(recent, id: \.self) { term in
+                        Button(term) { query = term }
+                            .buttonStyle(.bordered)
+                            .buttonBorderShape(.capsule)
+                            .tint(nil)
+                    }
+                }
+                .padding(.horizontal, CardKind.inset)
+                .padding(.vertical, 20)
+            }
+            .scrollClipDisabled()
+            .focusSection()
+        }
+    }
+
+    private func header(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 30, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.7))
+            .padding(.horizontal, CardKind.inset)
+    }
+
+    private func hint(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 28))
+            .foregroundStyle(.white.opacity(0.55))
+            .frame(maxWidth: .infinity)
+            .padding(.top, 60)
+    }
+}
+
+/// Last searches that found something (newest first), kept on the device.
+enum RecentSearches {
+    private static let key = "recentSearches"
+    private static let limit = 8
+
+    static func load() -> [String] { UserDefaults.standard.stringArray(forKey: key) ?? [] }
+
+    static func add(_ term: String) -> [String] {
+        var list = load().filter { $0.caseInsensitiveCompare(term) != .orderedSame }
+        list.insert(term, at: 0)
+        list = Array(list.prefix(limit))
+        UserDefaults.standard.set(list, forKey: key)
+        return list
     }
 }
 
@@ -463,12 +546,12 @@ struct SettingsView: View {
                         }
                         Button("تبديل المستخدم") { store.deactivate() }
                         Button("إعدادات المستخدم") { editProfile(profile) }
-                        Toggle("تذكّر آخر مستخدم", isOn: Binding(get: { store.rememberLastProfile },
+                        ArabicToggle("تذكّر آخر مستخدم", isOn: Binding(get: { store.rememberLastProfile },
                                                                set: { store.setRememberLastProfile($0) }))
                     } header: {
                         Text("المستخدم")
                     } footer: {
-                        Text("مع «تذكّر آخر مستخدم» يفتح التطبيق على آخر مستخدم مباشرة بدون شاشة «مين يشاهد؟».")
+                        FooterText("مع «تذكّر آخر مستخدم» يفتح التطبيق على آخر مستخدم مباشرة بدون شاشة «مين يشاهد؟».")
                     }
 
                     Section {
@@ -479,7 +562,7 @@ struct SettingsView: View {
                     } header: {
                         Text("iCloud")
                     } footer: {
-                        Text("بيانات كل مستخدم (التقدّم، المشاهَد، قائمتي، المكتبات) محفوظة في iCloud وعلى الجهاز، ولا تُرسل إلى Plex.")
+                        FooterText("بيانات كل مستخدم (التقدّم، المشاهَد، قائمتي، المكتبات) محفوظة في iCloud وعلى الجهاز، ولا تُرسل إلى Plex.")
                     }
                 }
 
@@ -491,7 +574,7 @@ struct SettingsView: View {
                     } header: {
                         Text("مكتبات الشريط الجانبي")
                     } footer: {
-                        Text("اختر حتى \(ArabicFormat.digits(SidebarPrefs.maxPinned)) مكتبات تظهر في الشريط الجانبي بهذا الترتيب، والباقي تحت «المزيد». زر السهم يقدّم المكتبة خطوة.")
+                        FooterText("اختر حتى \(ArabicFormat.digits(SidebarPrefs.maxPinned)) مكتبات تظهر في الشريط الجانبي بهذا الترتيب، والباقي تحت «المزيد». زر السهم يقدّم المكتبة خطوة.")
                     }
                 }
 
@@ -536,29 +619,29 @@ struct SettingsView: View {
                         ForEach(PlaybackEngine.allCases) { Text($0.title).tag($0) }
                     }
                     if engine == .mpv {
-                        Toggle("وضع الأداء العالي (لأجهزة Apple TV الأقدم)", isOn: $fastProfile)
+                        ArabicToggle("وضع الأداء العالي (لأجهزة Apple TV الأقدم)", isOn: $fastProfile)
                     }
                     Picker("الحد الأقصى للجودة", selection: $maxBitrate) {
                         ForEach(PlaybackSettings.bitrateOptions, id: \.kbps) { option in
                             Text(option.title).tag(option.kbps)
                         }
                     }
-                    Toggle("فرض التحويل عبر الخادم (Transcode)", isOn: $forceTranscode)
+                    ArabicToggle("فرض التحويل عبر الخادم (Transcode)", isOn: $forceTranscode)
                 } header: {
                     Text("التشغيل")
                 } footer: {
-                    Text(engine == .mpv
+                    FooterText(engine == .mpv
                          ? "مشغّل Lumen يشغّل الملف الأصلي مباشرة بكل صيغه (MKV، HEVC، 4K، HDR10، Dolby Vision، DTS، TrueHD، ترجمات ASS/PGS) دون تحويل في الخادم. فعّل «مطابقة المحتوى» في إعدادات Apple TV ← الفيديو والصوت ليتحوّل التلفاز تلقائياً إلى HDR ومعدل الإطارات الصحيح."
                          : "مشغّل النظام يشغّل MP4/MOV مباشرة، وباقي الصيغ يحوّلها خادم Plex.")
                 }
 
                 Section {
-                    Toggle("تخطي المقدمة تلقائياً", isOn: $autoSkipIntro)
-                    Toggle("تشغيل الحلقة التالية تلقائياً", isOn: $autoPlayNext)
+                    ArabicToggle("تخطي المقدمة تلقائياً", isOn: $autoSkipIntro)
+                    ArabicToggle("تشغيل الحلقة التالية تلقائياً", isOn: $autoPlayNext)
                 } header: {
                     Text("المقدمة والختام")
                 } footer: {
-                    Text("يظهر زر «تخطي المقدمة» و«الحلقة التالية» عندما يكتشف خادم Plex المقدمة وشارة النهاية (ميزة Plex Pass: فعّل Intro/Credits detection في إعدادات المكتبة).")
+                    FooterText("يظهر زر «تخطي المقدمة» و«الحلقة التالية» عندما يكتشف خادم Plex المقدمة وشارة النهاية (ميزة Plex Pass: فعّل Intro/Credits detection في إعدادات المكتبة).")
                 }
 
                 Section("حول") {
@@ -622,5 +705,37 @@ struct SettingsView: View {
         let editors = ProfileGate.editors(for: profile, store: store)
         guard !editors.isEmpty else { action(); return }
         pin = PinRequest(title: "رمز المستخدم الرئيسي", profiles: editors, onSuccess: action)
+    }
+}
+
+/// Settings switch with Arabic state words (a system Toggle shows the system's On/Off).
+private struct ArabicToggle: View {
+    let title: String
+    @Binding var isOn: Bool
+
+    init(_ title: String, isOn: Binding<Bool>) {
+        self.title = title
+        _isOn = isOn
+    }
+
+    var body: some View {
+        Button { isOn.toggle() } label: {
+            HStack {
+                Text(title)
+                Spacer(minLength: 20)
+                Text(isOn ? "مفعّل" : "متوقف").foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+/// Section explanation: smaller and grey, under the rows it explains.
+private struct FooterText: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+    var body: some View {
+        Text(text)
+            .font(.system(size: 22))
+            .foregroundStyle(.white.opacity(0.55))
     }
 }

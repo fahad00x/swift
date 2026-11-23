@@ -60,8 +60,10 @@ struct PlayerOverlay: View {
                     HStack(spacing: 0) {
                         Text(Self.format(session.scrubPosition ?? session.position))
                         Spacer()
+                        // Hint only while the panel is closed (it's what the swipe opens).
                         Text("اسحب للأسفل: الصوت والترجمة")
                             .foregroundStyle(.secondary)
+                            .opacity(session.isPanelOpen ? 0 : 1)
                         Spacer()
                         // Remaining time, then (as its own label) when the video ends.
                         Text("-" + Self.format(max(0, session.duration - (session.scrubPosition ?? session.position))))
@@ -184,7 +186,7 @@ private struct TracksPanel: View {
                         session.selectSubtitle(nil)
                     }
                     ForEach(session.subtitleTracks) { track in
-                        row(track.displayName + (track.isExternal ? " (ملف خارجي)" : ""), selected: track.isSelected) {
+                        row(track.displayName, selected: track.isSelected) {
                             session.selectSubtitle(track)
                         }
                     }
