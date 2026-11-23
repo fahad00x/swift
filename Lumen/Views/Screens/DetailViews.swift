@@ -2,15 +2,19 @@ import SwiftUI
 
 /// Apple TV app–style details page, mirrored for Arabic.
 ///
-/// State 1, a CARD: on a flat dark-grey background, the title's artwork fills a rounded card
-/// (120 pt side margins, 40 pt from the top, running past the bottom edge) with the text on the
+/// BROWSING (focus on the page itself, not a button): the title's artwork is a rounded card
+/// (100 pt side margins, 32 pt from the top, running past the bottom edge) with the text on the
 /// reading side (right) and the cast on the other. The row's neighbouring titles peek at the
 /// sides; Left / Right slide the strip to the next / previous one (next comes from the left).
-/// The artwork cycles through 2–3 of the title's backgrounds.
 ///
-/// State 2, EPISODES (Down, or the episodes button): the card grows to the full screen and
-/// turns into a blurred colour wash; a small logo at the top, the season labels, the episodes
-/// and «ذات صلة». Up from the seasons, or Back, returns to the card.
+/// BUTTONS (Down to Play): the card grows to the full screen (~0.2 s). The top of the first
+/// episodes row peeks at the bottom (y≈970).
+///
+/// EPISODES (Down, or the episodes button): a real vertical scroll (~0.8 s ease-out): the rows
+/// rise to y≈240, the text slides off the top, the logo becomes a small title, and the same
+/// backdrop blurs and darkens. Up from the seasons, or Back, is the exact reverse.
+///
+/// The backdrop is one stable image per title (never reloaded or cycled while idle).
 struct DetailPage: View {
     let client: PlexServerClient
     /// Row the page was opened from; Left / Right page through it (no wrap-around).
@@ -29,9 +33,6 @@ struct DetailPage: View {
     @State private var current: PlexItem
     @State private var metadataCache: [String: PlexItem] = [:]
     @State private var logos: [String: UIImage] = [:]
-    /// Background artworks of a movie / show (paths), cycled on its card.
-    @State private var artworks: [String: [String]] = [:]
-    @State private var artIndex = 0
 
     @State private var item: PlexItem?
     @State private var playTarget: PlexItem?
@@ -41,9 +42,13 @@ struct DetailPage: View {
     @State private var related: [PlexItem] = []
     @State private var extras: [PlexItem] = []
     @State private var revealed = false
-    @State private var expanded = false
-    /// The episodes view finished appearing (Up to the card works only then, so focus landing
-    /// on the top strip while it appears doesn't close it again).
+    /// Focus is on the page itself (paging between titles): the artwork is a card. Off once
+    /// focus reaches the buttons or the rows: full screen.
+    @State private var browsing: Bool
+    /// Scrolled down to the episodes (and below).
+    @State private var scrolled = false
+    /// The scroll to the episodes finished (Up to the top works only then, so focus landing
+    /// on the top strip while it moves doesn't scroll back again).
     @State private var episodesReady = false
     @State private var audioSelection = -1
     @State private var subtitleSelection = -1
@@ -54,30 +59,53 @@ struct DetailPage: View {
     @FocusState private var seasonFocus: String?
     @FocusState private var lowerFocus: String?
 
-    enum HeroButton: Hashable { case play, watchlist, episodes, edgeStart, edgeEnd, down, backToTop }
+    enum HeroButton: Hashable { case browse, play, watchlist, episodes, down, backToTop }
 
     /// Side inset of rows on the full-screen episodes view.
     static let sideInset: CGFloat = CardKind.inset
 
     // Card geometry (px at 1920×1080).
     private static let screen = CGSize(width: 1920, height: 1080)
-    private static let cardMargin: CGFloat = 120
-    private static let cardTop: CGFloat = 40
+    private static let cardMargin: CGFloat = 100
+    private static let cardTop: CGFloat = 32
     private static let cardGap: CGFloat = 22
     private static let cardRadius: CGFloat = 36
     private static var cardWidth: CGFloat { screen.width - 2 * cardMargin }
-    /// Runs 40 pt past the bottom edge.
+    /// Runs 32 pt past the bottom edge.
     private static var cardHeight: CGFloat { screen.height }
     private static var pitch: CGFloat { cardWidth + cardGap }
     /// Text 40 pt inside the card edge.
     private static var textInset: CGFloat { cardMargin + 40 }
+
+    // Vertical scroll (px at 1920×1080).
+    /// Top of the first episodes row: peeking at the top state, near the top once scrolled.
+    private static let peekTop: CGFloat = 970
+    private static let episodesTop: CGFloat = 240
+    private static var scrollDistance: CGFloat { peekTop - episodesTop }
+    /// Height of the season labels line.
+    private static let labelsHeight: CGFloat = 64
+    private static let rowSpacing: CGFloat = 34
+    /// From the top of the rows block to the top of the episode stills
+    /// (top strip 8 + season labels + spacing + the row's own top padding 24).
+    private static var leadIn: CGFloat { 8 + labelsHeight + rowSpacing + 24 }
+    private static let lowerTopID = "detail-lower-top"
+    /// ~0.8 s ease-out, most of the motion in the first 0.4 s.
+    private static func scrollCurve(_ duration: Double) -> Animation {
+        .timingCurve(0.16, 1, 0.3, 1, duration: duration)
+    }
 
     init(client: PlexServerClient, entry: PlexItem, context: BrowseContext? = nil, sourceID: String? = nil) {
         self.client = client
         self.context = context
         self.sourceID = sourceID
         _current = State(initialValue: entry)
+        _browsing = State(initialValue: (context?.items.count ?? 0) > 1)
     }
+
+    /// The page can page between titles of a row (otherwise there's no card state).
+    private var canBrowse: Bool { (context?.items.count ?? 0) > 1 }
+    /// The current artwork fills the screen.
+    private var fullScreen: Bool { scrolled || !browsing }
 
     /// Movie or show the page describes (episodes and seasons open their show).
     private var ratingKey: String { displayKey(current) }
@@ -105,19 +133,27 @@ struct DetailPage: View {
 
             cardStrip
 
+            if canBrowse { browseTarget }
+
             if let item {
                 // Near-invisible (not 0) until revealed, so the buttons can take focus at once
-                // and focus never escapes to the sidebar.
+                // and focus never escapes to the sidebar. Slides off the top when scrolled.
                 cardText(item)
-                    .opacity(expanded ? 0 : (revealed ? 1 : 0.02))
-                    .offset(y: revealed ? 0 : 24)
+                    .opacity(scrolled ? 0 : (revealed ? 1 : 0.02))
+                    .offset(y: (revealed ? 0 : 24) - (scrolled ? Self.scrollDistance : 0))
 
-                if expanded {
-                    episodesView(item)
-                        .transition(.asymmetric(
-                            insertion: .offset(y: 260).combined(with: .opacity),
-                            removal: .offset(y: 200).combined(with: .opacity)))
-                }
+                // The rows: the first one peeks at the bottom, then scrolls up under the title.
+                lowerContent(item)
+                    .offset(y: (scrolled ? Self.episodesTop : Self.peekTop) - Self.leadIn)
+                    .opacity(revealed ? 1 : 0)
+
+                // The logo as a small title at the top once scrolled.
+                LogoView(image: logos[item.ratingKey], title: item.title,
+                         maxSize: CGSize(width: 260, height: 70), fontSize: 36)
+                    .frame(height: 70)
+                    .padding(.top, 30)
+                    .opacity(scrolled ? 1 : 0)
+                    .allowsHitTesting(false)
             }
         }
         .frame(width: Self.screen.width, height: Self.screen.height)
@@ -134,7 +170,13 @@ struct DetailPage: View {
             saveStreams(subtitle: id)
         }
         .onChange(of: seasonFocus) { _, key in
-            if let key { selectedSeasonKey = key }
+            if let key {
+                selectedSeasonKey = key
+                setScrolled(true)
+            }
+        }
+        .onChange(of: lowerFocus) { _, key in
+            if key != nil { setScrolled(true) }
         }
         .onChange(of: heroFocus) { old, new in handleHeroFocus(from: old, to: new) }
         .task(id: current.id) {
@@ -148,17 +190,16 @@ struct DetailPage: View {
             if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
             guard !Task.isCancelled else { return }
             withAnimation(.easeOut(duration: 0.3)) { revealed = true }
-            if heroFocus == nil, !expanded { heroFocus = .play }
+            if heroFocus == nil, !scrolled { heroFocus = canBrowse ? .browse : .play }
             if !cacheMiss { await load() }
             await preloadNeighbours()
         }
-        .task(id: "\(current.id)|\(expanded)") { await cycleArtwork() }
         .zoomDestination(id: zoomSourceID,
                          namespace: (context?.rowID.hasPrefix("banner") ?? false) ? nil : zoomNamespace)
         .onReceive(NotificationCenter.default.publisher(for: .plexPlaybackDidEnd)) { _ in
             Task { await load() }
         }
-        .defaultFocus($heroFocus, .play)
+        .defaultFocus($heroFocus, canBrowse ? .browse : .play)
         .onAppear {
             shell?.pushedPages += 1
             // Back lands on the same poster (or the last one reached by paging).
@@ -167,30 +208,57 @@ struct DetailPage: View {
         .onDisappear { shell?.pushedPages = max(0, (shell?.pushedPages ?? 1) - 1) }
     }
 
-    /// Back goes one step back: from the episodes to the card, from the card to the poster.
+    /// Back goes one step back: from the episodes to the top, from the top to the poster.
     private func exitAction() {
-        if expanded {
-            setExpanded(false)
+        if scrolled {
+            setScrolled(false)
             heroFocus = .play
         } else {
             dismiss()
         }
     }
 
-    /// Card ↔ episodes (~1.15 s with the Apple curve).
-    private func setExpanded(_ value: Bool) {
-        guard expanded != value else { return }
+    /// Top ↔ episodes: a real vertical scroll (~0.8 s down, ~0.75 s back up, ease-out).
+    private func setScrolled(_ value: Bool) {
+        guard scrolled != value else { return }
         episodesReady = false
-        withAnimation(.spring(response: 0.75, dampingFraction: 1.0)) { expanded = value }
-        if value {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { if expanded { episodesReady = true } }
+        withAnimation(Self.scrollCurve(value ? 0.8 : 0.75)) {
+            scrolled = value
+            if value { browsing = false }
         }
+        if value {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { if scrolled { episodesReady = true } }
+        }
+    }
+
+    /// Card (browsing) ↔ full screen (buttons and below), ~0.2 s.
+    private func setBrowsing(_ value: Bool) {
+        guard browsing != value else { return }
+        withAnimation(.easeOut(duration: 0.2)) { browsing = value }
     }
 
     // MARK: - Cards
 
+    /// Invisible focus target over the top of the card: focus here means browsing between
+    /// titles (card state); Left / Right page through the row; Down goes to the buttons.
+    private var browseTarget: some View {
+        Color.white.opacity(0.001)
+            .frame(width: Self.cardWidth, height: 420)
+            .focusable(!scrolled)
+            .focused($heroFocus, equals: .browse)
+            .onMoveCommand { direction in
+                // Physical directions: in Arabic the next title comes from the left.
+                switch direction {
+                case .left: page(+1)
+                case .right: page(-1)
+                default: break
+                }
+            }
+            .offset(y: Self.cardTop + 80)
+    }
+
     /// The current card and its neighbours as one strip (physical coordinates: in Arabic the
-    /// next title sits on the left). On the episodes view the current card fills the screen.
+    /// next title sits on the left). Off the browsing state the current card fills the screen.
     private var cardStrip: some View {
         let items = context?.items ?? [current]
         let i = currentIndex ?? 0
@@ -199,14 +267,14 @@ struct DetailPage: View {
             ForEach(window, id: \.id) { entry in
                 let offset = (items.firstIndex { $0.id == entry.id } ?? i) - i
                 let isCurrent = entry.id == current.id
-                let full = isCurrent && expanded
-                DetailCardArt(url: artURL(for: entry, isCurrent: isCurrent), lowURL: lowArtURL(for: entry),
-                              isCurrent: isCurrent, expanded: full, dimmed: !isCurrent)
+                let full = isCurrent && fullScreen
+                DetailCardArt(url: artURL(for: entry), lowURL: lowArtURL(for: entry),
+                              scrolled: isCurrent && scrolled, dimmed: !isCurrent)
                     .frame(width: full ? Self.screen.width : Self.cardWidth,
                            height: full ? Self.screen.height : Self.cardHeight)
                     .clipShape(RoundedRectangle(cornerRadius: full ? 0 : Self.cardRadius, style: .continuous))
                     .offset(x: -CGFloat(offset) * Self.pitch, y: full ? 0 : Self.cardTop)
-                    .opacity(expanded && !isCurrent ? 0 : 1)
+                    .opacity(fullScreen && !isCurrent ? 0 : 1)
                     .zIndex(isCurrent ? 1 : 0)
             }
         }
@@ -223,13 +291,11 @@ struct DetailPage: View {
         return client.imageURL(path, width: 480, height: 270)
     }
 
-    /// Current card: one of its artworks (cycled); neighbours: their main backdrop.
-    private func artURL(for entry: PlexItem, isCurrent: Bool) -> URL? {
+    /// The title's main backdrop: one stable image per title (never cycled), so the artwork
+    /// never reloads while idle.
+    private func artURL(for entry: PlexItem) -> URL? {
         let key = displayKey(entry)
-        var path = metadataCache[key]?.backdropPath ?? (entry.isEpisode ? (entry.grandparentArt ?? entry.art) : entry.backdropPath)
-        if isCurrent, let list = artworks[key], !list.isEmpty {
-            path = list[artIndex % list.count]
-        }
+        let path = metadataCache[key]?.backdropPath ?? (entry.isEpisode ? (entry.grandparentArt ?? entry.art) : entry.backdropPath)
         return client.imageURL(path, width: 1920, height: 1080)
     }
 
@@ -266,10 +332,10 @@ struct DetailPage: View {
 
                 buttons(item).padding(.top, 8)
 
-                // Down from the buttons opens the episodes view.
+                // Down from the buttons scrolls to the episodes.
                 Color.white.opacity(0.001)
                     .frame(width: 900, height: 8)
-                    .focusable(revealed && !expanded)
+                    .focusable(revealed && !scrolled)
                     .focused($heroFocus, equals: .down)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -292,15 +358,14 @@ struct DetailPage: View {
                 .padding(.bottom, 120)
             }
         }
-        .padding(.bottom, 56)
+        // Ends above the first episodes row peeking at y≈970.
+        .padding(.bottom, Self.screen.height - Self.peekTop + 36)
         .frame(width: Self.screen.width, height: Self.screen.height, alignment: .bottom)
         .shadow(color: .black.opacity(0.35), radius: 10)
     }
 
     private func buttons(_ item: PlexItem) -> some View {
         HStack(spacing: 20) {
-            edgeTarget(.edgeStart, enabled: hasPrevious)
-
             Button { play(playTarget) } label: {
                 HStack(spacing: 12) {
                     Image(systemName: "play.fill")
@@ -320,44 +385,30 @@ struct DetailPage: View {
             .focused($heroFocus, equals: .watchlist)
 
             Button {
-                setExpanded(true)
+                setScrolled(true)
                 focusEpisodes()
             } label: {
                 Image(systemName: item.isShow ? "list.bullet.rectangle" : "rectangle.stack")
             }
             .nativeCircleButton()
             .focused($heroFocus, equals: .episodes)
-
-            edgeTarget(.edgeEnd, enabled: hasNext)
         }
         .focusSection()
     }
 
-    /// Invisible focus target just past the end of the button row: moving onto it pages to the
-    /// previous / next title of the row. Disabled at either end of the row and on the episodes view.
-    private func edgeTarget(_ edge: HeroButton, enabled: Bool) -> some View {
-        Color.white.opacity(0.001)
-            .frame(width: 6, height: 76)
-            .focusable(enabled && !expanded && revealed)
-            .focused($heroFocus, equals: edge)
-    }
-
     private func handleHeroFocus(from old: HeroButton?, to new: HeroButton?) {
-        let buttons: [HeroButton] = [.play, .watchlist, .episodes]
         switch new {
-        case .edgeStart?:
-            if let old, buttons.contains(old) { page(-1) }
-            DispatchQueue.main.async { heroFocus = .play }
-        case .edgeEnd?:
-            if let old, buttons.contains(old) { page(+1) }
-            DispatchQueue.main.async { heroFocus = .episodes }
+        case .browse?:
+            setBrowsing(true)
+        case .play?, .watchlist?, .episodes?:
+            setBrowsing(false)
         case .down?:
-            setExpanded(true)
+            setScrolled(true)
             focusEpisodes()
         case .backToTop?:
-            setExpanded(false)
+            setScrolled(false)
             DispatchQueue.main.async { heroFocus = .play }
-        default:
+        case nil:
             break
         }
     }
@@ -375,11 +426,10 @@ struct DetailPage: View {
     /// Slides to a sibling of the row (~0.86 s): the text fades out, the cards slide as a
     /// strip, the new text fades in. Stops at the row's ends.
     private func page(_ delta: Int) {
-        guard let context, let i = currentIndex, context.items.indices.contains(i + delta) else { return }
+        guard !scrolled, let context, let i = currentIndex, context.items.indices.contains(i + delta) else { return }
         let next = context.items[i + delta]
         withAnimation(.easeOut(duration: 0.2)) { revealed = false }
         returnState.set(rowID: context.rowID, itemID: next.id)
-        artIndex = 0
         DispatchQueue.main.async {
             withAnimation(.spring(response: 0.55, dampingFraction: 1.0)) { current = next }
         }
@@ -399,22 +449,6 @@ struct DetailPage: View {
         }
     }
 
-    /// Every ~2.5 s the next artwork, with a 0.25 s cross-fade (preloaded first). Not on the
-    /// episodes view.
-    private func cycleArtwork() async {
-        guard !expanded else { return }
-        while !Task.isCancelled {
-            try? await Task.sleep(for: .seconds(2.5))
-            guard !Task.isCancelled, let list = artworks[ratingKey], list.count > 1 else { continue }
-            let next = (artIndex + 1) % list.count
-            if let url = client.imageURL(list[next], width: 1920, height: 1080) {
-                _ = await ImageLoader.shared.image(for: url)
-            }
-            guard !Task.isCancelled else { return }
-            withAnimation(.easeInOut(duration: 0.25)) { artIndex = next }
-        }
-    }
-
     /// Metadata and artwork of the previous and next titles, so paging never shows a blank card.
     private func preloadNeighbours() async {
         guard let context, let i = currentIndex else { return }
@@ -422,7 +456,7 @@ struct DetailPage: View {
             let neighbour = context.items[j]
             let key = displayKey(neighbour)
             if metadataCache[key] == nil, let meta = try? await client.metadata(key) { metadataCache[key] = meta }
-            if let url = artURL(for: neighbour, isCurrent: false) { _ = await ImageLoader.shared.image(for: url) }
+            if let url = artURL(for: neighbour) { _ = await ImageLoader.shared.image(for: url) }
             await loadLogo(key)
         }
     }
@@ -465,38 +499,49 @@ struct DetailPage: View {
             ?? episodes.first
     }
 
-    private func episodesView(_ item: PlexItem) -> some View {
+    /// The rows under the title: season labels, episodes, «ذات صلة», extras. Always in the
+    /// page (the first row peeks at the top state); the whole block scrolls up to the episodes,
+    /// and rows further down scroll inside it.
+    private func lowerContent(_ item: PlexItem) -> some View {
         VStack(spacing: 0) {
-            // Up from the first row lands here and returns to the card.
+            // Up from the seasons lands here and scrolls back to the top.
             Color.white.opacity(0.001)
                 .frame(width: Self.screen.width, height: 8)
-                .focusable(expanded && episodesReady)
+                .focusable(scrolled && episodesReady)
                 .focused($heroFocus, equals: .backToTop)
 
-            LogoView(image: logos[item.ratingKey], title: item.title,
-                     maxSize: CGSize(width: 200, height: 90), fontSize: 40)
-                .frame(height: 90)
-                .padding(.top, 40)
-
-            ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 34) {
-                    if item.isShow {
-                        if !seasons.isEmpty { seasonLabels }
-                        episodesRow(item)
+            ScrollViewReader { proxy in
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: Self.rowSpacing) {
+                        if item.isShow {
+                            // Hidden (and not focusable) at the top state: only the episodes peek.
+                            Group {
+                                if seasons.isEmpty { Color.clear } else { seasonLabels }
+                            }
+                            .frame(height: Self.labelsHeight)
+                            .opacity(scrolled ? 1 : 0)
+                            .disabled(!scrolled)
+                            episodesRow(item)
+                        }
+                        if !related.isEmpty {
+                            ShelfView(shelf: Shelf(id: "related-\(item.ratingKey)", title: "ذات صلة",
+                                                   kind: .poster, items: related),
+                                      client: client)
+                        }
+                        if !item.isShow && !extras.isEmpty { extrasRow }
                     }
-                    if !related.isEmpty {
-                        ShelfView(shelf: Shelf(id: "related-\(item.ratingKey)", title: "ذات صلة",
-                                               kind: .poster, items: related),
-                                  client: client)
-                    }
-                    if !item.isShow && !extras.isEmpty { extrasRow }
+                    .padding(.bottom, 120)
+                    .id(Self.lowerTopID)
                 }
-                .padding(.top, 30)
-                .padding(.bottom, 120)
+                .scrollClipDisabled()
+                .onChange(of: scrolled) { _, value in
+                    // Back at the top: the episodes row peeks again, whatever row was reached.
+                    if !value { withAnimation(Self.scrollCurve(0.75)) { proxy.scrollTo(Self.lowerTopID, anchor: .top) } }
+                }
             }
-            .scrollClipDisabled()
         }
-        .frame(width: Self.screen.width, height: Self.screen.height, alignment: .top)
+        .frame(width: Self.screen.width,
+               height: Self.screen.height - (Self.episodesTop - Self.leadIn), alignment: .top)
     }
 
     /// «الموسم ١  الموسم ٢»: grey labels, the current / focused one white.
@@ -597,7 +642,6 @@ struct DetailPage: View {
         // A show's details, seasons and episodes all at once (not one after another).
         async let showTask: ShowEpisodes? = isShowPage
             ? ShowEpisodes.load(client: client, showKey: key, preferred: preferred) : nil
-        async let artTask = client.artworks(key)
         guard let detailed = try? await client.metadata(key) else { return }
         guard key == ratingKey else { return } // paged away meanwhile
         metadataCache[key] = detailed
@@ -609,15 +653,10 @@ struct DetailPage: View {
             related = []
             extras = []
             playTarget = nil
-            expanded = false
+            scrolled = false
         }
         item = detailed
         Task { await loadLogo(key) }
-
-        // 2–3 backgrounds to cycle: the title's own first, then the alternatives.
-        var arts = await artTask
-        if let own = detailed.backdropPath { arts.removeAll { $0 == own }; arts.insert(own, at: 0) }
-        artworks[key] = Array(arts.prefix(3))
 
         if detailed.isShow {
             guard let show = await showTask, key == self.ratingKey else { return }
@@ -770,41 +809,38 @@ struct DetailPage: View {
 
 // MARK: - Card artwork
 
-/// One card's artwork: sharp with a dark gradient at the bottom-right (text side) on the card;
-/// a heavily blurred colour wash of it on the full-screen episodes view.
+/// One card's artwork: sharp with a dark gradient at the bottom-right (text side); scrolled
+/// to the episodes, the same image progressively blurred and darkened (animated with the scroll).
+/// Stable identity: the image views are never re-created, so the backdrop never reloads or
+/// flashes dark; a new URL (another title) swaps in place once loaded.
 private struct DetailCardArt: View {
     let url: URL?
     /// Low-res backdrop, blurred, under the full one (shown at once when cached).
     let lowURL: URL?
-    let isCurrent: Bool
-    let expanded: Bool
+    let scrolled: Bool
     let dimmed: Bool
 
     var body: some View {
         ZStack {
             Color(white: 0.1)
             RemoteImage(url: lowURL)
-                .blur(radius: expanded ? 70 : 12, opaque: true)
+                .blur(radius: 12, opaque: true)
             RemoteImage(url: url)
-                .id(url)
-                .transition(.opacity)
-                .blur(radius: expanded ? 70 : 0, opaque: true)
-                .saturation(expanded ? 1.3 : 1)
-            Color.black.opacity(expanded ? 0.45 : (dimmed ? 0.35 : 0))
-            if !expanded {
-                // Bottom-right (physical): under the text.
-                LinearGradient(stops: [
-                    .init(color: .black.opacity(0.75), location: 0),
-                    .init(color: .black.opacity(0.35), location: 0.4),
-                    .init(color: .clear, location: 0.7),
-                ], startPoint: .bottomTrailing, endPoint: .topLeading)
-                LinearGradient(stops: [
-                    .init(color: .clear, location: 0.45),
-                    .init(color: .black.opacity(0.55), location: 1),
-                ], startPoint: .top, endPoint: .bottom)
-            }
+            // Bottom-right (physical): under the text; gone once scrolled.
+            LinearGradient(stops: [
+                .init(color: .black.opacity(0.75), location: 0),
+                .init(color: .black.opacity(0.35), location: 0.4),
+                .init(color: .clear, location: 0.7),
+            ], startPoint: .bottomTrailing, endPoint: .topLeading)
+            .opacity(scrolled ? 0 : 1)
+            LinearGradient(stops: [
+                .init(color: .clear, location: 0.45),
+                .init(color: .black.opacity(0.55), location: 1),
+            ], startPoint: .top, endPoint: .bottom)
+            .opacity(scrolled ? 0 : 1)
         }
-        .animation(.easeInOut(duration: 0.25), value: url)
+        .blur(radius: scrolled ? 60 : 0, opaque: true)
+        .overlay(Color.black.opacity(scrolled ? 0.5 : (dimmed ? 0.35 : 0)))
     }
 }
 

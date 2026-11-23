@@ -25,6 +25,8 @@ struct HeroBanner: View {
     static let artHeight: CGFloat = 1080
 
     @Environment(ProfileStore.self) private var store
+    /// Pages pushed over the banner (details…): auto-advance stops while any is open.
+    @Environment(ShellState.self) private var shell: ShellState?
     @State private var step = 1
     @State private var generation = 0
     @State private var textVisible = true
@@ -81,7 +83,7 @@ struct HeroBanner: View {
         }
         .onChange(of: items.map(\.id)) { _, ids in if index >= ids.count { index = 0 } }
         .task(id: current.id) { await prepare() }
-        .task(id: "\(index)-\(interactions)") { await autoAdvance() }
+        .task(id: "\(index)-\(interactions)-\(shell?.pushedPages ?? 0)") { await autoAdvance() }
     }
 
     // MARK: Layers
@@ -379,8 +381,11 @@ struct HeroBanner: View {
     }
 
     private func autoAdvance() async {
+        // Never while a page is pushed over Home (it would re-render under the details page).
+        guard (shell?.pushedPages ?? 0) == 0 else { return }
         try? await Task.sleep(for: .seconds(8))
-        guard !Task.isCancelled, items.count > 1, !PlaybackManager.shared.isPlaying else { return }
+        guard !Task.isCancelled, items.count > 1, !PlaybackManager.shared.isPlaying,
+              (shell?.pushedPages ?? 0) == 0 else { return }
         go(+1)
     }
 }
