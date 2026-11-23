@@ -146,6 +146,9 @@ final class ProfileStore {
 
     func update(_ profile: UserProfile) {
         upsertProfile(profile)
+        // Settings edits (e.g. hidden libraries) are saved right away, not after the debounce.
+        saveToDisk()
+        scheduleSync(after: 0)
     }
 
     func delete(_ profile: UserProfile) {
@@ -520,10 +523,22 @@ final class ProfileStore {
     private func apply(_ changes: CloudChanges) {
         guard !changes.records.isEmpty || !changes.deletedRecordNames.isEmpty else { return }
         var touchedActive = false
+        /// When this device last changed the record (saved with it, so it survives a purged cache).
+        func localModified(_ name: String) -> Date? {
+            if let state = states[name] { return state.modifiedAt }
+            if let entry = list[name] { return entry.modifiedAt }
+            return profiles.first { $0.recordName == name }?.modifiedAt
+        }
         func localIsNewer(_ name: String, than remote: Date) -> Bool {
             if pendingDeletes.contains(name) { return true }
-            guard let pending = dirty[name] else { return false }
-            return pending > remote
+            if let pending = dirty[name], pending > remote { return true }
+            // Newest change wins even when the pending upload was lost (e.g. the system purged
+            // the cache before it went out): the older cloud copy never replaces it.
+            // (1 s margin: iCloud stores dates to the millisecond, so our own upload reads back a
+            // hair older and must not count as a newer local change.)
+            guard let local = localModified(name), local.timeIntervalSince(remote) > 1 else { return false }
+            dirty[name] = local
+            return true
         }
 
         for record in changes.records {
