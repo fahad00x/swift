@@ -41,8 +41,9 @@ struct ArtworkStatusOverlay: View {
     static let orange = Color(red: 1.0, green: 0.58, blue: 0.0)
 
     var body: some View {
-        let unwatched = store.isUnwatched(item)
         let progress = store.progress(of: item)
+        // Started-but-unfinished items show only the progress bar, never the triangle.
+        let unwatched = progress == nil && store.isUnwatched(item)
         GeometryReader { geo in
             ZStack(alignment: .topTrailing) {
                 Color.clear

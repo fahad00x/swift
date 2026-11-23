@@ -154,7 +154,7 @@ final class MPVPlayerViewController: UIViewController {
         case .upArrow:
             session.showControls()
         case .menu:
-            if session.controlsVisible && !session.isPaused { session.hideControls() } else { close() }
+            close()
         default:
             break
         }

@@ -19,6 +19,7 @@ struct DetailPage: View {
     @Environment(BrowseReturnState.self) private var returnState
     @Environment(ProfileStore.self) private var store
     @Environment(\.contentFilter) private var filter
+    @Environment(\.dismiss) private var dismiss
     @Namespace private var logoNamespace
 
     /// The row item currently shown (movie, show, season or episode).
@@ -189,10 +190,15 @@ struct DetailPage: View {
         .defaultFocus($heroFocus, .play)
     }
 
-    /// In state 2, Menu/Back first returns to the top; in state 1 it leaves the page.
-    private var exitAction: (() -> Void)? {
-        guard expanded else { return nil }
-        return { heroFocus = .play }
+    /// Menu/Back goes one step back: from seasons/episodes (state 2) to the top of the page,
+    /// from the top (state 1) back to the screen the page was opened from.
+    private func exitAction() {
+        if expanded {
+            setExpanded(false)
+            heroFocus = .play
+        } else {
+            dismiss()
+        }
     }
 
     private func setExpanded(_ value: Bool) {
