@@ -146,6 +146,10 @@ struct DetailPage: View {
                 lowerContent(item)
                     .offset(y: (scrolled ? Self.episodesTop : Self.peekTop) - Self.leadIn)
                     .opacity(revealed ? 1 : 0)
+                    // Focusable only once scrolled (Down from the buttons scrolls first): at the
+                    // top the peeking row is display-only, so Down from the card lands on Play and
+                    // scrolling back up hands focus back to the buttons.
+                    .disabled(!scrolled)
 
                 // The logo as a small title at the top once scrolled.
                 LogoView(image: logos[item.ratingKey], title: item.title,
@@ -211,8 +215,11 @@ struct DetailPage: View {
     /// Back goes one step back: from the episodes to the top, from the top to the poster.
     private func exitAction() {
         if scrolled {
+            lowerFocus = nil
+            seasonFocus = nil
             setScrolled(false)
-            heroFocus = .play
+            // Once the buttons are visible again (they can't take focus while invisible).
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { heroFocus = .play }
         } else {
             dismiss()
         }
@@ -242,8 +249,9 @@ struct DetailPage: View {
     /// Invisible focus target over the top of the card: focus here means browsing between
     /// titles (card state); Left / Right page through the row; Down goes to the buttons.
     private var browseTarget: some View {
+        // Above the button row (reading side, physical right), so Down lands on Play.
         Color.white.opacity(0.001)
-            .frame(width: Self.cardWidth, height: 420)
+            .frame(width: Self.browseWidth, height: 420)
             .focusable(!scrolled)
             .focused($heroFocus, equals: .browse)
             .onMoveCommand { direction in
@@ -251,11 +259,19 @@ struct DetailPage: View {
                 switch direction {
                 case .left: page(+1)
                 case .right: page(-1)
+                case .down: heroFocus = .play
                 default: break
                 }
             }
-            .offset(y: Self.cardTop + 80)
+            // Physical right edge, over the buttons (explicit layout: an x offset flips in RTL).
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.trailing, Self.textInset)
+            .padding(.top, Self.cardTop + 80)
+            .environment(\.layoutDirection, .leftToRight)
     }
+
+    /// Width of the browsing focus target: about the button row's.
+    private static let browseWidth: CGFloat = 560
 
     /// The current card and its neighbours as one strip (physical coordinates: in Arabic the
     /// next title sits on the left). Off the browsing state the current card fills the screen.
@@ -335,7 +351,8 @@ struct DetailPage: View {
                 // Down from the buttons scrolls to the episodes.
                 Color.white.opacity(0.001)
                     .frame(width: 900, height: 8)
-                    .focusable(revealed && !scrolled)
+                    // Only from the buttons (from browsing, Down goes to Play).
+                    .focusable(revealed && !scrolled && !browsing)
                     .focused($heroFocus, equals: .down)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -838,9 +855,13 @@ private struct DetailCardArt: View {
                 .init(color: .black.opacity(0.55), location: 1),
             ], startPoint: .top, endPoint: .bottom)
             .opacity(scrolled ? 0 : 1)
+            // Scrolled: a pre-blurred copy of the same backdrop fades in over the sharp one.
+            // Only its opacity animates (an animated blur radius drops frames to black).
+            RemoteImage(url: lowURL)
+                .blur(radius: 40, opaque: true)
+                .opacity(scrolled ? 1 : 0)
+            Color.black.opacity(scrolled ? 0.45 : (dimmed ? 0.35 : 0))
         }
-        .blur(radius: scrolled ? 60 : 0, opaque: true)
-        .overlay(Color.black.opacity(scrolled ? 0.5 : (dimmed ? 0.35 : 0)))
     }
 }
 
