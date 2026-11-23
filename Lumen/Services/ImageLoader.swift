@@ -57,6 +57,25 @@ actor ImageLoader {
         return image
     }
 
+    /// Downloads artwork to the disk cache only (no decoding), a few at a time; skips what's there.
+    func prefetch(_ urls: [URL], concurrency: Int = 6) async {
+        let session = self.session
+        let pending = urls.map { ($0, diskFile(for: $0)) }
+            .filter { !FileManager.default.fileExists(atPath: $0.1.path) }
+        guard !pending.isEmpty else { return }
+        await withTaskGroup(of: Void.self) { group in
+            for (i, entry) in pending.enumerated() {
+                if i >= concurrency { _ = await group.next() }
+                let (url, file) = entry
+                group.addTask(priority: .background) {
+                    guard let (data, response) = try? await session.data(from: url),
+                          (response as? HTTPURLResponse)?.statusCode ?? 200 < 400, !data.isEmpty else { return }
+                    try? data.write(to: file, options: .atomic)
+                }
+            }
+        }
+    }
+
     private func diskFile(for url: URL) -> URL {
         var key = url.path
         if var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {

@@ -30,7 +30,7 @@ enum UserFeed {
         var found: [(Date, PlexItem)] = []
         await withTaskGroup(of: (Date, PlexItem?).self) { group in
             for state in inProgress {
-                group.addTask { (state.lastViewedAt, try? await client.metadata(state.ratingKey)) }
+                group.addTask { (state.lastViewedAt, await client.item(state.ratingKey)) }
             }
             for state in following {
                 guard let show = state.showKey else { continue }
@@ -49,7 +49,7 @@ enum UserFeed {
         var items: [Int: PlexItem] = [:]
         await withTaskGroup(of: (Int, PlexItem?).self) { group in
             for (i, entry) in entries.enumerated() {
-                group.addTask { (i, try? await client.metadata(entry.ratingKey)) }
+                group.addTask { (i, await client.item(entry.ratingKey)) }
             }
             for await (i, item) in group { if let item { items[i] = item } }
         }

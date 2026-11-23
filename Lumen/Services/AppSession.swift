@@ -49,6 +49,7 @@ final class AppSession {
             sections = cached.sections
             _ = await profiles.prepare(sectionKeys: cached.sections.map(\.key))
             phase = .ready
+            if let client { LibrarySync.shared.start(client: client) }
             Task { await revalidate() }
             return
         }
@@ -89,6 +90,8 @@ final class AppSession {
             sections = fresh
         }
         saveCache()
+        // Picks up what changed on the server (only changed libraries / items are fetched).
+        LibrarySync.shared.start(client: active, force: true)
     }
 
     /// «تحديث المكتبة» in Settings: everything from the server again.
@@ -191,6 +194,7 @@ final class AppSession {
                 Task { await ProfileMigration.run(client: client, sections: sections, store: self.profiles, into: owner.id) }
             }
             phase = .ready
+            LibrarySync.shared.start(client: client, force: true)
         } catch where Self.isCancellation(error) {
             Task { await self.connect(to: server) }
         } catch {

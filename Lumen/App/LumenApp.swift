@@ -18,7 +18,9 @@ struct LumenApp: App {
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .background, .inactive: session.profiles.flush()
-            case .active: session.profiles.scheduleSync(after: 0)
+            case .active:
+                session.profiles.scheduleSync(after: 0)
+                if let client = session.client { LibrarySync.shared.start(client: client) }
             @unknown default: break
             }
         }

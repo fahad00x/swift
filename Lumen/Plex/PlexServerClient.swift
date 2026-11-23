@@ -133,12 +133,43 @@ final class PlexServerClient: Sendable {
         try await container("/library/sections").directories.filter(\.isVideoLibrary)
     }
 
+    // MARK: On-device library (read first; the server only when it isn't synced yet)
+
+    private var local: LocalLibrary { LocalLibrary.shared }
+
+    private func applied(_ items: [PlexItem]) -> [PlexItem] {
+        let state = userState
+        return items.map { $0.applying(state) }
+    }
+
+    /// Poster at the size every card uses (the background sync prefetches the same URLs).
+    func posterURL(_ item: PlexItem) -> URL? {
+        imageURL(item.posterPath, width: ArtworkSize.posterWidth, height: ArtworkSize.posterHeight)
+    }
+
+    /// The item as stored on the device (lightweight, instant), else its full metadata.
+    func item(_ ratingKey: String) async -> PlexItem? {
+        if let stored = await local.item(server: machineIdentifier, key: ratingKey) { return stored.applying(userState) }
+        return try? await metadata(ratingKey)
+    }
+
+    /// Newest episode air date of a show ("yyyy-MM-dd"), from the device.
+    func latestAired(show ratingKey: String) async -> String? {
+        await local.latestAired(server: machineIdentifier, show: ratingKey)
+    }
+
     func recentlyAdded(section: PlexDirectory, limit: Int = 24) async throws -> [PlexItem] {
-        try await container("/library/sections/\(section.key)/recentlyAdded",
+        if let stored = await local.recentlyAdded(server: machineIdentifier, section: section.key, limit: limit) {
+            return applied(stored)
+        }
+        return try await container("/library/sections/\(section.key)/recentlyAdded",
                             [("X-Plex-Container-Start", "0"), ("X-Plex-Container-Size", "\(limit)")]).metadata
     }
 
     func items(section: PlexDirectory, sort: LibrarySort, start: Int, size: Int) async throws -> (items: [PlexItem], total: Int) {
+        if let stored = await local.items(server: machineIdentifier, section: section.key, sort: sort, start: start, size: size) {
+            return (applied(stored.items), stored.total)
+        }
         var q = sort.query
         q += [("X-Plex-Container-Start", "\(start)"), ("X-Plex-Container-Size", "\(size)")]
         let c = try await container("/library/sections/\(section.key)/all", q)
@@ -146,7 +177,17 @@ final class PlexServerClient: Sendable {
     }
 
     func metadata(_ ratingKey: String) async throws -> PlexItem {
-        let c = try await container("/library/metadata/\(ratingKey)", [("includeMarkers", "1"), ("includeChapters", "1"), ("includeGuids", "1")])
+        let c: MediaContainer
+        do {
+            c = try await container("/library/metadata/\(ratingKey)", [("includeMarkers", "1"), ("includeChapters", "1"), ("includeGuids", "1")])
+        } catch {
+            // Not saved yet: the synced copy shows the page instantly; the server fills in the rest.
+            if PlexResponseCache.policy == .cacheOnly,
+               let stored = await local.item(server: machineIdentifier, key: ratingKey) {
+                return stored.applying(userState)
+            }
+            throw error
+        }
         guard let item = c.metadata.first else { throw PlexError.invalidResponse }
         await metadataCache.store(item)
         return item
@@ -155,12 +196,14 @@ final class PlexServerClient: Sendable {
     /// Metadata for content filtering (genres, country, labels, rating, library), cached for the session.
     func cachedMetadata(_ ratingKey: String) async -> PlexItem? {
         if let cached = await metadataCache.item(ratingKey) { return cached }
+        if let stored = await local.item(server: machineIdentifier, key: ratingKey) { return stored.applying(userState) }
         return try? await metadata(ratingKey)
     }
 
     /// Every episode of a show, in order.
     func allLeaves(_ showKey: String) async -> [PlexItem] {
-        ((try? await container("/library/metadata/\(showKey)/allLeaves").metadata) ?? []).filter(\.isEpisode)
+        if let stored = await local.leaves(server: machineIdentifier, show: showKey) { return applied(stored) }
+        return ((try? await container("/library/metadata/\(showKey)/allLeaves").metadata) ?? []).filter(\.isEpisode)
     }
 
     /// First episode after `episodeKey` that the active profile hasn't watched.
@@ -176,14 +219,15 @@ final class PlexServerClient: Sendable {
     }
 
     func children(_ ratingKey: String) async throws -> [PlexItem] {
-        try await container("/library/metadata/\(ratingKey)/children").metadata
+        if let stored = await local.children(server: machineIdentifier, of: ratingKey) { return applied(stored) }
+        return try await container("/library/metadata/\(ratingKey)/children").metadata
     }
 
     /// Next episode in the show after `episode` (crosses season boundaries).
     func nextEpisode(after episode: PlexItem) async -> PlexItem? {
-        guard episode.isEpisode, let showKey = episode.grandparentRatingKey,
-              let all = try? await container("/library/metadata/\(showKey)/allLeaves").metadata,
-              let index = all.firstIndex(where: { $0.ratingKey == episode.ratingKey }),
+        guard episode.isEpisode, let showKey = episode.grandparentRatingKey else { return nil }
+        let all = await allLeaves(showKey)
+        guard let index = all.firstIndex(where: { $0.ratingKey == episode.ratingKey }),
               index + 1 < all.count
         else { return nil }
         return all[index + 1]
@@ -206,8 +250,8 @@ final class PlexServerClient: Sendable {
 
     /// Episode to start a show with: in progress, else first unwatched, else the first one.
     func episodeToPlay(showKey: String) async -> PlexItem? {
-        guard let all = try? await container("/library/metadata/\(showKey)/allLeaves").metadata.filter(\.isEpisode),
-              !all.isEmpty else { return nil }
+        let all = await allLeaves(showKey)
+        guard !all.isEmpty else { return nil }
         return all.first { $0.progress != nil && !$0.isWatched } ?? all.first { !$0.isWatched } ?? all.first
     }
 
@@ -252,6 +296,9 @@ final class PlexServerClient: Sendable {
     }
 
     func search(_ query: String) async throws -> [PlexItem] {
+        if let stored = await local.search(server: machineIdentifier, query: query, sections: nil) {
+            return applied(stored)
+        }
         let hubs = try await container("/hubs/search", [("query", query), ("limit", "30")]).hubs
         return hubs
             .filter { ["movie", "show", "episode"].contains($0.type) }
@@ -323,6 +370,17 @@ final class PlexServerClient: Sendable {
     func stopTranscode(sessionID: String) async {
         await fire("/video/:/transcode/universal/stop", [("session", sessionID)])
     }
+}
+
+/// Pixel size of the poster artwork requested from Plex's photo transcoder.
+enum ArtworkSize {
+    #if os(tvOS)
+    static let posterWidth = 448
+    static let posterHeight = 672
+    #else
+    static let posterWidth = 360
+    static let posterHeight = 540
+    #endif
 }
 
 /// Session cache of full metadata (used by content filters, e.g. a show's genres for its episodes).

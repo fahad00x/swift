@@ -409,6 +409,8 @@ struct PlexItem: Codable, Identifiable, Hashable {
     /// e.g. "plex://movie/5d776…" (used for the Plex watchlist).
     let guid: String?
     let addedAt: Int?
+    /// When Plex last changed the item (drives the incremental library sync).
+    let updatedAt: Int?
     let lastViewedAt: Int?
     /// For extras: trailer, behindTheScenes, featurette…
     let subtype: String?
@@ -429,7 +431,7 @@ struct PlexItem: Codable, Identifiable, Hashable {
         case ratingKey, key, type, title, summary, tagline, year, thumb, art, parentThumb, grandparentThumb,
              grandparentArt, duration, viewOffset, viewCount, leafCount, viewedLeafCount, childCount, index,
              parentIndex, parentTitle, grandparentTitle, parentRatingKey, grandparentRatingKey, contentRating,
-             audienceRating, rating, studio, originallyAvailableAt, guid, addedAt, subtype, lastViewedAt, librarySectionID
+             audienceRating, rating, studio, originallyAvailableAt, guid, addedAt, updatedAt, subtype, lastViewedAt, librarySectionID
         case media = "Media", genres = "Genre", directors = "Director", roles = "Role", markers = "Marker", images = "Image"
         case countries = "Country", labels = "Label", collections = "Collection", chapters = "Chapter", guids = "Guid"
     }
@@ -476,6 +478,7 @@ struct PlexItem: Codable, Identifiable, Hashable {
         images = c.lossyArray(PlexImage.self, forKey: .images) ?? []
         guid = c.lenientString(forKey: .guid)
         addedAt = c.lenientInt(forKey: .addedAt)
+        updatedAt = c.lenientInt(forKey: .updatedAt)
         subtype = c.lenientString(forKey: .subtype)
         lastViewedAt = c.lenientInt(forKey: .lastViewedAt)
         librarySectionID = c.lenientString(forKey: .librarySectionID)
