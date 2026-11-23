@@ -11,8 +11,13 @@ on:
       platforms:
         description: "Which app to upload"
         type: choice
-        options: [both, tvOS, iOS]
-        default: both
+        options: [tvOS, iOS, both]
+        default: tvOS
+      runner:
+        description: "Where to run: default = repository variable RUNNER ('self-hosted' = the Mac, otherwise GitHub's macos-15), or pick one."
+        type: choice
+        options: [default, self-hosted, github]
+        default: default
       signed_archive:
         description: "Sign the archive with automatic signing (App Store Connect API key). Off = ad-hoc archive, signed only at export."
         type: boolean
@@ -31,12 +36,15 @@ concurrency:
 jobs:
   testflight:
     name: TestFlight (${{ matrix.platform }})
-    runs-on: macos-15
+    # Self-hosted Mac (labels: self-hosted, macOS, lumen-mac) or GitHub's macos-15.
+    # Manual runs use the 'runner' input; other runs use the repository variable RUNNER.
+    runs-on: ${{ ((github.event_name == 'workflow_dispatch' && inputs.runner != 'default') && inputs.runner || vars.RUNNER) == 'self-hosted' && fromJSON('["self-hosted","macOS","lumen-mac"]') || 'macos-15' }}
     timeout-minutes: 100
     strategy:
       fail-fast: false
       matrix:
-        platform: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.platforms == 'tvOS' && '["tvOS"]' || (github.event_name == 'workflow_dispatch' && inputs.platforms == 'iOS' && '["iOS"]' || '["tvOS","iOS"]')) }}
+        # Apple TV only unless iOS/both is picked by hand (scheduled runs upload tvOS only).
+        platform: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.platforms == 'both' && '["tvOS","iOS"]' || (github.event_name == 'workflow_dispatch' && inputs.platforms == 'iOS' && '["iOS"]' || '["tvOS"]')) }}
     env:
       SCHEME: ${{ matrix.platform == 'iOS' && 'LumenMobile' || 'Lumen' }}
       DESTINATION: generic/platform=${{ matrix.platform }}
@@ -103,7 +111,9 @@ jobs:
           xcodebuild -version
 
       - name: Install XcodeGen
-        run: brew install xcodegen
+        run: |
+          # Self-hosted Mac: already installed (Homebrew isn't supported on Intel Macs).
+          if command -v xcodegen >/dev/null; then xcodegen --version; else brew install xcodegen; fi
 
       - name: Generate Xcode project
         run: xcodegen generate

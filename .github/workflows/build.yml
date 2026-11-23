@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: "Where to run: default = repository variable RUNNER ('self-hosted' = the Mac, otherwise GitHub's macos-15), or pick one."
+        type: choice
+        options: [default, self-hosted, github]
+        default: default
 
 concurrency:
   group: build-${{ github.ref }}
@@ -12,7 +18,8 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-15
+    # Self-hosted Mac (labels: self-hosted, macOS, lumen-mac) or GitHub's macos-15.
+    runs-on: ${{ ((github.event_name == 'workflow_dispatch' && inputs.runner != 'default') && inputs.runner || vars.RUNNER) == 'self-hosted' && fromJSON('["self-hosted","macOS","lumen-mac"]') || 'macos-15' }}
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
@@ -26,7 +33,9 @@ jobs:
           ls -d /Applications/Xcode*.app
 
       - name: Install XcodeGen
-        run: brew install xcodegen
+        run: |
+          # Self-hosted Mac: already installed (Homebrew isn't supported on Intel Macs).
+          if command -v xcodegen >/dev/null; then xcodegen --version; else brew install xcodegen; fi
 
       - name: Generate Xcode project
         run: xcodegen generate
