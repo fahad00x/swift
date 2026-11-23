@@ -517,3 +517,16 @@ extension View {
             .buttonBorderShape(.circle)
     }
 }
+
+extension View {
+    /// Native tvOS highlight (lift, shadow, moving shine, parallax) in `shape`. The shaped
+    /// hover-effect area needs tvOS 18; on 17 the highlight uses the view's bounds.
+    @ViewBuilder
+    func nativeHighlight<S: Shape>(_ shape: S) -> some View {
+        if #available(tvOS 18.0, iOS 18.0, *) {
+            self.contentShape(.hoverEffect, shape).hoverEffect(.highlight)
+        } else {
+            self.hoverEffect(.highlight)
+        }
+    }
+}

@@ -907,8 +907,7 @@ private struct EpisodeCard: View {
             .artworkStatus(episode, barHeight: 5)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             // Native tvOS highlight on the still: lift, shadow, moving shine, parallax.
-            .contentShape(.hoverEffect, RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .hoverEffect(.highlight)
+            .nativeHighlight(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .zIndex(1)
 
             VStack(alignment: .leading, spacing: 6) {

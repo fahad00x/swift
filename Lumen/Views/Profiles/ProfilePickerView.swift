@@ -227,7 +227,6 @@ private extension View {
     func nativeCircleFocus() -> some View {
         self
             .clipShape(Circle())
-            .contentShape(.hoverEffect, Circle())
-            .hoverEffect(.highlight)
+            .nativeHighlight(Circle())
     }
 }
