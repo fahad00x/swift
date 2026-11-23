@@ -217,7 +217,7 @@ struct ProfileEditorView: View {
                         GenresPage(client: client, sections: sections, genres: $draft.genres)
                     } label: {
                         LabeledContent("الأنواع المفضّلة",
-                                       value: draft.genres.isEmpty ? "الكل" : draft.genres.prefix(3).map(ArabicFormat.genre).joined(separator: "، "))
+                                       value: draft.genres.isEmpty ? "الكل" : ArabicFormat.list(ArabicFormat.genres(draft.genres, limit: 3)))
                     }
                     NavigationLink {
                         ScopeOrderPage(sections: sections, scopes: $draft.scopes)

@@ -50,8 +50,8 @@ struct PosterCard: View {
 
     private var subtitle: String? {
         if item.isEpisode { return item.episodeCode }
-        let genres = item.genres.prefix(2).map { ArabicFormat.genre($0.tag) }
-        if !genres.isEmpty { return genres.joined(separator: "، ") }
+        let genres = ArabicFormat.genres(item.genres.map(\.tag), limit: 2)
+        if !genres.isEmpty { return ArabicFormat.list(genres) }
         return item.year.map { ArabicFormat.digits($0) }
     }
 }
@@ -95,10 +95,8 @@ struct LandscapeCard: View {
         let remaining = item.duration.map { max(0, $0 - (item.viewOffset ?? 0)) }
         let time = remaining.map(ArabicFormat.duration(ms:))
         if item.isEpisode {
-            var code: [String] = []
-            if let s = item.parentIndex { code.append("م\(ArabicFormat.digits(s))") }
-            if let e = item.index { code.append("ح\(ArabicFormat.digits(e))") }
-            return ([code.joined(separator: "، ")] + [time].compactMap { $0 }).filter { !$0.isEmpty }.joined(separator: " · ")
+            let code = ArabicFormat.shortEpisodeCode(season: item.parentIndex, episode: item.index)
+            return ArabicFormat.joined([code, time].compactMap { $0 })
         }
         guard let time else { return "" }
         return item.progress != nil ? "باقي \(time)" : time

@@ -44,7 +44,7 @@ struct DetailView: View {
                             .padding(.horizontal, 16)
                     }
                     if !item.roles.isEmpty {
-                        Text("بطولة: " + item.roles.prefix(4).map(\.tag).joined(separator: "، "))
+                        Text("بطولة: " + ArabicFormat.list(item.roles.prefix(4).map(\.tag)))
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 16)
@@ -292,15 +292,15 @@ struct DetailView: View {
         if let hdr = target.dynamicRangeBadge { video.append(hdr) }
         var file: [String] = []
         if let container = (part?.container ?? media?.container)?.uppercased() { file.append(container) }
-        if let size = part?.size { file.append(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)) }
-        if let bitrate = media?.bitrate { file.append(String(format: "%.1f Mbps", Double(bitrate) / 1000)) }
+        if let size = part?.size { file.append(ArabicFormat.digits(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))) }
+        if let bitrate = media?.bitrate { file.append(ArabicFormat.digits(String(format: "%.1f", Double(bitrate) / 1000)) + " Mbps") }
 
         return VStack(alignment: .leading, spacing: 8) {
             Text("معلومات الملف").font(.title3.weight(.bold))
-            infoLine("الفيديو", video.joined(separator: " · "))
-            infoLine("الصوت", target.audioStreams.prefix(4).map(\.label).joined(separator: "، "))
-            infoLine("الترجمات", target.subtitleStreams.prefix(6).map(\.label).joined(separator: "، "))
-            infoLine("الملف", file.joined(separator: " · "))
+            infoLine("الفيديو", ArabicFormat.joined(video))
+            infoLine("الصوت", ArabicFormat.list(target.audioStreams.prefix(4).map(\.label)))
+            infoLine("الترجمات", ArabicFormat.list(target.subtitleStreams.prefix(6).map(\.label)))
+            infoLine("الملف", ArabicFormat.joined(file))
             if target.isEpisode {
                 infoLine("التخطي", target.introSkipSourceText.replacingOccurrences(of: "تخطي المقدمة: ", with: "المقدمة: "))
             }
@@ -377,8 +377,8 @@ struct DetailView: View {
         guard let item else { return "تشغيل" }
         let inProgress = playTarget?.progress != nil && playTarget?.isWatched == false
         guard item.isShow, let episode = playTarget else { return inProgress ? "استئناف" : "تشغيل" }
-        let e = "ح\(ArabicFormat.digits(episode.index ?? 1))"
-        let code = (episode.parentIndex ?? 1) > 1 ? "م\(ArabicFormat.digits(episode.parentIndex ?? 1))، \(e)" : e
+        let season = episode.parentIndex.flatMap { $0 > 1 ? $0 : nil }
+        let code = ArabicFormat.shortEpisodeCode(season: season, episode: episode.index ?? 1) ?? ""
         return "\(inProgress ? "استئناف" : "تشغيل") \(code)"
     }
 
@@ -389,15 +389,15 @@ struct DetailView: View {
 
     private func infoLine(_ item: PlexItem) -> String {
         var parts: [String] = [item.isShow ? "مسلسل" : "فيلم"]
-        parts += item.genres.prefix(2).map { ArabicFormat.genre($0.tag) }
+        parts += ArabicFormat.genres(item.genres.map(\.tag), limit: 2)
         if let year = item.year { parts.append(ArabicFormat.digits(year)) }
         if item.isShow {
             if let n = item.childCount { parts.append(n == 1 ? "موسم واحد" : "\(ArabicFormat.digits(n)) مواسم") }
         } else if let duration = item.duration {
             parts.append(ArabicFormat.duration(ms: duration))
         }
-        if let rating = item.contentRating, !rating.isEmpty { parts.append(rating) }
-        return parts.joined(separator: " · ")
+        if let rating = item.normalizedContentRating { parts.append(rating) }
+        return ArabicFormat.joined(parts)
     }
 
     private var badges: [String] {
@@ -439,11 +439,13 @@ private struct EpisodeRow: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("\(ArabicFormat.digits(episode.index ?? 0)). \(episode.title)")
+                Text("\(ArabicFormat.digits(episode.index ?? 0)). \(ArabicFormat.isolated(episode.title))")
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(2)
-                if let duration = episode.duration {
-                    Text(ArabicFormat.duration(ms: duration)).font(.caption2).foregroundStyle(.secondary)
+                let details = ArabicFormat.joined([ArabicFormat.date(plex: episode.originallyAvailableAt),
+                                                   episode.duration.map(ArabicFormat.duration(ms:))].compactMap { $0 })
+                if !details.isEmpty {
+                    Text(details).font(.caption2).foregroundStyle(.secondary)
                 }
                 if let summary = episode.summary, !summary.isEmpty {
                     Text(summary).font(.caption).foregroundStyle(.secondary).lineLimit(2)

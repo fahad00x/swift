@@ -205,9 +205,9 @@ private struct HeroSlide: View {
     private var metaLine: String {
         let d = item.display
         var parts: [String] = [d.isShow ? "مسلسل" : "فيلم"]
-        parts += d.genres.prefix(2).map { ArabicFormat.genre($0.tag) }
+        parts += ArabicFormat.genres(d.genres.map(\.tag), limit: 2)
         if let year = d.year { parts.append(ArabicFormat.digits(year)) }
-        return parts.joined(separator: " · ")
+        return ArabicFormat.joined(parts)
     }
 
     private var target: PlexItem? { item.playable ?? showEpisode ?? (item.display.isShow ? nil : item.display) }

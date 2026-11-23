@@ -68,12 +68,12 @@ final class PlayerSession {
         case .online: source = "المقدمة: من قاعدة بيانات المقدمات"
         case .chapter: source = "المقدمة: من فصول الملف"
         }
-        return source + " · \u{2066}\(range)\u{2069}"
+        return source + ArabicFormat.separator + "\u{2066}\(range)\u{2069}"
     }
 
     private static func clock(_ seconds: Double) -> String {
         let s = max(0, Int(seconds.rounded()))
-        return String(format: "%d:%02d", s / 60, s % 60)
+        return ArabicFormat.digits(String(format: "%d:%02d", s / 60, s % 60))
     }
 
     private func show(notice text: String) {
@@ -112,7 +112,8 @@ final class PlayerSession {
     }
 
     var title: String { item.isEpisode ? (item.grandparentTitle ?? item.title) : item.title }
-    var subtitle: String? { item.isEpisode ? item.cardSubtitle : item.year.map(String.init) }
+    /// "الموسم ١  •  الحلقة ١ — <title>" for an episode, the year for a movie.
+    var subtitle: String? { item.isEpisode ? item.cardSubtitle : item.year.map { ArabicFormat.digits($0) } }
 
     // MARK: Start / stop
 

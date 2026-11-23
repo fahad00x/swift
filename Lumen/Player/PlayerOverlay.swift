@@ -57,14 +57,18 @@ struct PlayerOverlay: View {
                     .frame(height: 300)
                 VStack(spacing: 16) {
                     timeline
-                    HStack {
+                    HStack(spacing: 0) {
                         Text(Self.format(session.scrubPosition ?? session.position))
                         Spacer()
                         Text("اسحب للأسفل: الصوت والترجمة")
                             .foregroundStyle(.secondary)
                         Spacer()
+                        // Remaining time, then (as its own label) when the video ends.
                         Text("-" + Self.format(max(0, session.duration - (session.scrubPosition ?? session.position))))
-                        Text("· ينتهي \(endTime)").foregroundStyle(.secondary)
+                        Text(ArabicFormat.separator).foregroundStyle(.secondary)
+                        Text("ينتهي \(endTime)")
+                            .foregroundStyle(.secondary)
+                            .environment(\.layoutDirection, .rightToLeft)
                     }
                     .font(.caption.monospacedDigit())
                     .environment(\.layoutDirection, .leftToRight)
@@ -114,7 +118,7 @@ struct PlayerOverlay: View {
 
     private var endTime: String {
         let remaining = max(0, session.duration - session.position)
-        return Date().addingTimeInterval(remaining).formatted(date: .omitted, time: .shortened)
+        return ArabicFormat.time(Date().addingTimeInterval(remaining))
     }
 
     // MARK: Skip
@@ -158,10 +162,7 @@ struct PlayerOverlay: View {
     }
 
     static func format(_ seconds: Double) -> String {
-        guard seconds.isFinite else { return "0:00" }
-        let s = Int(seconds.rounded(.down))
-        let h = s / 3600, m = (s % 3600) / 60, sec = s % 60
-        return h > 0 ? String(format: "%d:%02d:%02d", h, m, sec) : String(format: "%d:%02d", m, sec)
+        ArabicFormat.clock(seconds: seconds)
     }
 }
 

@@ -62,17 +62,13 @@ struct LandscapeCard: View {
         .clipShape(RoundedRectangle(cornerRadius: CardKind.cornerRadius, style: .continuous))
     }
 
-    /// "م٣، ح١ · ٥٨د" for an episode, "باقي ٤٥د" for a movie.
+    /// "م٣  •  ح١  •  ٥٨د" for an episode, "باقي ٤٥د" for a movie.
     private var caption: String {
         let remaining = item.duration.map { max(0, $0 - (item.viewOffset ?? 0)) }
         let time = remaining.map(ArabicFormat.duration(ms:))
         if item.isEpisode {
-            var code: [String] = []
-            if let s = item.parentIndex { code.append("م\(ArabicFormat.digits(s))") }
-            if let e = item.index { code.append("ح\(ArabicFormat.digits(e))") }
-            return ([code.joined(separator: "، ")] + [time].compactMap { $0 })
-                .filter { !$0.isEmpty }
-                .joined(separator: " · ")
+            let code = ArabicFormat.shortEpisodeCode(season: item.parentIndex, episode: item.index)
+            return ArabicFormat.joined([code, time].compactMap { $0 })
         }
         guard let time else { return "" }
         return item.progress != nil ? "باقي \(time)" : time
@@ -208,10 +204,7 @@ private struct CardCaption: View {
 
     private var detail: String? {
         if item.isEpisode {
-            var code: [String] = []
-            if let s = item.parentIndex { code.append("م\(ArabicFormat.digits(s))") }
-            if let e = item.index { code.append("ح\(ArabicFormat.digits(e))") }
-            return code.isEmpty ? nil : code.joined(separator: " · ")
+            return ArabicFormat.episodeCode(season: item.parentIndex, episode: item.index)
         }
         if item.isSeason { return item.parentTitle }
         return item.year.map { ArabicFormat.digits($0) }

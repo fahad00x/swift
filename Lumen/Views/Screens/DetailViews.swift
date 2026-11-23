@@ -252,7 +252,7 @@ struct DetailPage: View {
             Spacer(minLength: 0)
 
             if !item.roles.isEmpty {
-                Text("بطولة: " + item.roles.prefix(3).map(\.tag).joined(separator: "، "))
+                Text("بطولة: " + ArabicFormat.list(item.roles.prefix(3).map(\.tag)))
                     .font(.callout)
                     .foregroundStyle(.white.opacity(0.75))
                     .lineLimit(2)
@@ -547,18 +547,18 @@ struct DetailPage: View {
         if let res = media?.resolutionBadge { video.append(res) }
         if let codec = media?.videoCodec { video.append(codec.uppercased()) }
         if let hdr = target.dynamicRangeBadge { video.append(hdr) }
-        if let fps = target.videoStream?.frameRate { video.append(String(format: "%.3g fps", fps)) }
+        if let fps = target.videoStream?.frameRate { video.append(ArabicFormat.digits(String(format: "%.3g", fps)) + " fps") }
         let audio = target.audioStreams.map(\.label)
         let subs = target.subtitleStreams.map(\.label)
         var file: [String] = []
         if let container = (part?.container ?? media?.container)?.uppercased() { file.append(container) }
-        if let size = part?.size { file.append(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)) }
-        if let bitrate = media?.bitrate { file.append(String(format: "%.1f Mbps", Double(bitrate) / 1000)) }
+        if let size = part?.size { file.append(ArabicFormat.digits(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))) }
+        if let bitrate = media?.bitrate { file.append(ArabicFormat.digits(String(format: "%.1f", Double(bitrate) / 1000)) + " Mbps") }
 
         return VStack(alignment: .leading, spacing: 0) {
             SectionTitle("معلومات الملف")
             HStack(alignment: .top, spacing: 30) {
-                InfoTile(title: "الفيديو", lines: video.isEmpty ? ["—"] : [video.joined(separator: " · ")])
+                InfoTile(title: "الفيديو", lines: video.isEmpty ? ["—"] : [ArabicFormat.joined(video)])
                 InfoTile(title: "الصوت", lines: audio.isEmpty ? ["—"] : Array(audio.prefix(5)))
                 InfoTile(title: "الترجمات", lines: subs.isEmpty ? ["لا توجد"] : Array(subs.prefix(5)))
                 InfoTile(title: "الملف", lines: (file.isEmpty ? ["—"] : file) + (target.isEpisode ? [target.introSkipSourceText] : []))
@@ -692,11 +692,10 @@ struct DetailPage: View {
         return "تشغيل \(episodeShortCode(episode))"
     }
 
-    /// "ح٥", or "م٢، ح٥" past the first season.
+    /// "ح٥", or "م٢  •  ح٥" past the first season.
     private func episodeShortCode(_ episode: PlexItem) -> String {
-        let e = "ح\(ArabicFormat.digits(episode.index ?? 1))"
-        if let s = episode.parentIndex, s > 1 { return "م\(ArabicFormat.digits(s))، \(e)" }
-        return e
+        let season = episode.parentIndex.flatMap { $0 > 1 ? $0 : nil }
+        return ArabicFormat.shortEpisodeCode(season: season, episode: episode.index ?? 1) ?? ""
     }
 
     private var eyebrow: String? {
@@ -714,8 +713,8 @@ struct DetailPage: View {
 
     private func genreLine(_ item: PlexItem) -> String {
         let kind = item.isShow ? "مسلسل" : "فيلم"
-        let genres = item.genres.prefix(3).map { ArabicFormat.genre($0.tag) }
-        return genres.isEmpty ? kind : "\(kind) · \(genres.joined(separator: "، "))"
+        let genres = ArabicFormat.genres(item.genres.map(\.tag), limit: 3)
+        return genres.isEmpty ? kind : kind + ArabicFormat.separator + ArabicFormat.list(genres)
     }
 
     private func infoLine(_ item: PlexItem) -> String {
@@ -726,8 +725,8 @@ struct DetailPage: View {
         } else if let duration = item.duration {
             parts.append(ArabicFormat.duration(ms: duration))
         }
-        if let rating = item.contentRating, !rating.isEmpty { parts.append(rating) }
-        return parts.joined(separator: " · ")
+        if let rating = item.normalizedContentRating { parts.append(rating) }
+        return ArabicFormat.joined(parts)
     }
 
     /// 4K / HD, HDR or Dolby Vision, Atmos, 5.1 / 7.1, CC — from the file that Play starts.
@@ -925,18 +924,9 @@ private struct EpisodeTile: View {
 
     private var details: String {
         var parts: [String] = []
-        if let date = episode.originallyAvailableAt.flatMap(Self.parseDate) {
-            parts.append(date.formatted(.dateTime.day().month(.abbreviated).year().locale(Locale(identifier: "ar"))))
-        }
+        if let date = ArabicFormat.date(plex: episode.originallyAvailableAt) { parts.append(date) }
         if let duration = episode.duration { parts.append(ArabicFormat.duration(ms: duration)) }
-        return parts.joined(separator: " · ")
-    }
-
-    private static func parseDate(_ s: String) -> Date? {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.dateFormat = "yyyy-MM-dd"
-        return f.date(from: String(s.prefix(10)))
+        return ArabicFormat.joined(parts)
     }
 }
 
@@ -964,7 +954,7 @@ private struct ExtraTile: View {
                 .font(.callout.weight(.semibold))
                 .lineLimit(1)
                 .padding(.top, 8)
-            Text([kind, extra.duration.map(ArabicFormat.duration(ms:))].compactMap { $0 }.joined(separator: " · "))
+            Text(ArabicFormat.joined([kind, extra.duration.map(ArabicFormat.duration(ms:))].compactMap { $0 }))
                 .font(.caption2)
                 .foregroundStyle(.white.opacity(0.6))
         }

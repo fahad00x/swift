@@ -144,7 +144,7 @@ struct HomeFeed: Codable {
         #if os(tvOS)
         // Apple TV Home: Continue Watching, then «أضيف مؤخراً» per library (all from the device).
         let tvRows = recentByScope.filter { !$0.1.isEmpty }.map { scope, items in
-            Row(id: "recent-\(scope.id)", title: "أضيف مؤخراً في \(scope.rowName)", items: items)
+            Row(id: "recent-\(scope.id)", title: "أضيف مؤخراً في \(ArabicFormat.isolated(scope.rowName))", items: items)
         }
         return HomeFeed(featured: [], continueWatching: await continueTask, continueLogos: [:],
                         myList: await listTask, rows: tvRows)
@@ -181,7 +181,7 @@ struct HomeFeed: Codable {
             rows.append(Row(id: "top", title: "الأعلى تقييماً لك", items: top, ranked: true))
         }
         rows += recentByScope.filter { !$0.1.isEmpty }.map { scope, items in
-            Row(id: "recent-\(scope.id)", title: "أضيف مؤخراً في \(scope.rowName)", items: items)
+            Row(id: "recent-\(scope.id)", title: "أضيف مؤخراً في \(ArabicFormat.isolated(scope.rowName))", items: items)
         }
         rows += Self.genreRows(sample, focus: filter.focusGenres, affinity: affinity)
 

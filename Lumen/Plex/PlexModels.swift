@@ -445,7 +445,8 @@ struct PlexItem: Codable, Identifiable, Hashable {
         key = c.lenientString(forKey: .key)
         type = c.lenientString(forKey: .type) ?? ""
         title = c.lenientString(forKey: .title) ?? ""
-        summary = c.lenientString(forKey: .summary)
+        // Without the "---" source notes some agents append (display text only).
+        summary = ArabicFormat.summary(c.lenientString(forKey: .summary))
         tagline = c.lenientString(forKey: .tagline)
         year = c.lenientInt(forKey: .year)
         thumb = c.lenientString(forKey: .thumb)
@@ -572,21 +573,23 @@ extension PlexItem {
 
     var backdropPath: String? { art ?? grandparentArt ?? thumb }
 
+    /// "الموسم ١  •  الحلقة ٧"
     var episodeCode: String? {
         guard isEpisode else { return nil }
-        let s = parentIndex.map { "S\($0)" } ?? ""
-        let e = index.map { "E\($0)" } ?? ""
-        let code = [s, e].filter { !$0.isEmpty }.joined(separator: " · ")
-        return code.isEmpty ? nil : code
+        return ArabicFormat.episodeCode(season: parentIndex, episode: index)
     }
 
     var cardTitle: String { isEpisode ? (grandparentTitle ?? title) : title }
 
+    /// "الموسم ١  •  الحلقة ٧ — <title>" for an episode, the show for a season, else the year.
     var cardSubtitle: String? {
-        if isEpisode { return [episodeCode, title].compactMap { $0 }.joined(separator: " — ") }
+        if isEpisode { return ArabicFormat.episodeLine(season: parentIndex, episode: index, title: title) }
         if isSeason { return parentTitle }
-        return year.map(String.init)
+        return year.map { ArabicFormat.digits($0) }
     }
+
+    /// Rating code without the agent's description or country prefix ("PG-13 - Teens…" → "PG-13").
+    var normalizedContentRating: String? { ArabicFormat.contentRating(contentRating) }
 
     var durationText: String? { duration.map(PlexItem.format(ms:)) }
 
@@ -596,10 +599,7 @@ extension PlexItem {
     }
 
     static func format(ms: Int) -> String {
-        let minutes = ms / 60_000
-        let h = minutes / 60, m = minutes % 60
-        if h > 0 { return m > 0 ? "\(h) س \(m) د" : "\(h) س" }
-        return "\(max(1, m)) د"
+        ArabicFormat.duration(ms: ms)
     }
 
     var primaryPart: PlexPart? { media.first?.parts.first }

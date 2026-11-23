@@ -82,7 +82,7 @@ struct ContentFilter {
         let animeCount = scopes.filter { $0.kind == .anime }.count
         if animeCount > 1 {
             for i in scopes.indices where scopes[i].kind == .anime {
-                scopes[i].title = "أنمي · \(scopes[i].section.title)"
+                scopes[i].title = "أنمي" + ArabicFormat.separator + ArabicFormat.isolated(scopes[i].section.title)
                 scopes[i].rowName = "أنمي \(scopes[i].section.title)"
             }
         }
@@ -114,9 +114,9 @@ struct ContentFilter {
 
     static let kidsRatings: Set<String> = ["G", "PG", "TV-Y", "TV-Y7", "TV-Y7-FV", "TV-G", "TV-PG"]
 
+    /// Compares the normalized code, so "PG - Children" (anime agents) or "us/TV-Y7" count as PG / TV-Y7.
     static func isKidSafe(_ rating: String?) -> Bool {
-        guard var r = rating?.trimmingCharacters(in: .whitespaces).uppercased(), !r.isEmpty else { return false }
-        if let slash = r.lastIndex(of: "/") { r = String(r[r.index(after: slash)...]) }
+        guard let r = ArabicFormat.contentRating(rating) else { return false }
         return kidsRatings.contains(r)
     }
 

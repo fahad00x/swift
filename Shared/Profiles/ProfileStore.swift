@@ -30,7 +30,7 @@ final class ProfileStore {
             case .localOnly: return "غير مفعّلة في هذه النسخة (الحفظ على الجهاز فقط)"
             case .syncing: return "جارٍ المزامنة…"
             case .synced(let date):
-                return "متزامنة · " + date.formatted(.dateTime.hour().minute().locale(Locale(identifier: "ar")))
+                return "متزامنة" + ArabicFormat.separator + ArabicFormat.time(date)
             case .failed(let message): return message
             }
         }

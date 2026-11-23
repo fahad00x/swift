@@ -28,7 +28,7 @@ struct FeaturedItem: Identifiable, Equatable, Codable {
         case .newSeason: base = "موسم جديد"
         case .recentlyAdded: base = "أضيف مؤخراً"
         }
-        if let code = playable?.episodeCode { return "\(base) · \(code)" }
+        if let code = playable?.episodeCode { return base + ArabicFormat.separator + code }
         return base
     }
 }

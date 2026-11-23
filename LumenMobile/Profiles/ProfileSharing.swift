@@ -77,7 +77,7 @@ private struct CloudSharingSheet: UIViewControllerRepresentable {
         let title: String?
         init(title: String?) { self.title = title }
 
-        func itemTitle(for csc: UICloudSharingController) -> String? { title.map { "Lumen · \($0)" } }
+        func itemTitle(for csc: UICloudSharingController) -> String? { title.map { "Lumen" + ArabicFormat.separator + $0 } }
 
         func cloudSharingController(_ csc: UICloudSharingController, failedToSaveShareWithError error: Error) {}
     }

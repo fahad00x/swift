@@ -140,7 +140,7 @@ struct ProfileEditorView: View {
     }
 
     private var genresSummary: String {
-        draft.genres.isEmpty ? "الكل" : draft.genres.prefix(3).map(ArabicFormat.genre).joined(separator: "، ")
+        draft.genres.isEmpty ? "الكل" : ArabicFormat.list(ArabicFormat.genres(draft.genres, limit: 3))
     }
 
     private func save() {

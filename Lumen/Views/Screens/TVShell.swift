@@ -154,7 +154,7 @@ struct MainTabView: View {
             Button("إضافة") { acknowledge(enable: true) }
             Button("لا", role: .cancel) { acknowledge(enable: false) }
         } message: {
-            Text("«\(newSections.map(\.title).joined(separator: "»، «"))» — تبي تضيفها لمكتباتك؟")
+            Text("«\(newSections.map { ArabicFormat.isolated($0.title) }.joined(separator: "»، «"))» — تبي تضيفها لمكتباتك؟")
         }
     }
 
@@ -348,7 +348,7 @@ private struct SidebarButtonStyle: ButtonStyle {
 private struct ClockView: View {
     var body: some View {
         TimelineView(.everyMinute) { context in
-            Text(context.date, format: .dateTime.hour().minute())
+            Text(ArabicFormat.time(context.date))
                 .font(.system(size: 30, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.85))
                 .monospacedDigit()
@@ -525,7 +525,7 @@ private struct FocusedDetails: View {
 
                 let cast = (item.roles.isEmpty ? owner?.roles ?? [] : item.roles).prefix(4).map(\.tag)
                 if !cast.isEmpty {
-                    Text("بطولة: " + cast.joined(separator: "، "))
+                    Text("بطولة: " + ArabicFormat.list(cast))
                         .font(.system(size: 20))
                         .foregroundStyle(.white.opacity(0.55))
                         .lineLimit(1)
@@ -550,15 +550,12 @@ private struct FocusedDetails: View {
     }
 
     private func episodeLine(_ item: PlexItem) -> String {
-        var code: [String] = []
-        if let s = item.parentIndex { code.append("الموسم \(ArabicFormat.digits(s))") }
-        if let e = item.index { code.append("الحلقة \(ArabicFormat.digits(e))") }
-        return ([code.joined(separator: " · ")] + [item.title]).filter { !$0.isEmpty }.joined(separator: " — ")
+        ArabicFormat.episodeLine(season: item.parentIndex, episode: item.index, title: item.title)
     }
 
     private func metaLine(_ item: PlexItem) -> String {
         var parts: [String] = []
-        if let date = item.originallyAvailableAt, item.isEpisode {
+        if item.isEpisode, let date = ArabicFormat.date(plex: item.originallyAvailableAt) {
             parts.append(date)
         } else if let year = item.year {
             parts.append(ArabicFormat.digits(year))
@@ -567,11 +564,11 @@ private struct FocusedDetails: View {
             parts.append("\(ArabicFormat.digits(leaves)) حلقة")
         }
         if let duration = item.duration, item.isPlayable { parts.append(ArabicFormat.duration(ms: duration)) }
-        if let rating = item.contentRating ?? owner?.contentRating, !rating.isEmpty { parts.append(rating) }
-        if let score = item.audienceRating ?? item.rating, score > 0 { parts.append("★ " + String(format: "%.1f", score)) }
-        let genres = (item.genres.isEmpty ? owner?.genres ?? [] : item.genres).prefix(2).map { ArabicFormat.genre($0.tag) }
-        if !genres.isEmpty { parts.append(genres.joined(separator: "، ")) }
-        return parts.joined(separator: "  ·  ")
+        if let rating = item.normalizedContentRating ?? owner?.normalizedContentRating { parts.append(rating) }
+        if let score = item.audienceRating ?? item.rating, score > 0 { parts.append(ArabicFormat.score(score)) }
+        let genres = ArabicFormat.genres((item.genres.isEmpty ? owner?.genres ?? [] : item.genres).map(\.tag), limit: 2)
+        if !genres.isEmpty { parts.append(ArabicFormat.list(genres)) }
+        return ArabicFormat.joined(parts)
     }
 
     /// The show (for episodes) and the clear logo, after focus rests briefly.

@@ -70,7 +70,7 @@ struct LinkAccountView: View {
 
     private func step(_ n: Int, _ text: String) -> some View {
         HStack(spacing: 18) {
-            Text("\(n)")
+            Text(ArabicFormat.digits(n))
                 .font(.callout.weight(.bold))
                 .frame(width: 48, height: 48)
                 .background(Circle().fill(Color.accentColor))

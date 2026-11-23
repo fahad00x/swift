@@ -123,7 +123,7 @@ struct MainTabView: View {
             Button("إضافة") { acknowledge(enable: true) }
             Button("لا", role: .cancel) { acknowledge(enable: false) }
         } message: {
-            Text("«\(newSections.map(\.title).joined(separator: "»، «"))» — تبي تضيفها لمكتباتك؟")
+            Text("«\(newSections.map { ArabicFormat.isolated($0.title) }.joined(separator: "»، «"))» — تبي تضيفها لمكتباتك؟")
         }
     }
 

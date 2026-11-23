@@ -46,7 +46,7 @@ struct MPVTrack: Identifiable, Hashable {
         }
         if !tech.isEmpty { parts.append(tech.joined(separator: " ")) }
         if parts.isEmpty { parts.append("مسار \(id)") }
-        return parts.joined(separator: " · ")
+        return parts.joined(separator: ArabicFormat.separator)
     }
 
     static func languageName(_ code: String) -> String {
