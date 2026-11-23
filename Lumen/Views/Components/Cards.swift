@@ -25,11 +25,13 @@ enum CardKind {
 
 // MARK: - Landscape (Continue Watching)
 
-/// 16:9 artwork only: the episode's own still (or the movie's art). Progress, title and
-/// episode are drawn under it by `LandscapeCaption`.
+/// 16:9 artwork: the episode's own still (or the movie's art), with a clear orange progress
+/// bar inside its bottom edge (like Plex). Title and episode are drawn under it by `LandscapeCaption`.
 struct LandscapeCard: View {
     let item: PlexItem
     let client: PlexServerClient
+
+    @Environment(ProfileStore.self) private var store
 
     var body: some View {
         let size = CardKind.landscape.size
@@ -39,14 +41,34 @@ struct LandscapeCard: View {
                 .font(.system(size: 44))
                 .foregroundStyle(.white.opacity(0.2))
             RemoteImage(url: client.imageURL(item.landscapePath, width: Int(size.width * 2), height: Int(size.height * 2)))
+            if let progress = store.progress(of: item) {
+                // Fills left → right like the player's timeline (also in Arabic).
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    LinearGradient(colors: [.clear, .black.opacity(0.55)], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 40)
+                        .overlay(alignment: .bottom) {
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(Color.white.opacity(0.3))
+                                Capsule()
+                                    .fill(ArtworkStatusOverlay.orange)
+                                    .frame(width: (size.width - 28) * progress)
+                            }
+                            .frame(width: size.width - 28, height: 7)
+                            .padding(.bottom, 12)
+                        }
+                }
+                .environment(\.layoutDirection, .leftToRight)
+                .allowsHitTesting(false)
+            }
         }
         .frame(width: size.width, height: size.height)
         .clipShape(RoundedRectangle(cornerRadius: CardKind.cornerRadius, style: .continuous))
     }
 }
 
-/// Under a Continue Watching card: a clear progress bar, the title, and
-/// «الموسم ١  •  الحلقة ٧» (episodes) or the time left (movies).
+/// Under a Continue Watching card: the title, and «الموسم ١  •  الحلقة ٧» (episodes) or the
+/// time left (movies).
 private struct LandscapeCaption: View {
     let item: PlexItem
 
@@ -55,18 +77,6 @@ private struct LandscapeCaption: View {
     var body: some View {
         let width = CardKind.landscape.size.width
         VStack(alignment: .leading, spacing: 6) {
-            // Fills left → right like the player's timeline (also in Arabic).
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.white.opacity(0.22))
-                Capsule()
-                    .fill(ArtworkStatusOverlay.orange)
-                    .frame(width: width * (store.progress(of: item) ?? 0))
-            }
-            .frame(width: width, height: 6)
-            .environment(\.layoutDirection, .leftToRight)
-            .opacity(store.progress(of: item) == nil ? 0 : 1)
-            .padding(.bottom, 4)
-
             Text(item.cardTitle)
                 .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.9))
@@ -339,6 +349,9 @@ struct MediaCardLink: View {
                         homeFocus.item = item
                     } else {
                         backdrop.url = client.imageURL(item.backdropPath, width: 1280, height: 720)
+                        backdrop.colorsKey = item.isEpisode ? (item.grandparentRatingKey ?? item.ratingKey)
+                            : (item.isSeason ? (item.parentRatingKey ?? item.ratingKey) : item.ratingKey)
+                        backdrop.colors = item.ultraBlurColors
                     }
                 })
                 .zoomSource(id: zoomID, namespace: namespace)
@@ -398,6 +411,7 @@ struct ShelfView: View {
                 .font(.system(size: 30, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.85))
                 .padding(.horizontal, CardKind.inset)
+                .sidebarPadding()
 
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -416,6 +430,8 @@ struct ShelfView: View {
                     .padding(.top, 24)
                     .padding(.bottom, 30)
                 }
+                // First card on the same line as every row, after the sidebar; cards scroll under it.
+                .sidebarSafeArea()
                 .scrollClipDisabled()
                 .onAppear { restoreFocus(proxy) }
             }
@@ -454,7 +470,7 @@ struct PosterGrid: View {
     var body: some View {
         let items = self.items.uniqued()
         let context = BrowseContext(rowID: rowID, items: items)
-        LazyVGrid(columns: columns, alignment: .center, spacing: 44) {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 44) {
             ForEach(items) { item in
                 MediaCardLink(item: item, client: client, sourceID: context.sourceID(for: item), context: context)
                     .focused($focusedID, equals: item.id)
@@ -463,6 +479,8 @@ struct PosterGrid: View {
         }
         .padding(.horizontal, CardKind.inset)
         .padding(.vertical, 30)
+        // Starts on the same line as the rows; the enclosing ScrollView adds the sidebar inset.
+        .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear {
             guard let id = returnState.take(for: rowID) else { return }
             scrollProxy?.scrollTo(id, anchor: .center)

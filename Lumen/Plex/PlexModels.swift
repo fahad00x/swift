@@ -368,6 +368,18 @@ struct PlexMedia: Codable, Hashable {
 }
 
 /// Any Plex metadata item: movie, show, season, episode…
+/// Plex's "UltraBlur" palette for an item's artwork: four corner colours (hex, no "#").
+/// Missing on older servers and on some items; every field is optional.
+struct PlexUltraBlurColors: Codable, Hashable, Sendable {
+    let topLeft: String?
+    let topRight: String?
+    let bottomLeft: String?
+    let bottomRight: String?
+
+    /// Usable only when all four corners are present.
+    var isComplete: Bool { [topLeft, topRight, bottomLeft, bottomRight].allSatisfy { ($0?.count ?? 0) >= 6 } }
+}
+
 struct PlexItem: Codable, Identifiable, Hashable {
     let ratingKey: String
     let key: String?
@@ -421,6 +433,8 @@ struct PlexItem: Codable, Identifiable, Hashable {
     let chapters: [PlexChapter]
     /// External ids, e.g. "imdb://tt0944947", "tmdb://1399", "tvdb://121361" (`includeGuids=1`).
     let guids: [String]
+    /// Background colours for this item's artwork (Plex UltraBlur), when the server sends them.
+    let ultraBlurColors: PlexUltraBlurColors?
 
     var id: String { ratingKey }
 
@@ -434,6 +448,7 @@ struct PlexItem: Codable, Identifiable, Hashable {
              audienceRating, rating, studio, originallyAvailableAt, guid, addedAt, updatedAt, subtype, lastViewedAt, librarySectionID
         case media = "Media", genres = "Genre", directors = "Director", roles = "Role", markers = "Marker", images = "Image"
         case countries = "Country", labels = "Label", collections = "Collection", chapters = "Chapter", guids = "Guid"
+        case ultraBlurColors = "UltraBlurColors"
     }
 
     init(from decoder: Decoder) throws {
@@ -490,6 +505,14 @@ struct PlexItem: Codable, Identifiable, Hashable {
         // Plex sends [{"id": "imdb://…"}]; the on-device copy of Home stores plain strings.
         let objects = (c.lossyArray(PlexGuid.self, forKey: .guids) ?? []).map(\.id)
         guids = objects.isEmpty ? ((try? c.decodeIfPresent([String].self, forKey: .guids)) ?? nil) ?? [] : objects
+        // Plex sends an object; tolerate an array of one, and anything malformed.
+        if let colors = try? c.decodeIfPresent(PlexUltraBlurColors.self, forKey: .ultraBlurColors) {
+            ultraBlurColors = colors.isComplete ? colors : nil
+        } else if let list = try? c.decodeIfPresent([PlexUltraBlurColors].self, forKey: .ultraBlurColors) {
+            ultraBlurColors = list.first.flatMap { $0.isComplete ? $0 : nil }
+        } else {
+            ultraBlurColors = nil
+        }
     }
 }
 

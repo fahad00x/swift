@@ -231,6 +231,10 @@ final class AppSession {
 @Observable
 final class BackdropState {
     var url: URL?
+    /// Plex UltraBlur colours of the focused item, when known (Apple TV).
+    var colors: PlexUltraBlurColors?
+    /// Movie / show whose colours the backdrop should use (looked up when `colors` is nil).
+    var colorsKey: String?
 }
 
 enum PlaybackEngine: String, CaseIterable, Identifiable {

@@ -88,13 +88,50 @@ extension EnvironmentValues {
     }
 }
 
+/// Room the floating sidebar takes on the leading (right) edge. Screens fill the whole screen
+/// (backgrounds run under the sidebar); only scrolling / focusable content is inset by this.
+private struct SidebarInsetKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 0
+}
+
+extension EnvironmentValues {
+    var sidebarInset: CGFloat {
+        get { self[SidebarInsetKey.self] }
+        set { self[SidebarInsetKey.self] = newValue }
+    }
+}
+
+extension View {
+    /// For a ScrollView (row or grid): its content starts after the sidebar but can scroll
+    /// underneath it, and focus-driven scrolling keeps the focused item out from under it.
+    func sidebarSafeArea() -> some View { modifier(SidebarSafeArea()) }
+
+    /// For static content (titles, text blocks): a plain leading padding past the sidebar.
+    func sidebarPadding(_ extra: CGFloat = 0) -> some View { modifier(SidebarPadding(extra: extra)) }
+}
+
+private struct SidebarSafeArea: ViewModifier {
+    @Environment(\.sidebarInset) private var inset
+    func body(content: Content) -> some View { content.safeAreaPadding(.leading, inset) }
+}
+
+private struct SidebarPadding: ViewModifier {
+    let extra: CGFloat
+    @Environment(\.sidebarInset) private var inset
+    func body(content: Content) -> some View { content.padding(.leading, inset + extra) }
+}
+
 struct MainTabView: View {
     let client: PlexServerClient
     let sections: [PlexDirectory]
     let profile: UserProfile
 
-    /// Room the collapsed rail takes at the screen's edge (the right, in Arabic).
-    static let railInset: CGFloat = 140
+    /// Distance of the floating sidebar from the screen edge (the right, in Arabic).
+    static let railMargin: CGFloat = 30
+    /// Width of the collapsed sidebar capsule.
+    static let railWidth: CGFloat = 96
+    /// Where scrolling content starts: past the collapsed capsule plus a small gap.
+    static let railInset: CGFloat = railMargin + railWidth + 24
 
     @Environment(ProfileStore.self) private var store
     @State private var newSections: [PlexDirectory] = []
@@ -117,14 +154,28 @@ struct MainTabView: View {
         let pinned = prefs.pinned(from: filter.scopes)
         let rest = filter.scopes.filter { scope in !pinned.contains { $0.id == scope.id } }
 
-        // Arabic layout: the sidebar sits on the leading side, which is the right.
-        ZStack(alignment: .topLeading) {
+        // Arabic layout: the sidebar floats on the leading side, which is the right. Screens
+        // fill the whole screen (their backgrounds run under the sidebar); the inset reaches
+        // only their scrolling content, through the environment.
+        ZStack(alignment: .leading) {
             Color.black.ignoresSafeArea()
 
             content(filter: filter, rest: rest)
                 .environment(\.focusSidebar, { sidebarFocus = selection })
-                .padding(.leading, Self.railInset)
+                .environment(\.sidebarInset, Self.railInset)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .prefersDefaultFocus(true, in: shellNamespace)
+
+            // Darkens the right edge, so the sidebar icons read over light artwork and rows
+            // fade out as they scroll under it.
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
+                LinearGradient(colors: [.clear, .black.opacity(0.55)], startPoint: .leading, endPoint: .trailing)
+                    .frame(width: Self.railInset + 200)
+            }
+            .environment(\.layoutDirection, .leftToRight)
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
 
             // The content dims while the menu is open.
             Color.black
@@ -140,8 +191,7 @@ struct MainTabView: View {
                 // Hand focus to the chosen screen; the panel collapses to the rail.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { sidebarFocus = nil }
             }
-            .padding(.leading, 34)
-            .padding(.top, 34)
+            .padding(.leading, Self.railMargin)
         }
         .animation(.easeOut(duration: 0.2), value: sidebarOpen)
         .focusScope(shellNamespace)
@@ -234,8 +284,6 @@ private struct TVSidebar: View {
         return !pinned.contains { $0.id == id }
     }
 
-    static let panelColor = Color(red: 0.13, green: 0.16, blue: 0.21)
-
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Button(action: onProfile) {
@@ -301,12 +349,22 @@ private struct TVSidebar: View {
             row(.settings, "الإعدادات", "gearshape")
         }
         .padding(12)
-        .frame(width: expanded ? 400 : 96, alignment: .leading)
+        .frame(width: expanded ? 400 : MainTabView.railWidth, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
         .background {
-            RoundedRectangle(cornerRadius: 30, style: .continuous)
-                .fill(Self.panelColor.opacity(expanded ? 0.94 : 0.6))
+            // Floating translucent panel (no solid colour behind it): a slim capsule of icons,
+            // the same panel with names while it has focus.
+            let shape = RoundedRectangle(cornerRadius: expanded ? 34 : MainTabView.railWidth / 2, style: .continuous)
+            shape
+                .fill(.ultraThinMaterial)
+                .overlay(shape.fill(Color.black.opacity(expanded ? 0.5 : 0.4)))
+                .overlay(shape.strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
+                .shadow(color: .black.opacity(0.35), radius: 18, y: 6)
         }
+        // Centred vertically. The focus section spans the full height of the screen, so Right
+        // from the first item of any row or grid (top or bottom) reaches the sidebar.
+        .frame(maxHeight: .infinity, alignment: .center)
+        .contentShape(Rectangle())
         .focusSection()
         .defaultFocus(focus, selection)
         // Menu on the sidebar leaves the app (the system handles it: no handler here).
@@ -418,6 +476,7 @@ struct HomeView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .frame(height: Self.detailsHeight, alignment: .bottomLeading)
                             .padding(.horizontal, CardKind.inset)
+                            .sidebarPadding()
                             .padding(.bottom, 8)
 
                         ScrollView(.vertical) {
@@ -474,50 +533,54 @@ struct HomeView: View {
     }
 }
 
-/// Backdrop of the focused item, changed only after focus rests briefly (no work while scrolling fast).
+/// Backdrop of the focused item, changed only after focus rests briefly (no work while
+/// scrolling fast): its artwork at the top melting into its Plex UltraBlur colours, on which
+/// the rows sit (the darkened artwork when the item has no colours). Full screen, under the sidebar too.
 private struct HomeBackdrop: View {
     let item: PlexItem?
     let client: PlexServerClient
     @State private var url: URL?
+    @State private var colors: PlexUltraBlurColors?
 
     var body: some View {
         ZStack {
-            Color.black
-            if let url {
-                RemoteImage(url: url)
-                    .id(url)
-                    .transition(.opacity)
-            }
-            // Darken towards the text (the right side in Arabic) and the rows (bottom), strong
-            // enough for white text over light artwork.
-            LinearGradient(stops: [
-                .init(color: .black.opacity(0.95), location: 0),
-                .init(color: .black.opacity(0.82), location: 0.3),
-                .init(color: .black.opacity(0.45), location: 0.6),
-                .init(color: .black.opacity(0.15), location: 1),
-            ], startPoint: .trailing, endPoint: .leading)
-            // Behind the details block at the top.
-            LinearGradient(stops: [
-                .init(color: .black.opacity(0.35), location: 0),
-                .init(color: .clear, location: 0.2),
-            ], startPoint: .top, endPoint: .bottom)
-            LinearGradient(stops: [
-                .init(color: .clear, location: 0.22),
-                .init(color: .black.opacity(0.7), location: 0.4),
-                .init(color: .black.opacity(0.92), location: 0.58),
-                .init(color: .black, location: 1),
-            ], startPoint: .top, endPoint: .bottom)
+            ArtworkBackdrop(url: url, colors: colors, fadeStart: 0.3, fadeEnd: 0.68)
+            BackdropScrim(hasColors: colors != nil)
         }
-        .animation(.easeInOut(duration: 0.35), value: url)
-        // Physical directions: the text (and the darkest side) is on the right in Arabic.
-        .environment(\.layoutDirection, .leftToRight)
+        .animation(.easeInOut(duration: 0.4), value: colors)
         .ignoresSafeArea()
         .task(id: item?.ratingKey) {
             guard let item else { return }
             try? await Task.sleep(for: .milliseconds(250))
             guard !Task.isCancelled else { return }
             url = client.imageURL(item.backdropPath, width: 1280, height: 720)
+            colors = await Self.colors(for: item, client: client)
         }
+    }
+
+    /// The artwork shown is the movie's / show's, so are the colours (episodes and seasons use
+    /// their show's). Listings may not carry them: the item's full metadata (cached) is asked once.
+    static func colors(for item: PlexItem, client: PlexServerClient) async -> PlexUltraBlurColors? {
+        let ownerKey = item.isEpisode ? (item.grandparentRatingKey ?? item.ratingKey)
+            : (item.isSeason ? (item.parentRatingKey ?? item.ratingKey) : item.ratingKey)
+        if ownerKey == item.ratingKey, let own = item.ultraBlurColors { return own }
+        return await UltraBlurCache.shared.colors(for: ownerKey, client: client) ?? item.ultraBlurColors
+    }
+}
+
+/// UltraBlur colours per movie / show for the session (nil = it has none). The on-device
+/// library may predate the field: the server's metadata is asked once per title.
+@MainActor
+final class UltraBlurCache {
+    static let shared = UltraBlurCache()
+    private var colors: [String: PlexUltraBlurColors?] = [:]
+
+    func colors(for key: String, client: PlexServerClient) async -> PlexUltraBlurColors? {
+        if let known = colors[key] { return known }
+        var found = await client.cachedMetadata(key)?.ultraBlurColors
+        if found == nil { found = (try? await client.metadata(key))?.ultraBlurColors }
+        colors[key] = .some(found)
+        return found
     }
 }
 
@@ -662,6 +725,7 @@ struct TVMyListView: View {
                     }
                     .padding(.vertical, 50)
                 }
+                .sidebarSafeArea()
             }
         }
         .task { await load() }
@@ -705,6 +769,8 @@ struct MoreLibrariesView: View {
             }
             .padding(.horizontal, CardKind.inset)
             .padding(.vertical, 50)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .sidebarSafeArea()
     }
 }

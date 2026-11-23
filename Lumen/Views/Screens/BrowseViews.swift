@@ -14,7 +14,10 @@ struct BrowseContainer<Content: View>: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                if showsBackdrop { BackdropView(url: backdrop.url) }
+                // Full screen, under the sidebar too.
+                if showsBackdrop {
+                    BackdropView(url: backdrop.url, colors: backdrop.colors, colorsKey: backdrop.colorsKey, client: client)
+                }
                 content()
             }
             // Menu on a top-level screen goes to the sidebar (pushed pages handle their own Back).
@@ -62,12 +65,14 @@ struct LibraryView: View {
                                 Text("\(ArabicFormat.digits(total)) عنصر").font(.caption).foregroundStyle(.secondary)
                             }
                         }
-                        Spacer()
+                        Spacer(minLength: 40)
                         Picker("الترتيب", selection: $sort) {
                             ForEach(LibrarySort.allCases) { Text($0.title).tag($0) }
                         }
                         .pickerStyle(.segmented)
                         .frame(maxWidth: 1000)
+                        // Room for the focus lift, so the picker never touches the screen edge.
+                        .padding(.trailing, 20)
                     }
                     .padding(.horizontal, CardKind.inset)
 
@@ -83,7 +88,10 @@ struct LibraryView: View {
                     if isLoading { ProgressView().frame(maxWidth: .infinity) }
                 }
                 .padding(.vertical, 30)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            // The grid starts after the sidebar (the backdrop still fills the screen).
+            .sidebarSafeArea()
             }
         }
         .task(id: sort) { await reload() }
@@ -161,6 +169,7 @@ struct SearchView: View {
                     PosterGrid(items: results, client: client, scrollProxy: proxy)
                         .padding(.top, 40)
                 }
+                .sidebarSafeArea()
                 .searchable(text: $query, prompt: "ابحث عن فيلم أو مسلسل")
             }
         }
@@ -319,6 +328,9 @@ struct SettingsView: View {
                 }
             }
             .frame(maxWidth: 1300)
+            // Centred in the area next to the sidebar.
+            .frame(maxWidth: .infinity)
+            .sidebarPadding()
             .navigationTitle("الإعدادات")
             // Menu on Settings goes to the sidebar (pushed pickers handle their own Back).
             .onExitCommand(perform: focusSidebar)

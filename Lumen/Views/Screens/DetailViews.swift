@@ -84,13 +84,12 @@ struct DetailPage: View {
 
     enum HeroButton: Hashable { case play, watchlist, more, edgeStart, edgeEnd, backToTop }
 
-    /// The page fills the content area next to the collapsed sidebar rail (not the whole
-    /// screen), so nothing starts under the rail; only the artwork extends beneath it.
-    private let width: CGFloat = DetailPage.pageWidth
-    static let pageWidth: CGFloat = 1920 - MainTabView.railInset
-    /// One side inset for the hero text, section titles and every horizontal row, so they
-    /// all start on the same line.
-    static let sideInset: CGFloat = 80
+    /// Full screen (the artwork runs under the floating sidebar); text and rows start after
+    /// the sidebar through the environment's `sidebarInset`.
+    private let width: CGFloat = 1920
+    /// One side inset (after the sidebar) for the hero text, section titles and every
+    /// horizontal row, the same as Home's rows, so they all start on the same line.
+    static let sideInset: CGFloat = CardKind.inset
     private let height: CGFloat = 1080
     /// Hero height in state 1; the rest of the screen shows the next row ("peek").
     private let heroHeight: CGFloat = 930
@@ -98,9 +97,8 @@ struct DetailPage: View {
     var body: some View {
         ZStack(alignment: .top) {
             DetailBackdrop(key: displayKey(current), image: backdrops[displayKey(current)], url: backdropURL(current),
-                           expanded: expanded, entrySign: entrySign, generation: generation)
-                // Full-screen artwork: its far edge lines up with the page, the rest runs under the rail.
-                .frame(width: width, height: height, alignment: .trailing)
+                           expanded: expanded, entrySign: entrySign, generation: generation,
+                           colors: metadataCache[displayKey(current)]?.ultraBlurColors ?? current.ultraBlurColors)
 
             if let item {
                 ScrollViewReader { proxy in
@@ -269,6 +267,7 @@ struct DetailPage: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, Self.sideInset)
+        .sidebarPadding()
         .padding(.bottom, 60)
         .shadow(color: .black.opacity(0.35), radius: 10)
         .opacity(revealed && !expanded ? 1 : 0)
@@ -452,6 +451,7 @@ struct DetailPage: View {
             .padding(.horizontal, DetailPage.sideInset)
             .padding(.vertical, 24)
         }
+        .sidebarSafeArea()
         .scrollClipDisabled()
         .focusSection()
     }
@@ -490,6 +490,7 @@ struct DetailPage: View {
             .padding(.top, 30)
             .padding(.bottom, 40)
         }
+        .sidebarSafeArea()
         .scrollClipDisabled()
         .onAppear {
             // Show the episode you're up to (e.g. E7), not the start of the season.
@@ -520,6 +521,7 @@ struct DetailPage: View {
                 .padding(.top, 30)
                 .padding(.bottom, 40)
             }
+            .sidebarSafeArea()
             .scrollClipDisabled()
             .focusSection()
         }
@@ -543,6 +545,7 @@ struct DetailPage: View {
                 .padding(.top, 30)
                 .padding(.bottom, 40)
             }
+            .sidebarSafeArea()
             .scrollClipDisabled()
             .focusSection()
         }
@@ -572,6 +575,7 @@ struct DetailPage: View {
                 InfoTile(title: "الملف", lines: (file.isEmpty ? ["—"] : file) + (target.isEpisode ? [target.introSkipSourceText] : []))
             }
             .padding(.horizontal, DetailPage.sideInset)
+            .sidebarPadding()
             .padding(.top, 26)
             .focusSection()
         }
@@ -799,12 +803,20 @@ private struct DetailBackdrop: View {
     /// +1: the new artwork enters from the right edge, -1: from the left.
     let entrySign: CGFloat
     let generation: Int
+    /// Plex UltraBlur colours of the title: the artwork fades into them at the bottom and they
+    /// fill state 2 (Plex style). Without them, the darkened / blurred artwork as before.
+    var colors: PlexUltraBlurColors? = nil
 
     @Environment(\.layoutDirection) private var appDirection
 
     var body: some View {
         ZStack {
             Color.black
+            if let colors {
+                UltraBlurBackground(colors: colors)
+                    .id(colors)
+                    .transition(.opacity)
+            }
             ZStack {
                 Group {
                     if let image {
@@ -826,11 +838,23 @@ private struct DetailBackdrop: View {
                 .zIndex(Double(generation))
             }
             .frame(width: 1920, height: 1080)
-            .blur(radius: expanded ? 60 : 0, opaque: true)
+            .blur(radius: expanded ? 60 : 0, opaque: colors == nil)
             .scaleEffect(expanded ? 1.06 : 1)
             .clipped()
+            .mask {
+                if colors != nil {
+                    LinearGradient(stops: [
+                        .init(color: .black, location: 0),
+                        .init(color: .black, location: 0.45),
+                        .init(color: .clear, location: 0.9),
+                    ], startPoint: .top, endPoint: .bottom)
+                } else {
+                    Color.black
+                }
+            }
+            .opacity(colors != nil && expanded ? 0.35 : 1)
 
-            Color.black.opacity(expanded ? 0.5 : 0)
+            Color.black.opacity(expanded ? (colors == nil ? 0.5 : 0.2) : 0)
 
             // Text side + bottom scrims (physical sides; see environment below).
             LinearGradient(stops: [
@@ -841,15 +865,19 @@ private struct DetailBackdrop: View {
             ], startPoint: appDirection == .rightToLeft ? .trailing : .leading,
                endPoint: appDirection == .rightToLeft ? .leading : .trailing)
                 .opacity(expanded ? 0.4 : 1)
-            LinearGradient(stops: [
+            LinearGradient(stops: colors == nil ? [
                 .init(color: .clear, location: 0.3),
                 .init(color: .black.opacity(0.7), location: 0.62),
                 .init(color: .black.opacity(0.95), location: 1),
+            ] : [
+                .init(color: .clear, location: 0.45),
+                .init(color: .black.opacity(0.35), location: 1),
             ], startPoint: .top, endPoint: .bottom)
         }
         .frame(width: 1920, height: 1080)
         .environment(\.layoutDirection, .leftToRight)
         .animation(.easeInOut(duration: 0.55), value: expanded)
+        .animation(.easeInOut(duration: 0.4), value: colors)
         .ignoresSafeArea()
     }
 }
@@ -889,6 +917,7 @@ private struct SectionTitle: View {
             .font(.title3.weight(.semibold))
             .foregroundStyle(.white.opacity(0.78))
             .padding(.horizontal, DetailPage.sideInset)
+            .sidebarPadding()
     }
 }
 
