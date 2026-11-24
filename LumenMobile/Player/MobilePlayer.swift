@@ -227,7 +227,7 @@ struct MobilePlayerControls: View {
                 if editing {
                     session.beginScrub()
                 } else if let target = session.scrubPosition {
-                    session.commitScrub(base: 0, delta: target)
+                    session.commitScrub(to: target)
                 }
             }
             HStack {

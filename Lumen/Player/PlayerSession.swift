@@ -313,6 +313,12 @@ final class PlayerSession {
         seek(to: target)
     }
 
+    /// Ends at a given position (the iPhone's slider).
+    func commitScrub(to target: Double) {
+        scrubPosition = nil
+        seek(to: min(max(0, target), max(0, duration - 1)))
+    }
+
     func cancelScrub() { scrubPosition = nil; scheduleHide() }
 
     func performSkip() {
