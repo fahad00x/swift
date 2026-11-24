@@ -195,8 +195,8 @@ struct DetailPage: View {
         .frame(width: Self.screen.width, height: Self.screen.height)
         .ignoresSafeArea()
         .onExitCommand(perform: exitAction)
-        // On the episodes Back must never leave the page.
-        .background(MenuCatcher(active: scrolled, action: exitAction))
+        // With a step left inside the page, Back must never leave it.
+        .background(MenuCatcher(active: scrolled || (canBrowse && !browsing), action: exitAction))
         .onChange(of: audioSelection) { _, id in
             guard id > 0, id != shownStreams.audio else { return }
             shownStreams.audio = id
@@ -246,7 +246,8 @@ struct DetailPage: View {
         .onDisappear { shell?.pushedPages = max(0, (shell?.pushedPages ?? 1) - 1) }
     }
 
-    /// Back goes one step back: from the episodes to the top, from the top to the poster.
+    /// Back goes one step back: from the episodes to the buttons, from the buttons to the cards
+    /// (when there are titles to page through), from the cards to the poster.
     private func exitAction() {
         // One press can arrive twice (the catcher and onExitCommand).
         guard Date().timeIntervalSince(lastExit) > 0.35 else { return }
@@ -257,6 +258,9 @@ struct DetailPage: View {
             setScrolled(false)
             // Once the buttons are visible again (they can't take focus while invisible).
             focusPlay()
+        } else if canBrowse && !browsing {
+            setBrowsing(true)
+            heroFocus = .browse
         } else {
             dismiss()
         }
