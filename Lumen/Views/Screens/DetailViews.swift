@@ -78,6 +78,10 @@ struct DetailPage: View {
     private static var pitch: CGFloat { cardWidth + cardGap }
     /// Text 40 pt inside the card edge.
     private static var textInset: CGFloat { cardMargin + 40 }
+    /// Card state: brings the rows' side inset onto the card's text inset.
+    private static var cardRowScale: CGFloat {
+        (screen.width - 2 * textInset) / (screen.width - 2 * sideInset)
+    }
 
     // Vertical scroll (px at 1920×1080).
     /// Top of the first episodes row: peeking at the top state, near the top once scrolled.
@@ -150,8 +154,13 @@ struct DetailPage: View {
                     .offset(y: (revealed ? 0 : 24) - (scrolled ? Self.scrollDistance : 0))
 
                 // The rows: the first one peeks at the bottom, then scrolls up under the title.
+                // Card state: drawn a little smaller, on the text's margins, and cut at the
+                // card's edges (visual only, the rows keep their layout and scroll position).
                 lowerContent(item)
-                    .offset(y: (scrolled ? Self.episodesTop : Self.peekTop) - leadIn)
+                    .scaleEffect(fullScreen ? 1 : Self.cardRowScale, anchor: .top)
+                    .offset(y: (scrolled ? Self.episodesTop : Self.peekTop) - leadIn * (fullScreen ? 1 : Self.cardRowScale))
+                    .frame(width: Self.screen.width, height: Self.screen.height, alignment: .top)
+                    .clipShape(SideInsetRect(inset: fullScreen ? 0 : Self.cardMargin))
                     .opacity(revealed ? 1 : 0)
                     // Focusable only once scrolled (Down from the buttons scrolls first): at the
                     // top the peeking row is display-only, so Down from the card lands on Play and
@@ -1332,4 +1341,16 @@ private struct ContentFlagsRow: View {
         default: return Color(red: 1, green: 0.82, blue: 0.35)
         }
     }
+}
+
+/// The full height, `inset` in from each side (animatable).
+private struct SideInsetRect: Shape {
+    var inset: CGFloat
+
+    var animatableData: CGFloat {
+        get { inset }
+        set { inset = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path { Path(rect.insetBy(dx: inset, dy: 0)) }
 }
