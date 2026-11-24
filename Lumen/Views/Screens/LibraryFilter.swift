@@ -1,8 +1,8 @@
 import SwiftUI
 
 // «فلترة»: a library's titles narrowed by any mix of genre, rating, episodes, year, seasons.
-// Every choice is optional. Everything but the genre is read from the library on the device
-// (its listing only carries two genres per title, so genres are asked from the server).
+// Every choice is optional. Everything is read on the device, except the library's own genres:
+// its listing only carries two per title, so they're asked from the server (and remembered).
 
 /// What the profile chose; nothing chosen = the whole library.
 struct FilterCriteria: Equatable {
@@ -14,53 +14,35 @@ struct FilterCriteria: Equatable {
     /// More than / fewer than this many episodes.
     var moreEpisodes: Int?
     var fewerEpisodes: Int?
-    var years: Set<Int> = []
-    var periods: Set<FilterPeriod> = []
+    var fromYear: Int?
+    var toYear: Int?
     /// 5 = five or more.
     var seasons: Set<Int> = []
 
     var isEmpty: Bool { self == FilterCriteria(matchAllGenres: matchAllGenres) }
 
     /// Everything but the genres.
-    func matches(_ item: PlexItem) -> Bool {
-        if let minRating, (item.ratingDisplay?.value ?? 0) < minRating { return false }
+    func matches(_ item: PlexItem, rating: Double) -> Bool {
+        if let minRating, rating < minRating { return false }
         if moreEpisodes != nil || fewerEpisodes != nil {
             guard let count = item.leafCount else { return false }
             if let moreEpisodes, count <= moreEpisodes { return false }
             if let fewerEpisodes, count >= fewerEpisodes { return false }
         }
-        if !years.isEmpty || !periods.isEmpty {
+        if fromYear != nil || toYear != nil {
             guard let year = item.year else { return false }
-            guard years.contains(year) || periods.contains(where: { $0.contains(year) }) else { return false }
+            // «من» after «إلى»: the same range, the other way round.
+            let ends = [fromYear, toYear].compactMap { $0 }
+            if ends.count == 2 {
+                guard (ends.min()!...ends.max()!).contains(year) else { return false }
+            }
+            else if let fromYear, year < fromYear { return false }
+            else if let toYear, year > toYear { return false }
         }
         if !seasons.isEmpty {
             guard let count = item.childCount, seasons.contains(min(count, 5)) else { return false }
         }
         return true
-    }
-}
-
-enum FilterPeriod: CaseIterable {
-    case from2020, from2010, from2000, from1990, older
-
-    func contains(_ year: Int) -> Bool {
-        switch self {
-        case .from2020: return year >= 2020
-        case .from2010: return (2010...2019).contains(year)
-        case .from2000: return (2000...2009).contains(year)
-        case .from1990: return (1990...1999).contains(year)
-        case .older: return year < 1990
-        }
-    }
-
-    var title: String {
-        switch self {
-        case .from2020: return "٢٠٢٠ وما بعد"
-        case .from2010: return "٢٠١٠ – ٢٠١٩"
-        case .from2000: return "٢٠٠٠ – ٢٠٠٩"
-        case .from1990: return "التسعينات"
-        case .older: return "قبل ١٩٩٠"
-        }
     }
 }
 
@@ -79,7 +61,11 @@ final class LibraryFilterModel {
         var id: String { name }
     }
 
+    /// The library's own genres (Plex).
     private(set) var genres: [Genre] = []
+    /// An anime library: anime genres, and ratings like MyAnimeList's (`AnimeIndex`).
+    private(set) var animeGenres: [String] = []
+    private(set) var ratingSource: String?
     private(set) var years: [Int] = []
     private(set) var results: [PlexItem] = []
     private(set) var isLoading = false
@@ -88,6 +74,9 @@ final class LibraryFilterModel {
     private(set) var failed = false
 
     @ObservationIgnored private var all: [PlexItem] = []
+    /// Ratings by key (anime libraries), else Plex's own.
+    @ObservationIgnored private var ratings: [String: Double] = [:]
+    @ObservationIgnored private var animeTitles: [String: Set<String>] = [:]
     /// Genre name → titles that have it.
     @ObservationIgnored private var titles: [String: Set<String>] = [:]
     @ObservationIgnored private var work: Task<Void, Never>?
@@ -100,6 +89,27 @@ final class LibraryFilterModel {
         let items = (try? await client.items(section: scope.section, sort: .rating, start: 0, size: 100_000))?.items ?? []
         all = await filter.resolve(items, client: client, scope: scope)
         years = Set(all.compactMap(\.year)).sorted(by: >)
+        let index = await AnimeIndex.shared.value
+        let entries = all.compactMap { item in index.entry(item).map { (item.ratingKey, $0) } }
+        // Mostly anime (a few anime in another library don't make it one).
+        if !all.isEmpty, entries.count * 2 > all.count {
+            var byGenre: [String: Set<String>] = [:]
+            ratings = [:]
+            for (key, entry) in entries {
+                if let score = entry.score { ratings[key] = score }
+                for genre in entry.genres { byGenre[genre, default: []].insert(key) }
+            }
+            animeTitles = byGenre
+            animeGenres = byGenre.keys.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+            ratingSource = index.officialMAL ? "MyAnimeList" : "تقريبي لـ MyAnimeList"
+            // Set before: `rating` depends on it.
+            all.sort { rating($0) > rating($1) }
+        } else {
+            ratings = [:]
+            animeTitles = [:]
+            animeGenres = []
+            ratingSource = nil
+        }
         loaded = true
         isLoading = false
         apply()
@@ -109,9 +119,16 @@ final class LibraryFilterModel {
             grouped[ArabicFormat.genre(directory.title), default: []].append(Self.genreID(directory.key))
         }
         if !grouped.isEmpty {
-            genres = grouped.map { Genre(name: $0.key, ids: $0.value) }
+            genres = grouped.filter { animeTitles[$0.key] == nil }.map { Genre(name: $0.key, ids: $0.value) }
                 .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         }
+    }
+
+    /// What posters print for anime (MAL), else Plex's rating.
+    private func rating(_ item: PlexItem) -> Double {
+        // Anime without a rating there yet: not Plex's, often a 10 from a couple of votes.
+        if ratingSource != nil { return ratings[item.ratingKey] ?? 0 }
+        return item.ratingDisplay?.value ?? 0
     }
 
     private func apply() {
@@ -119,7 +136,9 @@ final class LibraryFilterModel {
         let criteria = criteria
         work = Task {
             // Genres not asked yet, at the same time.
-            let missing = genres.filter { criteria.genres.contains($0.name) && titles[$0.name] == nil }
+            let missing = genres.filter {
+                criteria.genres.contains($0.name) && titles[$0.name] == nil && animeTitles[$0.name] == nil
+            }
             if !missing.isEmpty, let source {
                 isLoading = true
                 await withTaskGroup(of: (String, Set<String>?).self) { group in
@@ -132,10 +151,14 @@ final class LibraryFilterModel {
                 }
             }
             guard !Task.isCancelled else { return }
-            let sets = criteria.genres.compactMap { titles[$0] }
+            // A name in both lists: either source counts.
+            let sets = criteria.genres.compactMap { name -> Set<String>? in
+                guard let anime = animeTitles[name] else { return titles[name] }
+                return anime.union(titles[name] ?? [])
+            }
             failed = sets.count < criteria.genres.count
             results = failed ? [] : all.filter { item in
-                guard criteria.matches(item) else { return false }
+                guard criteria.matches(item, rating: rating(item)) else { return false }
                 guard !sets.isEmpty else { return true }
                 return criteria.matchAllGenres
                     ? sets.allSatisfy { $0.contains(item.ratingKey) }
@@ -274,133 +297,255 @@ struct LibraryFilterGrid: View {
                          c.fewerEpisodes.map { "أقل من \(ArabicFormat.digits($0))" }].compactMap { $0 }
             return parts.isEmpty ? nil : parts.joined(separator: "، ")
         case .year:
-            return FilterText.list(FilterPeriod.allCases.filter(c.periods.contains).map(\.title)
-                + c.years.sorted(by: >).map { ArabicFormat.digits($0) })
+            let from = c.fromYear.map { ArabicFormat.digits($0) }, to = c.toYear.map { ArabicFormat.digits($0) }
+            switch (from, to) {
+            case let (from?, to?): return from == to ? from : "\(from) – \(to)"
+            case let (from?, nil): return "من \(from)"
+            case let (nil, to?): return "إلى \(to)"
+            default: return nil
+            }
         case .seasons:
             return FilterText.list(c.seasons.sorted().map(FilterText.seasons))
         }
     }
 }
 
-/// One filter's choices over the page. Choices apply at once; Back closes.
+/// One filter's choices on a glass card over the page. Choices apply at once; Back closes.
+/// Numbers are single lines of plain figures; genres a list with check marks.
 private struct FilterPanel: View {
     let field: LibraryFilterGrid.Field
     let model: LibraryFilterModel
 
-    @Environment(\.dismiss) private var dismiss
+    private static let width: CGFloat = 1400
+    private static let inset: CGFloat = 70
 
     var body: some View {
-        @Bindable var model = model
-        VStack(alignment: .leading, spacing: 30) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(field.title).font(.system(size: 46, weight: .bold))
-                Spacer()
+        VStack(spacing: 44) {
+            VStack(spacing: 8) {
+                Text(field.title).font(.system(size: 44, weight: .bold))
                 Text(model.isLoading ? "…" : FilterText.results(model.results.count))
-                    .font(.system(size: 28))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .font(.system(size: 26))
+                    .foregroundStyle(.white.opacity(0.55))
             }
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 34) {
-                    switch field {
-                    case .genre:
-                        if model.criteria.genres.count > 1 {
-                            section(nil) {
-                                chip("كل التصنيفات معًا", model.criteria.matchAllGenres) { model.criteria.matchAllGenres = true }
-                                chip("أي تصنيف منها", !model.criteria.matchAllGenres) { model.criteria.matchAllGenres = false }
-                            }
-                        }
-                        section(nil) {
-                            ForEach(model.genres) { genre in
-                                chip(genre.name, model.criteria.genres.contains(genre.name)) {
-                                    model.criteria.genres.formSymmetricDifference([genre.name])
-                                }
-                            }
-                        }
-                    case .rating:
-                        section(nil) {
-                            ForEach([9, 8.5, 8, 7.5, 7, 6.5, 6, 5], id: \.self) { (value: Double) in
-                                chip(FilterText.rating(value), model.criteria.minRating == value) {
-                                    model.criteria.minRating = model.criteria.minRating == value ? nil : value
-                                }
-                            }
-                        }
-                    case .episodes:
-                        section("أكثر من") {
-                            ForEach([6, 12, 24, 50, 100, 200], id: \.self) { count in
-                                chip(ArabicFormat.digits(count), model.criteria.moreEpisodes == count) {
-                                    model.criteria.moreEpisodes = model.criteria.moreEpisodes == count ? nil : count
-                                }
-                            }
-                        }
-                        section("أقل من") {
-                            ForEach([7, 13, 25, 50, 100, 200], id: \.self) { count in
-                                chip(ArabicFormat.digits(count), model.criteria.fewerEpisodes == count) {
-                                    model.criteria.fewerEpisodes = model.criteria.fewerEpisodes == count ? nil : count
-                                }
-                            }
-                        }
-                    case .year:
-                        section("فترة") {
-                            ForEach(FilterPeriod.allCases, id: \.self) { period in
-                                chip(period.title, model.criteria.periods.contains(period)) {
-                                    model.criteria.periods.formSymmetricDifference([period])
-                                }
-                            }
-                        }
-                        section("سنة") {
-                            ForEach(model.years, id: \.self) { year in
-                                chip(ArabicFormat.digits(year), model.criteria.years.contains(year)) {
-                                    model.criteria.years.formSymmetricDifference([year])
-                                }
-                            }
-                        }
-                    case .seasons:
-                        section(nil) {
-                            ForEach(1...5, id: \.self) { count in
-                                chip(FilterText.seasons(count), model.criteria.seasons.contains(count)) {
-                                    model.criteria.seasons.formSymmetricDifference([count])
-                                }
-                            }
-                        }
-                    }
-                }
-                .padding(.vertical, 24)
-                .padding(.horizontal, 20)
-            }
-            .padding(.horizontal, -20)
-            Button("تم") { dismiss() }
-                .buttonStyle(FilterPillStyle(selected: true))
-                .frame(maxWidth: .infinity)
-                .focusSection()
+            content
         }
-        .padding(.horizontal, 140)
-        .padding(.vertical, 70)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color.black.opacity(0.55).ignoresSafeArea())
-        .presentationBackground(.ultraThinMaterial)
+        .padding(.vertical, 54)
+        .frame(width: Self.width)
+        .background {
+            RoundedRectangle(cornerRadius: 48, style: .continuous).fill(.ultraThinMaterial)
+            RoundedRectangle(cornerRadius: 48, style: .continuous).fill(Color.black.opacity(0.35))
+            RoundedRectangle(cornerRadius: 48, style: .continuous).strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+        }
+        .environment(\.colorScheme, .dark)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black.opacity(0.6).ignoresSafeArea())
+        .presentationBackground(.clear)
     }
 
-    private func section(_ title: String?, @ViewBuilder content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            if let title {
-                Text(title).font(.system(size: 28)).foregroundStyle(.white.opacity(0.6))
+    @ViewBuilder
+    private var content: some View {
+        @Bindable var model = model
+        switch field {
+        case .genre:
+            genreList
+        case .rating:
+            VStack(spacing: 20) {
+                FigureLine(title: nil, figures: [5, 6, 6.5, 7, 7.5, 8, 8.5, 9].map { (FilterText.figure($0), $0) },
+                           selection: $model.criteria.minRating)
+                Text(["الرقم المختار وأعلى", model.ratingSource.map { "التقييم \($0)" }].compactMap { $0 }.joined(separator: " • "))
+                    .font(.system(size: 22))
+                    .foregroundStyle(.white.opacity(0.45))
             }
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 250), spacing: 20)], alignment: .leading, spacing: 20) {
-                content()
+        case .episodes:
+            VStack(spacing: 40) {
+                FigureLine(title: "أكثر من", figures: [6, 12, 24, 50, 100, 200].map { (ArabicFormat.digits($0), $0) },
+                           selection: $model.criteria.moreEpisodes)
+                FigureLine(title: "أقل من", figures: [7, 13, 25, 50, 100, 200].map { (ArabicFormat.digits($0), $0) },
+                           selection: $model.criteria.fewerEpisodes)
+            }
+        case .year:
+            VStack(spacing: 40) {
+                FigureLine(title: "من سنة", figures: model.years.map { (ArabicFormat.digits($0), $0) },
+                           selection: $model.criteria.fromYear)
+                FigureLine(title: "إلى سنة", figures: model.years.map { (ArabicFormat.digits($0), $0) },
+                           selection: $model.criteria.toYear)
+            }
+        case .seasons:
+            HStack(spacing: 16) {
+                ForEach(1...5, id: \.self) { count in
+                    Button { model.criteria.seasons.formSymmetricDifference([count]) } label: {
+                        Text(count == 5 ? "٥ أو أكثر" : FilterText.seasons(count))
+                    }
+                    .buttonStyle(FigureStyle(selected: model.criteria.seasons.contains(count), width: 236))
+                }
+            }
+        }
+    }
+
+    private var genreList: some View {
+        let several = model.criteria.genres.count > 1
+        return VStack(spacing: 24) {
+            // Always there, so the list doesn't jump when a second genre is chosen.
+            HStack(spacing: 16) {
+                Button { model.criteria.matchAllGenres = true } label: { Text("كل التصنيفات معًا") }
+                    .buttonStyle(FigureStyle(selected: several && model.criteria.matchAllGenres, width: 300))
+                Button { model.criteria.matchAllGenres = false } label: { Text("أي تصنيف منها") }
+                    .buttonStyle(FigureStyle(selected: several && !model.criteria.matchAllGenres, width: 300))
+            }
+            .opacity(several ? 1 : 0.3)
+            .disabled(!several)
+            .focusSection()
+
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 44) {
+                    if !model.animeGenres.isEmpty {
+                        genreSection("تصنيفات الأنمي", model.animeGenres)
+                    }
+                    if !model.genres.isEmpty {
+                        genreSection(model.animeGenres.isEmpty ? nil : "تصنيفات عامة", model.genres.map(\.name))
+                    }
+                }
+                .padding(.vertical, 20)
+                .padding(.horizontal, Self.inset)
+            }
+            .frame(height: 560)
+            // Rows fade out at the edges instead of being cut.
+            .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.04),
+                                         .init(color: .black, location: 0.94), .init(color: .clear, location: 1)],
+                                 startPoint: .top, endPoint: .bottom))
+            .focusSection()
+        }
+    }
+
+    private func genreSection(_ title: String?, _ names: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            if let title {
+                Text(title)
+                    .font(.system(size: 26, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.45))
+                    .padding(.horizontal, 24)
+            }
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 24), count: 3), spacing: 14) {
+                ForEach(names, id: \.self) { name in
+                    Button { model.criteria.genres.formSymmetricDifference([name]) } label: { Text(name) }
+                        .buttonStyle(GenreRowStyle(selected: model.criteria.genres.contains(name)))
+                }
+            }
+        }
+    }
+}
+
+/// «أي  ٥  ٦  ٧ …»: one line of figures (scrolls when long), one of them chosen.
+private struct FigureLine<Value: Hashable>: View {
+    let title: String?
+    let figures: [(String, Value)]
+    @Binding var selection: Value?
+
+    private let cell: CGFloat = 124
+    private let gap: CGFloat = 12
+    private let inset: CGFloat = 70
+
+    var body: some View {
+        let fits = CGFloat(figures.count + 1) * (cell + gap) - gap <= 1400 - 2 * inset
+        VStack(spacing: 16) {
+            if let title {
+                Text(title)
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.6))
+            }
+            if fits {
+                row
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        row.padding(.horizontal, inset).padding(.vertical, 10)
+                    }
+                    .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.06),
+                                                 .init(color: .black, location: 0.94), .init(color: .clear, location: 1)],
+                                         startPoint: .leading, endPoint: .trailing))
+                    .onAppear { if let selection { proxy.scrollTo(selection, anchor: .center) } }
+                }
             }
         }
         .focusSection()
     }
 
-    private func chip(_ title: String, _ selected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                if selected { Image(systemName: "checkmark").font(.system(size: 20, weight: .bold)) }
-                Text(title).lineLimit(1).minimumScaleFactor(0.7)
+    private var row: some View {
+        HStack(spacing: gap) {
+            Button { selection = nil } label: { Text("الكل") }
+                .buttonStyle(FigureStyle(selected: selection == nil, width: cell))
+            ForEach(figures, id: \.1) { figure in
+                Button { selection = selection == figure.1 ? nil : figure.1 } label: { Text(figure.0) }
+                    .buttonStyle(FigureStyle(selected: selection == figure.1, width: cell))
+                    .id(figure.1)
             }
-            .frame(maxWidth: .infinity)
         }
-        .buttonStyle(FilterPillStyle(selected: selected))
+    }
+}
+
+/// Plain text; focused: white capsule; chosen: amber with a line under it.
+private struct FigureStyle: ButtonStyle {
+    let selected: Bool
+    let width: CGFloat
+
+    func makeBody(configuration: Configuration) -> some View { FigureBody(configuration: configuration, selected: selected, width: width) }
+
+    private struct FigureBody: View {
+        let configuration: ButtonStyleConfiguration
+        let selected: Bool
+        let width: CGFloat
+        @Environment(\.isFocused) private var isFocused
+
+        var body: some View {
+            configuration.label
+                .font(.system(size: 32, weight: selected ? .bold : .medium))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .foregroundStyle(isFocused ? Color.black : (selected ? ArtworkStatusOverlay.orange : Color.white.opacity(0.75)))
+                .padding(.horizontal, 12)
+                .frame(width: width, height: 76)
+                .background(Capsule().fill(isFocused ? Color.white : Color.clear))
+                .overlay(alignment: .bottom) {
+                    Capsule().fill(ArtworkStatusOverlay.orange)
+                        .frame(width: 34, height: 4)
+                        .offset(y: -6)
+                        .opacity(selected ? 1 : 0)
+                }
+                .scaleEffect(configuration.isPressed ? 0.95 : 1)
+                .animation(.easeOut(duration: 0.15), value: isFocused)
+        }
+    }
+}
+
+/// A genre: a circle (✓ when chosen) and the name; focused: white.
+private struct GenreRowStyle: ButtonStyle {
+    let selected: Bool
+
+    func makeBody(configuration: Configuration) -> some View { RowBody(configuration: configuration, selected: selected) }
+
+    private struct RowBody: View {
+        let configuration: ButtonStyleConfiguration
+        let selected: Bool
+        @Environment(\.isFocused) private var isFocused
+
+        var body: some View {
+            HStack(spacing: 18) {
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 28, weight: selected ? .bold : .light))
+                    .foregroundStyle(selected ? ArtworkStatusOverlay.orange : (isFocused ? Color.black.opacity(0.4) : Color.white.opacity(0.3)))
+                configuration.label
+                    .font(.system(size: 29, weight: selected ? .semibold : .regular))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .foregroundStyle(isFocused ? Color.black : Color.white.opacity(selected ? 1 : 0.8))
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 24)
+            .frame(height: 74)
+            .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(isFocused ? Color.white : Color.clear))
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.easeOut(duration: 0.15), value: isFocused)
+        }
     }
 }
 
@@ -441,9 +586,12 @@ private enum FilterText {
     }
 
     /// "٧ وأعلى", "٧٫٥ وأعلى"
-    static func rating(_ value: Double) -> String {
+    static func rating(_ value: Double) -> String { figure(value) + " وأعلى" }
+
+    /// "٧", "٧٫٥"
+    static func figure(_ value: Double) -> String {
         let text = value == value.rounded() ? String(Int(value)) : String(format: "%.1f", value)
-        return ArabicFormat.digits(text.replacingOccurrences(of: ".", with: "٫")) + " وأعلى"
+        return ArabicFormat.digits(text.replacingOccurrences(of: ".", with: "٫"))
     }
 
     static func seasons(_ n: Int) -> String {

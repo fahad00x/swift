@@ -244,11 +244,17 @@ final class PlexServerClient: Sendable {
         var keys = Set<String>()
         var start = 0
         while true {
-            guard let c = try? await container("/library/sections/\(section.key)/all",
-                                               [("type", section.type == "movie" ? "1" : "2"),
-                                                ("genre", ids.joined(separator: ",")),
-                                                ("X-Plex-Container-Start", "\(start)"),
-                                                ("X-Plex-Container-Size", "\(size)")]) else { return nil }
+            let query = [("type", section.type == "movie" ? "1" : "2"),
+                         ("genre", ids.joined(separator: ",")),
+                         ("X-Plex-Container-Start", "\(start)"),
+                         ("X-Plex-Container-Size", "\(size)")]
+            let path = "/library/sections/\(section.key)/all"
+            var page = try? await container(path, query)
+            if page == nil {
+                // Server not reachable: what it answered last time.
+                page = try? await PlexResponseCache.$policy.withValue(.cacheOnly) { try await container(path, query) }
+            }
+            guard let c = page else { return nil }
             keys.formUnion(c.metadata.map(\.ratingKey))
             start += c.metadata.count
             if c.metadata.isEmpty || start >= (c.totalSize ?? c.size ?? 0) { return keys }
