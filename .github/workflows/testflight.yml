@@ -247,6 +247,50 @@ jobs:
             exit 1
           fi
 
+      # The upload above leaves no .ipa behind: export the same archive again, to disk, with the
+      # same options and signing, and read the entitlements of the App Store-signed app.
+      # Report only: never fails the run (the build is already uploaded).
+      - name: Check iCloud entitlements in the exported app
+        continue-on-error: true
+        run: |
+          CONTAINER="iCloud.com.fahad00x.lumen"
+          report() {
+            echo "$1"
+            echo "- iCloud (exported app): $1" >> "$GITHUB_STEP_SUMMARY"
+          }
+          CHECK="$RUNNER_TEMP/export-check"
+          rm -rf "$CHECK" && mkdir -p "$CHECK"
+          cp "$RUNNER_TEMP/ExportOptions.plist" "$CHECK/ExportOptions.plist"
+          /usr/libexec/PlistBuddy -c "Set :destination export" "$CHECK/ExportOptions.plist"
+          if ! xcodebuild -exportArchive \
+            -archivePath "$ARCHIVE_PATH" \
+            -exportOptionsPlist "$CHECK/ExportOptions.plist" \
+            -exportPath "$CHECK/out" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" > "$CHECK/export.log" 2>&1; then
+            tail -20 "$CHECK/export.log"
+            report "UNKNOWN: the export to disk failed"
+            exit 1
+          fi
+          unzip -q "$(ls "$CHECK"/out/*.ipa | head -1)" -d "$CHECK/ipa"
+          APP=$(ls -d "$CHECK"/ipa/Payload/*.app | head -1)
+          codesign -dvv "$APP" 2>&1 | grep -E "^(Identifier|Authority)" || true
+          ENT=$(codesign -d --entitlements - --xml "$APP" 2>/dev/null)
+          if [ -z "$ENT" ]; then
+            report "UNKNOWN: could not read the entitlements"
+            exit 1
+          fi
+          printf '%s' "$ENT" | plutil -convert xml1 -o - -
+          if [[ "$ENT" == *"<string>$CONTAINER</string>"* ]]; then
+            report "FOUND: $CONTAINER"
+          else
+            report "NOT FOUND: $CONTAINER"
+            echo "::warning title=iCloud::The exported app has no $CONTAINER entitlement; profile sync is off in this build."
+          fi
+          rm -rf "$CHECK"
+
       # Upload only means Apple received the file; ITMS errors (e.g. 90208) come from processing.
       - name: Wait for App Store Connect processing
         env:
