@@ -65,6 +65,15 @@ struct HomeFeed: Codable {
         return dir.appendingPathComponent("\(client.machineIdentifier)-\(profile.id)-\(signature).json")
     }
 
+    /// Forgets every saved Home (all servers and profiles); the next load rebuilds it.
+    static func clearSnapshots() {
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("HomeSnapshots", isDirectory: true)
+        for url in (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [] {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
     /// The last Home shown for this server and profile, with the profile's current progress.
     @MainActor
     static func saved(client: PlexServerClient, store: ProfileStore) -> HomeFeed? {
@@ -185,7 +194,9 @@ struct HomeFeed: Codable {
         }
         rows += Self.genreRows(sample, focus: filter.focusGenres, affinity: affinity)
 
-        return HomeFeed(featured: newFeatured, continueWatching: deck, continueLogos: logos, myList: list, rows: rows)
+        let feed = HomeFeed(featured: newFeatured, continueWatching: deck, continueLogos: logos, myList: list, rows: rows)
+        HomeDiagnostics.record(feed: feed)
+        return feed
         #endif
     }
 

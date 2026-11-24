@@ -14,6 +14,8 @@ struct SettingsView: View {
     @State private var editing: UserProfile?
     @State private var pin: PinRequest?
     @State private var showLibraries = false
+    @State private var versionTaps = HiddenTapCounter()
+    @State private var showDiagnostics = false
 
     var body: some View {
         BrowseStack(client: client) {
@@ -141,7 +143,10 @@ struct SettingsView: View {
                 }
 
                 Section("حول") {
+                    // Five taps open the hidden Home tuning screen.
                     LabeledContent("الإصدار", value: PlexClientInfo.version)
+                        .contentShape(Rectangle())
+                        .onTapGesture { if versionTaps.tap() { showDiagnostics = true } }
                     LabeledContent("رقم البناء", value: PlexClientInfo.build)
                 }
             }
@@ -151,6 +156,9 @@ struct SettingsView: View {
             .onChange(of: autoPlayNext) { _, on in store.updateSettings { $0.autoPlayNext = on } }
             .navigationDestination(isPresented: $showLibraries) {
                 LibrariesSettingsView(client: client, sections: sections)
+            }
+            .navigationDestination(isPresented: $showDiagnostics) {
+                HomeDiagnosticsView(client: client)
             }
         }
         .sheet(item: $editing) { profile in

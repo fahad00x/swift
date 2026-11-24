@@ -520,6 +520,8 @@ struct SettingsView: View {
     @AppStorage(PlaybackSettings.maxBitrateKey) private var maxBitrate = PlaybackSettings.defaultBitrate
     @State private var editing: UserProfile?
     @State private var pin: PinRequest?
+    @State private var versionTaps = HiddenTapCounter()
+    @State private var showDiagnostics = false
 
     var body: some View {
         NavigationStack {
@@ -647,7 +649,12 @@ struct SettingsView: View {
                 }
 
                 Section("حول") {
-                    LabeledContent("الإصدار", value: PlexClientInfo.version)
+                    // Five presses open the hidden Home tuning screen.
+                    Button {
+                        if versionTaps.tap() { showDiagnostics = true }
+                    } label: {
+                        LabeledContent("الإصدار", value: PlexClientInfo.version)
+                    }
                     LabeledContent("رقم البناء", value: PlexClientInfo.build)
                 }
             }
@@ -660,6 +667,9 @@ struct SettingsView: View {
             // Follow the profile to its other devices.
             .onChange(of: autoSkipIntro) { _, on in store.updateSettings { $0.autoSkipIntro = on } }
             .onChange(of: autoPlayNext) { _, on in store.updateSettings { $0.autoPlayNext = on } }
+            .navigationDestination(isPresented: $showDiagnostics) {
+                HomeDiagnosticsView(client: client)
+            }
         }
         .fullScreenCover(item: $editing) { profile in
             ProfileEditorView(client: client, sections: sections, existing: profile)
