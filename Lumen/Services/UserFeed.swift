@@ -3,44 +3,74 @@ import Foundation
 /// Home content built from the active profile's own history (never from Plex's shared onDeck).
 @MainActor
 enum UserFeed {
-    /// In-progress items, then the next episode of shows the profile is following; newest first.
+    /// Movies in progress, and each show the profile started, once: its oldest unwatched
+    /// episode (several can be in progress, e.g. after an import). Newest activity first.
     static func continueWatching(store: ProfileStore, client: PlexServerClient, filter: ContentFilter,
                                  limit: Int = 20) async -> [PlexItem] {
         let states = store.activeStates
-        let inProgress = states
-            .filter { !$0.watched && $0.offsetMs > 10_000 && ($0.progress ?? 0) < 0.95 }
-            .sorted { $0.lastViewedAt > $1.lastViewedAt }
-            .prefix(limit)
-        let showsInProgress = Set(inProgress.compactMap(\.showKey))
+        func newer(_ a: MediaState, _ b: MediaState) -> Bool {
+            a.lastViewedAt != b.lastViewedAt ? a.lastViewedAt > b.lastViewedAt : (a.sortIndex ?? 0) > (b.sortIndex ?? 0)
+        }
 
-        // Latest watched episode of each other show → its next unwatched episode.
+        // One entry per show (its latest episode in progress) or movie.
+        var seenShows = Set<String>()
+        let allInProgress = states
+            .filter { !$0.watched && $0.offsetMs > 10_000 && ($0.progress ?? 0) < 0.95 }
+            .sorted(by: newer)
+            .filter { state in state.showKey.map { seenShows.insert($0).inserted } ?? true }
+        let inProgress = allInProgress.prefix(limit)
+
+        // Latest watched episode of each other show.
         var latest: [String: MediaState] = [:]
         for state in states where state.watched && state.type == "episode" {
-            guard let show = state.showKey, !showsInProgress.contains(show) else { continue }
-            if let current = latest[show] {
-                let newer = state.lastViewedAt > current.lastViewedAt
-                    || (state.lastViewedAt == current.lastViewedAt && (state.sortIndex ?? 0) > (current.sortIndex ?? 0))
-                if newer { latest[show] = state }
-            } else {
-                latest[show] = state
-            }
+            guard let show = state.showKey, !seenShows.contains(show) else { continue }
+            if let current = latest[show], !newer(state, current) { continue }
+            latest[show] = state
         }
-        let following = latest.values.sorted { $0.lastViewedAt > $1.lastViewedAt }.prefix(12)
+        let following = latest.values.sorted(by: newer).prefix(12)
+
+        // An episode finished after the one in progress counts as the show's activity too.
+        var activity: [String: Date] = [:]
+        for state in states where state.watched || state.offsetMs > 10_000 {
+            guard let show = state.showKey else { continue }
+            activity[show] = max(activity[show] ?? .distantPast, state.lastViewedAt)
+        }
+
+        // Stopped in its last moments: done, as above (not offered again).
+        let nearlyDone = Set(states.filter { !$0.watched && ($0.progress ?? 0) >= 0.95 }.map(\.ratingKey))
 
         var found: [(Date, PlexItem)] = []
         await withTaskGroup(of: (Date, PlexItem?).self) { group in
             for state in inProgress {
-                group.addTask { (state.lastViewedAt, await client.item(state.ratingKey)) }
+                guard state.type == "episode", let show = state.showKey else {
+                    group.addTask { (state.lastViewedAt, await client.item(state.ratingKey)) }
+                    continue
+                }
+                let date = activity[show] ?? state.lastViewedAt
+                group.addTask {
+                    // The show's episodes aren't known (offline): the one in progress.
+                    if let episode = await oldestUnwatched(show: show, client: client, skipping: nearlyDone) { return (date, episode) }
+                    return (date, await client.item(state.ratingKey))
+                }
             }
             for state in following {
                 guard let show = state.showKey else { continue }
-                group.addTask { (state.lastViewedAt, await client.nextUnwatched(showKey: show, after: state.ratingKey)) }
+                group.addTask { (state.lastViewedAt, await oldestUnwatched(show: show, client: client, skipping: nearlyDone)) }
             }
             for await (date, item) in group { if let item { found.append((date, item)) } }
         }
         var seen = Set<String>()
-        let ordered = found.sorted { $0.0 > $1.0 }.map(\.1).filter { seen.insert($0.ratingKey).inserted }
+        let ordered = found.sorted { $0.0 > $1.0 }.map(\.1)
+            .filter { seen.insert($0.isEpisode ? ($0.grandparentRatingKey ?? $0.ratingKey) : $0.ratingKey).inserted }
         return Array(await filter.resolve(ordered, client: client).prefix(limit))
+    }
+
+    /// First episode, in order, the active profile hasn't watched (specials don't count).
+    nonisolated private static func oldestUnwatched(show: String, client: PlexServerClient,
+                                                    skipping done: Set<String>) async -> PlexItem? {
+        await client.allLeaves(show)
+            .filter { $0.parentIndex != 0 && !$0.isWatched && !done.contains($0.ratingKey) }
+            .min { (($0.parentIndex ?? 0), ($0.index ?? 0)) < (($1.parentIndex ?? 0), ($1.index ?? 0)) }
     }
 
     /// "قائمتي", newest first.
