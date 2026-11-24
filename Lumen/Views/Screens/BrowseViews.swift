@@ -719,35 +719,3 @@ struct SettingsView: View {
         pin = PinRequest(title: "رمز المستخدم الرئيسي", profiles: editors, onSuccess: action)
     }
 }
-
-/// Settings switch with Arabic state words (a system Toggle shows the system's On/Off).
-private struct ArabicToggle: View {
-    let title: String
-    @Binding var isOn: Bool
-
-    init(_ title: String, isOn: Binding<Bool>) {
-        self.title = title
-        _isOn = isOn
-    }
-
-    var body: some View {
-        Button { isOn.toggle() } label: {
-            HStack {
-                Text(title)
-                Spacer(minLength: 20)
-                Text(isOn ? "مفعّل" : "متوقف").foregroundStyle(.secondary)
-            }
-        }
-    }
-}
-
-/// Section explanation: smaller and grey, under the rows it explains.
-private struct FooterText: View {
-    let text: String
-    init(_ text: String) { self.text = text }
-    var body: some View {
-        Text(text)
-            .font(.system(size: 22))
-            .foregroundStyle(.white.opacity(0.55))
-    }
-}

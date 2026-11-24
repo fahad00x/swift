@@ -17,11 +17,13 @@ struct LibrariesPage: View {
 
     var body: some View {
         List {
+            #if os(tvOS)
+            Section {} header: { PageTitle("المكتبات") }
+            #endif
             ForEach(sections) { section in
                 #if os(tvOS)
-                Toggle(isOn: libraryBinding(section)) {
-                    Label(section.title, systemImage: section.type == "show" ? "tv" : "film")
-                }
+                ArabicToggle(section.title, systemImage: section.type == "show" ? "tv" : "film",
+                             isOn: libraryBinding(section))
                 #else
                 Section {
                     Toggle(isOn: binding(.all, section)) {
@@ -52,8 +54,8 @@ struct LibrariesPage: View {
             #endif
         }
         .frame(maxWidth: 1200)
-        .navigationTitle("المكتبات")
         #if !os(tvOS)
+        .navigationTitle("المكتبات")
         .task {
             await withTaskGroup(of: (String, Bool).self) { group in
                 for section in sections {
@@ -122,25 +124,39 @@ struct GenresPage: View {
 
     var body: some View {
         List {
+            #if os(tvOS)
+            Section {} header: { PageTitle("الأنواع المفضّلة") }
+            #endif
             Section {
                 Button("كل الأنواع") { genres = [] }
                     .foregroundStyle(genres.isEmpty ? Color.accentColor : .primary)
             } footer: {
+                #if os(tvOS)
+                FooterText("اختر أنواعاً لتركّز عليها الصفوف والاقتراحات. إذا ما اخترت شي، تطلع كل الأنواع.")
+                #else
                 Text("اختر أنواعاً لتركّز عليها الصفوف والاقتراحات. إذا ما اخترت شي، تطلع كل الأنواع.")
+                #endif
             }
             Section {
                 if loading { ProgressView() }
                 ForEach(available, id: \.self) { genre in
-                    Toggle(ArabicFormat.genre(genre), isOn: Binding {
+                    let isOn = Binding {
                         genres.contains(genre)
                     } set: { on in
                         if on { genres.append(genre) } else { genres.removeAll { $0 == genre } }
-                    })
+                    }
+                    #if os(tvOS)
+                    ArabicToggle(ArabicFormat.genre(genre), isOn: isOn)
+                    #else
+                    Toggle(ArabicFormat.genre(genre), isOn: isOn)
+                    #endif
                 }
             }
         }
         .frame(maxWidth: 1100)
+        #if !os(tvOS)
         .navigationTitle("الأنواع المفضّلة")
+        #endif
         .task {
             var all = Set<String>(genres)
             await withTaskGroup(of: [String].self) { group in

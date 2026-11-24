@@ -516,28 +516,6 @@ extension Animation {
 // MARK: - Native tvOS buttons
 
 extension View {
-    /// The system tvOS button (translucent; focused: white with a dark label, lift, shine and
-    /// parallax), as a capsule.
-    func nativePillButton() -> some View {
-        self
-            .font(.system(size: 28, weight: .semibold))
-            .buttonStyle(.bordered)
-            .buttonBorderShape(.capsule)
-            // System colours: the app's amber tint would colour the label and the fill alike (blank buttons).
-            .tint(nil)
-    }
-
-    /// The system tvOS button as a circle (+, ⓘ, ›, episodes).
-    func nativeCircleButton() -> some View {
-        self
-            .font(.system(size: 28, weight: .semibold))
-            .buttonStyle(.bordered)
-            .buttonBorderShape(.circle)
-            .tint(nil)
-    }
-}
-
-extension View {
     /// Native tvOS highlight (lift, shadow, moving shine, parallax) in `shape`. The shaped
     /// hover-effect area needs tvOS 18; on 17 the highlight uses the view's bounds.
     @ViewBuilder

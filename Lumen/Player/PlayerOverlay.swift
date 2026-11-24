@@ -25,14 +25,6 @@ struct PlayerOverlay: View {
                 if let skip = session.skipAction, !session.isPanelOpen {
                     skipButton(skip)
                 }
-                // TEMPORARY (remote test build): where the last command came from.
-                Text(verbatim: session.commandLog + " | " + session.audioState)
-                    .font(.system(size: 20, design: .monospaced))
-                    .foregroundStyle(.yellow)
-                    .padding(40)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                    .environment(\.layoutDirection, .leftToRight)
-                    .allowsHitTesting(false)
                 if session.isPanelOpen {
                     TracksPanel(session: session)
                         .transition(.move(edge: .top).combined(with: .opacity))

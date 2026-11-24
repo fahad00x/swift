@@ -31,6 +31,8 @@ struct ProfileEditorView: View {
 
     var body: some View {
         NavigationStack {
+            VStack(spacing: 10) {
+            PageTitle(existing == nil ? "إضافة مستخدم" : "تعديل المستخدم")
             HStack(alignment: .top, spacing: 80) {
                 VStack(spacing: 30) {
                     ProfileAvatar(profile: draft, size: 300)
@@ -47,7 +49,7 @@ struct ProfileEditorView: View {
                 form
             }
             .padding(.horizontal, 60)
-            .navigationTitle(existing == nil ? "إضافة مستخدم" : "تعديل المستخدم")
+            }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             // Full-screen and opaque: nothing of the screen underneath shows through.
             .background(Color.black.ignoresSafeArea())
@@ -89,7 +91,7 @@ struct ProfileEditorView: View {
 
             Section {
                 if !draft.isOwner {
-                    Toggle("حساب أطفال", isOn: $draft.isKids)
+                    ArabicToggle("حساب أطفال", isOn: $draft.isKids)
                 }
                 if draft.hasPIN {
                     Button("تغيير رمز PIN") { settingPIN = true }
@@ -98,7 +100,7 @@ struct ProfileEditorView: View {
                     Button("تعيين رمز PIN (٤ أرقام)") { settingPIN = true }
                 }
             } footer: {
-                Text(draft.isKids
+                FooterText(draft.isKids
                      ? "يظهر فقط المحتوى المناسب للأطفال (G وPG وTV-Y وTV-Y7 وTV-G وTV-PG). تغيير إعداداته يحتاج رمز المستخدم الرئيسي."
                      : (draft.isOwner ? "رمز المستخدم الرئيسي يحمي إعدادات حسابات الأطفال." : ""))
             }
@@ -170,6 +172,7 @@ private struct AvatarPickerPage: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 50) {
+                PageTitle("الصورة واللون")
                 Text("اللون").font(.title3.weight(.semibold)).padding(.horizontal, 80)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 36) {
@@ -206,7 +209,6 @@ private struct AvatarPickerPage: View {
             }
             .padding(.vertical, 40)
         }
-        .navigationTitle("الصورة واللون")
     }
 }
 
@@ -219,6 +221,7 @@ struct TabOrderPage: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
+                PageTitle("ترتيب التبويبات")
                 Text("رتّب التبويبات اللي تطلع فوق. الرئيسية أولاً دائماً، والبحث والإعدادات آخراً.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -245,7 +248,6 @@ struct TabOrderPage: View {
             .frame(maxWidth: 1100)
             .padding(60)
         }
-        .navigationTitle("ترتيب التبويبات")
     }
 
     private func title(_ raw: String) -> String {

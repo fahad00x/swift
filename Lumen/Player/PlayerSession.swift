@@ -92,11 +92,6 @@ final class PlayerSession {
     enum CommandSource: String { case press = "UIPress", remote = "MPRemoteCommand" }
     private enum CommandKind: String { case playPause, skip }
     private static let log = Logger(subsystem: "com.fahad00x.lumen", category: "remote")
-    /// TEMPORARY (remote test build): last command and its source, drawn over the player.
-    private(set) var commandLog = "remote: –"
-    /// TEMPORARY: "mix=yes" = the audio session can't own Now Playing.
-    private(set) var audioState = ""
-    private var commandCount = 0
     @ObservationIgnored private var lastAccepted: [CommandKind: (source: CommandSource, time: TimeInterval)] = [:]
     @ObservationIgnored private lazy var nowPlaying = NowPlayingController(session: self)
     private let generation = PlaybackManager.shared.playbackGeneration
@@ -196,9 +191,7 @@ final class PlayerSession {
         let last = lastAccepted[kind]
         let duplicate = last.map { $0.source != source && now - $0.time < 0.3 } ?? false
         if !duplicate { lastAccepted[kind] = (source, now) }
-        commandCount += 1
-        commandLog = "#\(commandCount) \(detail) ← \(source.rawValue)\(duplicate ? " (duplicate)" : "")"
-        Self.log.notice("\(self.commandLog, privacy: .public)")
+        Self.log.debug("\(detail, privacy: .public) from \(source.rawValue, privacy: .public)\(duplicate ? " (duplicate)" : "", privacy: .public)")
         return !duplicate
     }
 
@@ -232,9 +225,6 @@ final class PlayerSession {
     @discardableResult
     func jump(to seconds: Double, from source: CommandSource) -> Bool {
         guard canControl, duration > 0, seconds.isFinite else { return false }
-        commandCount += 1
-        commandLog = "#\(commandCount) jump \(Int(seconds)) ← \(source.rawValue)"
-        Self.log.notice("\(self.commandLog, privacy: .public)")
         seek(to: min(max(0, seconds), max(0, duration - 1)))
         return true
     }
@@ -420,11 +410,6 @@ final class PlayerSession {
     }
 
     private func tick() {
-        let state = AVAudioSession.sharedInstance().categoryOptions.contains(.mixWithOthers) ? "mix=yes" : "mix=no"
-        if state != audioState {
-            audioState = state
-            Self.log.notice("audio session \(state, privacy: .public)")
-        }
         updateSkipAction()
         Task { await report(force: false) }
     }

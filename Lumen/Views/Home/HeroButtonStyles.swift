@@ -1,57 +1,41 @@
 import SwiftUI
 
-// Button styles shared by the details page (the Home hero carousel was removed).
+// Banner and details buttons. Every colour is explicit: the system bordered style mixes in
+// the app's amber tint differently on a real Apple TV and on the simulator.
 
-
-/// White capsule (Play / Resume).
-struct HeroPillButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        PillBody(configuration: configuration)
-    }
-
-    private struct PillBody: View {
-        let configuration: ButtonStyleConfiguration
-        @Environment(\.isFocused) private var isFocused
-
-        var body: some View {
-            configuration.label
-                .font(.headline)
-                // Pure black on the white pill (light scheme so no symbol/text adapts to grey).
-                .foregroundStyle(Color.black)
-                .environment(\.colorScheme, .light)
-                .padding(.horizontal, 46)
-                .frame(height: 76)
-                .background(Capsule().fill(Color.white.opacity(isFocused ? 1 : 0.88)))
-                .scaleEffect(configuration.isPressed ? 0.96 : (isFocused ? 1.1 : 1))
-                .shadow(color: .black.opacity(isFocused ? 0.45 : 0), radius: 18, y: 10)
-                .animation(.easeOut(duration: 0.18), value: isFocused)
-        }
-    }
+extension View {
+    /// Play / Resume.
+    func nativePillButton() -> some View { buttonStyle(HeroButtonStyle(circle: false)) }
+    /// +, i, next, episodes.
+    func nativeCircleButton() -> some View { buttonStyle(HeroButtonStyle(circle: true)) }
 }
 
-/// Small round icon button (+, i, >).
-struct HeroCircleButtonStyle: ButtonStyle {
-    var dimmed = false
+/// Focused: light fill, black label. Otherwise dark glass with an amber label.
+private struct HeroButtonStyle: ButtonStyle {
+    let circle: Bool
 
     func makeBody(configuration: Configuration) -> some View {
-        CircleBody(configuration: configuration, dimmed: dimmed)
+        StyleBody(configuration: configuration, circle: circle)
     }
 
-    private struct CircleBody: View {
+    private struct StyleBody: View {
         let configuration: ButtonStyleConfiguration
-        let dimmed: Bool
+        let circle: Bool
         @Environment(\.isFocused) private var isFocused
 
         var body: some View {
             configuration.label
-                .font(.system(size: 30, weight: .semibold))
-                .foregroundStyle(isFocused ? Color.black : Color.white)
-                .environment(\.colorScheme, isFocused ? .light : .dark)
-                .frame(width: 76, height: 76)
-                .background(Circle().fill(isFocused ? Color.white : Color.white.opacity(0.2)))
-                .opacity(dimmed && !isFocused ? 0.45 : 1)
-                .scaleEffect(configuration.isPressed ? 0.94 : (isFocused ? 1.12 : 1))
-                .shadow(color: .black.opacity(isFocused ? 0.45 : 0), radius: 14, y: 8)
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(isFocused ? Color.black : Color(red: 1, green: 0.68, blue: 0.16))
+                .padding(.horizontal, circle ? 0 : 32)
+                .frame(width: circle ? 60 : nil, height: circle ? 60 : 66)
+                .background {
+                    Capsule().fill(.ultraThinMaterial).environment(\.colorScheme, .dark)
+                    Capsule().fill(Color.white.opacity(0.08))
+                    Capsule().fill(Color(white: 0.82)).opacity(isFocused ? 1 : 0)
+                }
+                .scaleEffect(configuration.isPressed ? 0.97 : (isFocused ? 1.1 : 1))
+                .shadow(color: .black.opacity(isFocused ? 0.4 : 0), radius: 16, y: 8)
                 .animation(.easeOut(duration: 0.18), value: isFocused)
         }
     }
