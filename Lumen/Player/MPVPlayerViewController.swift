@@ -6,8 +6,8 @@ import UIKit
 /// Full-screen MPV player with Infuse-style remote controls:
 /// - Click / Play-Pause: pause & resume (or press the skip button when it is shown)
 /// - Left / Right: jump 10 s back / forward, swipe on the touch surface to scrub
-/// - Down: the four buttons (episodes, subtitles, audio, quality); Left / Right move between
-///   them, click opens one's panel; Up hides them
+/// - Up: the four buttons above the bar (episodes, subtitles, audio, quality); Left / Right
+///   move between them, click opens one's panel; Down hides them
 /// - Menu / Back: closes the panel, then the buttons, then the player
 final class MPVPlayerViewController: UIViewController {
     let session: PlayerSession
@@ -155,7 +155,7 @@ final class MPVPlayerViewController: UIViewController {
                 stepBack()
             case .playPause:
                 session.togglePause(from: .press)
-            case .upArrow where session.panel == nil:
+            case .downArrow where session.panel == nil:
                 hideButtons()
             default:
                 // Arrows move the focus, click picks (the buttons and panels handle them).
@@ -178,9 +178,9 @@ final class MPVPlayerViewController: UIViewController {
             session.skip(by: -10, from: .press)
         case .rightArrow:
             session.skip(by: 10, from: .press)
-        case .downArrow:
-            showButtons()
         case .upArrow:
+            showButtons()
+        case .downArrow:
             session.showControls()
         case .menu:
             close()

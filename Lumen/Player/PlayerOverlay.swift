@@ -2,7 +2,7 @@ import SwiftUI
 
 /// On-screen controls drawn over the video (Infuse layout, mirrored for Arabic): the info on
 /// the reading side, four glass buttons on the other, a thin full-width progress bar under
-/// them. Down shows the buttons; each opens its panel above it. Nothing sits at the top of
+/// them. Up shows the buttons; each opens its panel above it. Nothing sits at the top of
 /// the screen, where styled (ASS) subtitles often place signs and titles.
 struct PlayerOverlay: View {
     let session: PlayerSession
@@ -215,9 +215,12 @@ private struct PlayerChrome: View {
             .frame(height: 10)
             // The playhead tick rises above the bar without making it thicker.
             .overlay(alignment: .leading) {
+                // Playing: as tall as the bar; paused: taller; scrubbing: tallest.
+                let tick: CGFloat = session.scrubPosition != nil ? 32 : (session.isPaused ? 20 : 10)
                 Rectangle().fill(Color.white)
-                    .frame(width: 2.5, height: session.scrubPosition != nil ? 32 : 20)
-                    .offset(x: geo.size.width * played - 1.25, y: -4)
+                    .frame(width: 2.5, height: tick)
+                    .offset(x: geo.size.width * played - 1.25, y: -(tick - 10) / 2)
+                    .animation(.easeOut(duration: 0.2), value: tick)
             }
         }
         .frame(height: 10)
