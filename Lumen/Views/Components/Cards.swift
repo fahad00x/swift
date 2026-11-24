@@ -411,12 +411,8 @@ struct ShelfView: View {
     @Environment(ProfileStore.self) private var store
     @Environment(BrowseReturnState.self) private var returnState
     @Environment(\.pageRowFocused) private var pageRowFocused
-    /// Pages pushed over the row (details): when they're all gone, see `redrawAfterReturn`.
-    @Environment(ShellState.self) private var shell: ShellState?
     @FocusState private var focusedID: String?
     @State private var lastFocusedID: String?
-    /// Bumped to rebuild the cards (see `redrawAfterReturn`).
-    @State private var revision = 0
 
     var body: some View {
         let items = shelf.items.mergingCopies(store)
@@ -447,7 +443,6 @@ struct ShelfView: View {
                                           logoPath: shelf.logos[item.ratingKey],
                                           sourceID: context.sourceID(for: item),
                                           context: context)
-                                .id("\(item.id)#\(revision)")
                                 .focused($focusedID, equals: item.id)
                         }
                     }
@@ -455,11 +450,17 @@ struct ShelfView: View {
                     .padding(.horizontal, CardKind.inset)
                     .padding(.top, 34)
                     .padding(.bottom, 96)
+                    // A short row fills the screen. Narrower than its scroll view, on tvOS 27 in
+                    // Arabic it slid towards the sidebar by the empty space after a details page
+                    // closed (five cards: 300 pt; two: off the screen).
+                    .containerRelativeFrame(.horizontal, alignment: .leading) { width, _ in
+                        max(width, cardsWidth(items.count))
+                    }
                 }
                 // First card on the same line as every row, after the sidebar; cards scroll under it.
                 .sidebarSafeArea()
                 .scrollClipDisabled()
-                .onAppear { restoreFocus(proxy) }
+                .onAppear { restoreFocus(proxy, count: items.count) }
             }
             .focusSection()
             .defaultFocus($focusedID, lastFocusedID ?? items.first?.id, priority: .userInitiated)
@@ -468,30 +469,20 @@ struct ShelfView: View {
                 // Focus entered this row: the page brings it to its reading position.
                 if old == nil, id != nil { pageRowFocused?(shelf.id) }
             }
-            .onChange(of: shell?.pushedPages ?? 0) { old, new in
-                if old > 0, new == 0 { redrawAfterReturn(items) }
-            }
         }
     }
 
-    /// tvOS 27 (an Apple TV, not the 26 simulator): back from a details page opened from a row
-    /// of episodes (Continue Watching in a series library), the row's cards stayed invisible.
-    /// The zoom transition hides its source card and, the row being rebuilt meanwhile, never
-    /// shows it again. Once the transition is over, rebuild the cards; focus stays put.
-    private func redrawAfterReturn(_ items: [PlexItem]) {
-        guard items.contains(where: \.isEpisode) else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
-            let focused = focusedID
-            revision += 1
-            if let focused { DispatchQueue.main.async { focusedID = focused } }
-        }
+    /// Width of the cards with their margins.
+    private func cardsWidth(_ count: Int) -> CGFloat {
+        CGFloat(count) * shelf.kind.size.width + CGFloat(max(0, count - 1)) * CardKind.spacing + 2 * CardKind.inset
     }
 
     /// After returning from a details page that paged along this row, land on the last item reached.
-    private func restoreFocus(_ proxy: ScrollViewProxy) {
+    private func restoreFocus(_ proxy: ScrollViewProxy, count: Int) {
         guard let id = returnState.take(for: shelf.id) else { return }
         lastFocusedID = id
-        proxy.scrollTo(id, anchor: .center)
+        // Nothing to scroll in a row that fits the screen.
+        if cardsWidth(count) > UIScreen.main.bounds.width { proxy.scrollTo(id, anchor: .center) }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { focusedID = id }
     }
 }
