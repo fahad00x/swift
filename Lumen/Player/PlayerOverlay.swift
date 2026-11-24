@@ -316,6 +316,22 @@ private struct PlayerChrome: View {
                 }
                 .focused($focus, equals: .row("sub-off"))
                 ForEach(orderedSubtitles.others) { track in subtitleRow(track) }
+                // Only styled subtitles have a look of their own.
+                if session.subtitleTracks.contains(where: { $0.isSelected && ["ass", "ssa"].contains($0.codec?.lowercased() ?? "") }) {
+                    Text("الشكل")
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.6))
+                        .padding(.horizontal, 14)
+                        .padding(.top, 14)
+                    ForEach(SubtitleLook.allCases) { look in
+                        PanelRow(selected: look == session.subtitleLook) {
+                            session.setSubtitleLook(look)
+                        } label: {
+                            Text(look.title)
+                        }
+                        .focused($focus, equals: .row("look-" + look.rawValue))
+                    }
+                }
             }
         case .audio:
             PanelCard(title: "الصوت", width: 680) {

@@ -82,6 +82,7 @@ final class PlaybackManager {
         var config = MPVPlayer.Configuration()
         config.hdr = item.isHDR
         config.fastProfile = PlaybackSettings.fastProfile
+        config.subtitleLook = PlaybackSettings.subtitleLook
         config.subtitleSize = PlaybackSettings.subtitleSize
 
         guard let mpv = MPVPlayer(layer: layer, configuration: config) else {

@@ -341,6 +341,14 @@ final class PlayerSession {
         store.chooseAudio(item.mediaInfo, streamID: stream?.id, language: stream?.languageCode ?? track.language)
     }
 
+    /// Look of styled subtitles: applied now and for every file after.
+    private(set) var subtitleLook = PlaybackSettings.subtitleLook
+    func setSubtitleLook(_ look: SubtitleLook) {
+        subtitleLook = look
+        PlaybackSettings.subtitleLook = look
+        player.setSubtitleLook(look)
+    }
+
     func selectSubtitle(_ track: MPVTrack?) {
         player.selectSubtitle(track?.id)
         refreshTracks()

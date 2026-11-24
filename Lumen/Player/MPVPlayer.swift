@@ -175,6 +175,7 @@ final class MPVPlayer {
         var hdr = false
         var fastProfile = false
         var subtitleSize = 44
+        var subtitleLook = SubtitleLook.original
         var preferredLanguages = ["ara", "ar", "eng", "en"]
     }
 
@@ -229,7 +230,8 @@ final class MPVPlayer {
             ("subs-fallback", "yes"),
             ("sub-auto", "no"),
             // Text subtitles (SRT…): white, bold, dark outline. Styled ASS keeps its own look:
-            // `scale` only resizes it with the video, never replaces its fonts or colours.
+            // `scale` only resizes it with the video, never replaces its fonts or colours
+            // (unless the profile asked for one look, see `assOverride`).
             ("sub-font-size", "\(configuration.subtitleSize)"),
             ("sub-bold", "yes"),
             ("sub-color", "#FFFFFFFF"),
@@ -237,7 +239,7 @@ final class MPVPlayer {
             ("sub-border-size", "1.6"),
             ("sub-shadow-color", "#80000000"),
             ("sub-shadow-offset", "2"),
-            ("sub-ass-override", "scale"),
+            ("sub-ass-override", Self.assOverride(configuration.subtitleLook)),
             ("sub-margin-y", "60"),
             ("audio-channels", "auto-safe"),
             // On iOS / tvOS this only means a non-mixable audio session: by default mpv sets
@@ -294,6 +296,19 @@ final class MPVPlayer {
     var isPaused: Bool {
         get { flag("pause") }
         set { setFlag("pause", newValue) }
+    }
+
+    /// mpv's own: `force` restyles what libass takes for dialogue (events with a position keep
+    /// their style). Not `strip`: it misplaces Arabic punctuation.
+    private static func assOverride(_ look: SubtitleLook) -> String {
+        switch look {
+        case .original: return "scale"
+        case .dialogue: return "force"
+        }
+    }
+
+    func setSubtitleLook(_ look: SubtitleLook) {
+        setString("sub-ass-override", Self.assOverride(look))
     }
 
     /// Text subtitles move up while the controls show (and back down after).

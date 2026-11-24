@@ -60,6 +60,7 @@ struct SettingsView: View {
     @AppStorage(PlaybackSettings.autoPlayNextKey) private var autoPlayNext = true
     @AppStorage(PlaybackSettings.maxBitrateKey) private var maxBitrate = PlaybackSettings.defaultBitrate
     @AppStorage(PlaybackSettings.skipSecondsKey) private var skipSeconds = PlaybackSettings.defaultSkip
+    @AppStorage(PlaybackSettings.subtitleLookKey) private var subtitleLook: SubtitleLook = .original
     @AppStorage(PlaybackSettings.subtitleSizeKey) private var subtitleSize = PlaybackSettings.defaultSubtitleSize
 
     @State private var page: Page = .user
@@ -255,7 +256,9 @@ struct SettingsView: View {
             choice("لغة الترجمة", selection: subtitleLanguage,
                    options: [("حسب الملف", ""), ("بدون ترجمة", Self.off)] + Self.languages)
         }
-        SettingsCard("شكل الترجمة", footer: "للترجمة النصية (SRT) في مشغّل Lumen. ترجمات ASS والصور لها شكلها الخاص.") {
+        SettingsCard("شكل الترجمة", footer: "في مشغّل Lumen. «توحيد الحوار» يعطي حوار ASS نفس الخط واللون والحجم ويترك اللوحات والأغاني. ترجمات الصور لا تتغيّر.") {
+            choice("ترجمات ASS", detail: "الترجمات المصمّمة", selection: $subtitleLook,
+                   options: SubtitleLook.allCases.map { ($0.title, $0) })
             choice("حجم الخط", selection: $subtitleSize,
                    options: PlaybackSettings.subtitleSizes.map { ($0.title, $0.size) })
             // How it looks, at the size chosen (mpv sizes text for a 720-line screen).

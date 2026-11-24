@@ -244,6 +244,22 @@ enum PlaybackEngine: String, CaseIterable, Identifiable {
     }
 }
 
+/// How styled (ASS) subtitles look.
+enum SubtitleLook: String, CaseIterable, Identifiable, Sendable {
+    /// As the translator made them.
+    case original
+    /// Dialogue in the app's look; signs and songs placed on the picture keep theirs.
+    case dialogue
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .original: return "الأصلي"
+        case .dialogue: return "توحيد الحوار"
+        }
+    }
+}
+
 enum PlaybackSettings {
     static let engineKey = "playback.engine"
     static let fastProfileKey = "playback.mpvFastProfile"
@@ -253,6 +269,7 @@ enum PlaybackSettings {
     static let maxBitrateKey = "playback.maxBitrateKbps"
     static let skipSecondsKey = "playback.skipSeconds"
     static let subtitleSizeKey = "playback.subtitleSize"
+    static let subtitleLookKey = "playback.subtitleLook"
     static let defaultBitrate = 1_000_000
     static let defaultSkip = 10
     static let defaultSubtitleSize = 44
@@ -276,6 +293,11 @@ enum PlaybackSettings {
     static var subtitleSize: Int {
         let v = UserDefaults.standard.integer(forKey: subtitleSizeKey)
         return v == 0 ? defaultSubtitleSize : v
+    }
+
+    static var subtitleLook: SubtitleLook {
+        get { UserDefaults.standard.string(forKey: subtitleLookKey).flatMap(SubtitleLook.init(rawValue:)) ?? .original }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: subtitleLookKey) }
     }
 
     static let subtitleSizes: [(title: String, size: Int)] = [
