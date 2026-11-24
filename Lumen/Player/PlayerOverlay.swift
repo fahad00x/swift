@@ -1,6 +1,9 @@
 import SwiftUI
 
-/// On-screen controls drawn over the MPV video layer.
+/// On-screen controls drawn over the video (Infuse layout, mirrored for Arabic): the info on
+/// the reading side, four glass buttons on the other, a thin full-width progress bar under
+/// them. Down shows the buttons; each opens its panel above it. Nothing sits at the top of
+/// the screen, where styled (ASS) subtitles often place signs and titles.
 struct PlayerOverlay: View {
     let session: PlayerSession
 
@@ -13,8 +16,9 @@ struct PlayerOverlay: View {
             if let error = session.errorMessage {
                 errorCard(error)
             } else {
-                if session.controlsVisible || session.scrubPosition != nil {
-                    transport.transition(.opacity)
+                if session.controlsVisible || session.scrubPosition != nil || session.isPanelOpen {
+                    PlayerChrome(session: session)
+                        .transition(.opacity)
                 }
                 if session.isPaused && !session.isPanelOpen {
                     Image(systemName: "pause.fill")
@@ -25,106 +29,19 @@ struct PlayerOverlay: View {
                 if let skip = session.skipAction, !session.isPanelOpen {
                     skipButton(skip)
                 }
-                if session.isPanelOpen {
-                    TracksPanel(session: session)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.easeInOut(duration: 0.25), value: session.controlsVisible)
-        .animation(.easeInOut(duration: 0.25), value: session.isPanelOpen)
+        .animation(.easeInOut(duration: 0.2), value: session.isPanelOpen)
+        .animation(.easeInOut(duration: 0.2), value: session.panel)
         .animation(.easeInOut(duration: 0.25), value: session.skipAction)
         .ignoresSafeArea()
     }
 
-    // MARK: Transport bar
-
-    private var transport: some View {
-        VStack(spacing: 0) {
-            LinearGradient(colors: [.black.opacity(0.7), .clear], startPoint: .top, endPoint: .bottom)
-                .frame(height: 220)
-                .overlay(alignment: .topLeading) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(session.title).font(.title2.weight(.bold))
-                        if let subtitle = session.subtitle { Text(subtitle).font(.callout).foregroundStyle(.secondary) }
-                    }
-                    .padding(.horizontal, 90).padding(.top, 60)
-                }
-            Spacer()
-            ZStack(alignment: .bottom) {
-                LinearGradient(colors: [.clear, .black.opacity(0.85)], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 300)
-                VStack(spacing: 16) {
-                    timeline
-                    HStack(spacing: 0) {
-                        Text(Self.format(session.scrubPosition ?? session.position))
-                        Spacer()
-                        // Hint only while the panel is closed (it's what the swipe opens).
-                        Text("اسحب للأسفل: الصوت والترجمة")
-                            .foregroundStyle(.secondary)
-                            .opacity(session.isPanelOpen ? 0 : 1)
-                        Spacer()
-                        // Remaining time, then (as its own label) when the video ends.
-                        Text("-" + Self.format(max(0, session.duration - (session.scrubPosition ?? session.position))))
-                        Text(ArabicFormat.separator).foregroundStyle(.secondary)
-                        Text("ينتهي \(endTime)")
-                            .foregroundStyle(.secondary)
-                            .environment(\.layoutDirection, .rightToLeft)
-                    }
-                    .font(.caption.monospacedDigit())
-                    .environment(\.layoutDirection, .leftToRight)
-                }
-                .padding(.horizontal, 90)
-                .padding(.bottom, 70)
-            }
-        }
-    }
-
-    private var timeline: some View {
-        GeometryReader { geo in
-            let total = max(session.duration, 1)
-            let played = min(1, session.position / total)
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.white.opacity(0.25))
-                Capsule().fill(Color.white).frame(width: geo.size.width * played)
-                ForEach(markerRanges(total: total), id: \.0) { range in
-                    Rectangle()
-                        .fill(Color.accentColor.opacity(0.8))
-                        .frame(width: max(4, geo.size.width * (range.1 - range.0)))
-                        .offset(x: geo.size.width * range.0)
-                }
-                if let scrub = session.scrubPosition {
-                    let x = geo.size.width * min(1, scrub / total)
-                    VStack(spacing: 6) {
-                        Text(Self.format(scrub))
-                            .font(.callout.monospacedDigit().weight(.semibold))
-                            .padding(.horizontal, 14).padding(.vertical, 6)
-                            .background(Capsule().fill(.black.opacity(0.7)))
-                            .fixedSize()
-                        Capsule().fill(Color.accentColor).frame(width: 6, height: 30)
-                    }
-                    .position(x: x, y: -12)
-                }
-            }
-        }
-        .frame(height: 10)
-        .environment(\.layoutDirection, .leftToRight)
-    }
-
-    private func markerRanges(total: Double) -> [(Double, Double)] {
-        session.segments.map { segment in
-            (segment.startSeconds / total, min(1, segment.endSeconds / total))
-        }
-    }
-
-    private var endTime: String {
-        let remaining = max(0, session.duration - session.position)
-        return ArabicFormat.time(Date().addingTimeInterval(remaining))
-    }
-
     // MARK: Skip
 
+    /// On the buttons' side, above them when the controls show (never over the info).
     private func skipButton(_ action: PlayerSession.SkipAction) -> some View {
         VStack {
             Spacer()
@@ -134,24 +51,19 @@ struct PlayerOverlay: View {
                     Image(systemName: action.icon)
                     Text(action.title)
                 }
-                .font(.headline.weight(.semibold))
+                .font(.system(size: 28, weight: .semibold))
                 .foregroundStyle(Color.black)
                 .environment(\.colorScheme, .light)
                 .padding(.horizontal, 36)
-                .padding(.vertical, 20)
+                .padding(.vertical, 18)
                 .background(Capsule().fill(.white))
                 .shadow(color: .black.opacity(0.5), radius: 20, y: 8)
-                .overlay(alignment: .bottom) {
-                    Text("اضغط على الريموت")
-                        .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.8))
-                        .offset(y: 44)
-                }
             }
-            .padding(.horizontal, 90)
-            .padding(.bottom, session.controlsVisible ? 230 : 120)
+            .environment(\.layoutDirection, .leftToRight)
+            .padding(.horizontal, PlayerChrome.sideInset)
+            .padding(.bottom, session.controlsVisible ? 300 : 110)
         }
-        .transition(.move(edge: .trailing).combined(with: .opacity))
+        .transition(.opacity)
     }
 
     private func errorCard(_ message: String) -> some View {
@@ -169,60 +81,362 @@ struct PlayerOverlay: View {
     }
 }
 
-/// Audio / subtitle chooser, opened by swiping down (like Infuse's info panel).
-private struct TracksPanel: View {
+// MARK: - Bottom chrome
+
+private struct PlayerChrome: View {
     let session: PlayerSession
 
+    static let sideInset: CGFloat = 80
+    @FocusState private var focus: Focus?
+
+    enum Focus: Hashable {
+        case button(PlayerSession.Panel)
+        case row(String)
+    }
+
+    private var panels: [PlayerSession.Panel] {
+        PlayerSession.Panel.allCases.filter { $0 != .episodes || session.item.isEpisode }
+    }
+
     var body: some View {
-        VStack {
-            HStack(alignment: .top, spacing: 60) {
-                column(title: "الصوت", systemImage: "speaker.wave.2.fill") {
-                    ForEach(session.audioTracks) { track in
-                        row(track.displayName, selected: track.isSelected) { session.selectAudio(track) }
-                    }
+        ZStack(alignment: .bottom) {
+            // Dark only at the bottom; the picture above stays clear.
+            LinearGradient(stops: [
+                .init(color: .clear, location: 0),
+                .init(color: .black.opacity(0.5), location: 0.35),
+                .init(color: .black.opacity(0.78), location: 0.7),
+                .init(color: .black.opacity(0.9), location: 1),
+            ], startPoint: .top, endPoint: .bottom)
+            .frame(height: 520)
+            .frame(maxHeight: .infinity, alignment: .bottom)
+            .allowsHitTesting(false)
+
+            VStack(spacing: 22) {
+                HStack(alignment: .bottom, spacing: 40) {
+                    info
+                    Spacer(minLength: 40)
+                    buttons
                 }
-                column(title: "الترجمة", systemImage: "captions.bubble.fill") {
-                    row("إيقاف", selected: !session.subtitleTracks.contains(where: \.isSelected)) {
-                        session.selectSubtitle(nil)
-                    }
-                    ForEach(session.subtitleTracks) { track in
-                        row(track.displayName, selected: track.isSelected) {
-                            session.selectSubtitle(track)
+                timeline
+                times
+            }
+            .padding(.horizontal, Self.sideInset)
+            .padding(.bottom, 56)
+
+            if let panel = session.panel {
+                panelView(panel)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                    .padding(.horizontal, Self.sideInset - 10)
+                    .padding(.bottom, 250)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottomTrailing)))
+            }
+        }
+        .onChange(of: session.buttonsActive) { _, active in
+            focus = active ? .button(session.panel ?? panels.first ?? .subtitles) : nil
+        }
+        .onChange(of: session.panel) { old, new in
+            if let new {
+                DispatchQueue.main.async { focus = .row(selectedRowID(new) ?? "") }
+            } else if let old, session.buttonsActive {
+                DispatchQueue.main.async { focus = .button(old) }
+            }
+        }
+        .onAppear {
+            if session.buttonsActive { focus = .button(panels.first ?? .subtitles) }
+        }
+
+    }
+
+    // MARK: Info
+
+    /// «S1 • E3 – عنوان الحلقة» small, the show big (two lines at most). A movie: its title.
+    private var info: some View {
+        let item = session.item
+        return VStack(alignment: .leading, spacing: 8) {
+            if item.isEpisode {
+                Text(episodeLine(item))
+                    .font(.system(size: 22, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .lineLimit(1)
+            }
+            Text(item.isEpisode ? (item.grandparentTitle ?? item.title) : item.title)
+                .font(.system(size: 52, weight: .bold))
+                .foregroundStyle(.white)
+                .lineLimit(2)
+                .minimumScaleFactor(0.8)
+                .multilineTextAlignment(.leading)
+        }
+        .shadow(color: .black.opacity(0.4), radius: 10)
+        .frame(maxWidth: 1100, alignment: .leading)
+    }
+
+    private func episodeLine(_ episode: PlexItem) -> String {
+        var code: [String] = []
+        if let season = episode.parentIndex { code.append("S\(season)") }
+        if let number = episode.index { code.append("E\(number)") }
+        let prefix = code.isEmpty ? "" : "\u{2068}" + code.joined(separator: " • ") + "\u{2069}"
+        let title = episode.title.isEmpty ? "" : "\u{2068}\(episode.title)\u{2069}"
+        return [prefix, title].filter { !$0.isEmpty }.joined(separator: " – ")
+    }
+
+    // MARK: Buttons
+
+    private var buttons: some View {
+        HStack(spacing: 22) {
+            ForEach(panels) { panel in
+                Button { session.panel = panel } label: {
+                    Image(systemName: icon(panel))
+                }
+                .buttonStyle(GlassRoundButtonStyle(open: session.panel == panel))
+                .focused($focus, equals: .button(panel))
+                .disabled(!session.buttonsActive)
+            }
+        }
+        .focusSection()
+        // Where the focus lands when the player screen asks for it again (a panel closed).
+        .defaultFocus($focus, .button(session.lastPanel ?? panels.first ?? .subtitles))
+    }
+
+    private func icon(_ panel: PlayerSession.Panel) -> String {
+        switch panel {
+        case .episodes: return "list.and.film"
+        case .subtitles: return "captions.bubble"
+        case .audio: return "waveform"
+        case .quality: return "slider.horizontal.3"
+        }
+    }
+
+    // MARK: Progress
+
+    /// Thin and full width; only what's been watched (no intro / credits marks). Time runs
+    /// left to right, as in every player.
+    private var timeline: some View {
+        GeometryReader { geo in
+            let total = max(session.duration, 1)
+            let played = min(1, (session.scrubPosition ?? session.position) / total)
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.white.opacity(0.28))
+                Capsule().fill(Color.white).frame(width: geo.size.width * played)
+                if session.scrubPosition != nil {
+                    Capsule().fill(Color.white)
+                        .frame(width: 4, height: 26)
+                        .offset(x: geo.size.width * played - 2)
+                }
+            }
+        }
+        .frame(height: 6)
+        .environment(\.layoutDirection, .leftToRight)
+    }
+
+    /// Elapsed on the left, «-23:38» on the right (digits isolated, so RTL doesn't reorder them).
+    private var times: some View {
+        let shown = session.scrubPosition ?? session.position
+        return HStack {
+            Text("\u{2066}" + PlayerOverlay.format(shown) + "\u{2069}")
+            Spacer()
+            Text("\u{2066}-" + PlayerOverlay.format(max(0, session.duration - shown)) + "\u{2069}")
+        }
+        .font(.system(size: 24, weight: .medium).monospacedDigit())
+        .foregroundStyle(.white.opacity(0.85))
+        .environment(\.layoutDirection, .leftToRight)
+    }
+
+    // MARK: Panels
+
+    private func selectedRowID(_ panel: PlayerSession.Panel) -> String? {
+        switch panel {
+        case .episodes:
+            return "ep-" + session.item.ratingKey
+        case .subtitles:
+            return session.subtitleTracks.first(where: \.isSelected).map { "sub-\($0.id)" } ?? "sub-off"
+        case .audio:
+            return session.audioTracks.first(where: \.isSelected).map { "aud-\($0.id)" }
+        case .quality:
+            return "q-" + session.quality.rawValue
+        }
+    }
+
+    @ViewBuilder
+    private func panelView(_ panel: PlayerSession.Panel) -> some View {
+        switch panel {
+        case .episodes:
+            PanelCard(title: "الحلقات", width: 760) {
+                ForEach(session.seasonEpisodes) { episode in
+                    PanelRow(selected: episode.ratingKey == session.item.ratingKey) {
+                        Task { await session.play(episode: episode) }
+                        session.panel = nil
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(episodeLine(episode)).lineLimit(1)
+                            Text(episode.grandparentTitle ?? "")
+                                .font(.system(size: 20))
+                                .opacity(0.6)
+                                .lineLimit(1)
                         }
                     }
+                    .focused($focus, equals: .row("ep-" + episode.ratingKey))
                 }
             }
-            .padding(50)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-            .background(.ultraThinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
-            .padding(.horizontal, 80)
-            .padding(.top, 50)
-            Spacer()
-        }
-    }
-
-    private func column<Content: View>(title: String, systemImage: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Label(title, systemImage: systemImage).font(.headline)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 8) { content() }
-                    .padding(.vertical, 10)
+        case .subtitles:
+            PanelCard(title: "الترجمة", width: 680) {
+                ForEach(orderedSubtitles.preferred) { track in subtitleRow(track) }
+                PanelRow(selected: !session.subtitleTracks.contains(where: \.isSelected)) {
+                    session.selectSubtitle(nil)
+                } label: {
+                    Text("بدون")
+                }
+                .focused($focus, equals: .row("sub-off"))
+                ForEach(orderedSubtitles.others) { track in subtitleRow(track) }
             }
-            .frame(maxHeight: 420)
+        case .audio:
+            PanelCard(title: "الصوت", width: 680) {
+                ForEach(session.audioTracks) { track in
+                    PanelRow(selected: track.isSelected) {
+                        session.selectAudio(track)
+                    } label: {
+                        Text(track.menuName).lineLimit(1)
+                    }
+                    .focused($focus, equals: .row("aud-\(track.id)"))
+                }
+            }
+        case .quality:
+            PanelCard(title: "الجودة", width: 520) {
+                ForEach(PlaybackQuality.allCases) { quality in
+                    PanelRow(selected: quality == session.quality) {
+                        session.setQuality(quality)
+                        session.panel = nil
+                    } label: {
+                        Text(quality.title)
+                    }
+                    .focused($focus, equals: .row("q-" + quality.rawValue))
+                }
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func row(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+    private func subtitleRow(_ track: MPVTrack) -> some View {
+        PanelRow(selected: track.isSelected) {
+            session.selectSubtitle(track)
+        } label: {
+            Text(track.menuName).lineLimit(1)
+        }
+        .focused($focus, equals: .row("sub-\(track.id)"))
+    }
+
+    /// The profile's subtitle language first (Arabic by default), then «بدون», then the rest.
+    private var orderedSubtitles: (preferred: [MPVTrack], others: [MPVTrack]) {
+        let language = ProfileStore.shared.activeProfile?.preferredSubtitleLanguage ?? "ara"
+        let tracks = session.subtitleTracks
+        let preferred = tracks.filter { StreamPreference.sameLanguage($0.language, language) }
+        return (preferred, tracks.filter { !preferred.contains($0) })
+    }
+}
+
+// MARK: - Pieces
+
+/// Small translucent circle (Infuse); focused: white with a dark glyph, lifted.
+private struct GlassRoundButtonStyle: ButtonStyle {
+    var open: Bool
+
+    func makeBody(configuration: Configuration) -> some View { RoundBody(configuration: configuration, open: open) }
+
+    private struct RoundBody: View {
+        let configuration: ButtonStyleConfiguration
+        let open: Bool
+        @Environment(\.isFocused) private var isFocused
+
+        var body: some View {
+            configuration.label
+                .font(.system(size: 26, weight: .regular))
+                .foregroundStyle(isFocused ? Color.black : Color.white)
+                .frame(width: 68, height: 68)
+                .background {
+                    if isFocused {
+                        Circle().fill(Color.white)
+                    } else {
+                        Circle().fill(.ultraThinMaterial)
+                        Circle().fill(Color.black.opacity(open ? 0.05 : 0.25))
+                        Circle().strokeBorder(Color.white.opacity(open ? 0.6 : 0.15), lineWidth: 1)
+                    }
+                }
+                .scaleEffect(configuration.isPressed ? 0.94 : (isFocused ? 1.12 : 1))
+                .shadow(color: .black.opacity(isFocused ? 0.4 : 0), radius: 14, y: 8)
+                .animation(.easeOut(duration: 0.15), value: isFocused)
+        }
+    }
+}
+
+/// Glass panel above the buttons: a title and a scrolling list.
+private struct PanelCard<Content: View>: View {
+    let title: String
+    let width: CGFloat
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.6))
+                .padding(.horizontal, 22)
+                .padding(.top, 6)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) { content() }
+                    .padding(.vertical, 6)
+                    .padding(.horizontal, 8)
+            }
+            .frame(maxHeight: 520)
+            .clipped()
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 18)
+        .frame(width: width, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: 30, style: .continuous).fill(.ultraThinMaterial)
+            RoundedRectangle(cornerRadius: 30, style: .continuous).fill(Color(white: 0.22).opacity(0.7))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
+        .focusSection()
+    }
+}
+
+/// One choice: ✓ on the current one; focused: white pill, dark text.
+private struct PanelRow<Label: View>: View {
+    let selected: Bool
+    let action: () -> Void
+    @ViewBuilder let label: () -> Label
+
+    var body: some View {
         Button(action: action) {
             HStack(spacing: 16) {
-                Image(systemName: "checkmark").opacity(selected ? 1 : 0)
-                Text(title).lineLimit(1)
+                Image(systemName: "checkmark")
+                    .font(.system(size: 22, weight: .semibold))
+                    .opacity(selected ? 1 : 0)
+                label()
                 Spacer(minLength: 0)
             }
-            .font(.callout)
+            .font(.system(size: 26, weight: .medium))
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(PanelRowStyle())
+    }
+}
+
+private struct PanelRowStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { RowBody(configuration: configuration) }
+
+    private struct RowBody: View {
+        let configuration: ButtonStyleConfiguration
+        @Environment(\.isFocused) private var isFocused
+
+        var body: some View {
+            configuration.label
+                .foregroundStyle(isFocused ? Color.black : Color.white)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 14)
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(isFocused ? Color.white : Color.clear))
+                .scaleEffect(isFocused ? 1.02 : 1)
+                .animation(.easeOut(duration: 0.12), value: isFocused)
         }
     }
 }

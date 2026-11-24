@@ -42,8 +42,44 @@ final class PlayerSession {
     private(set) var errorMessage: String?
 
     // UI state
-    var controlsVisible = true
-    var isPanelOpen = false
+    var controlsVisible = true {
+        didSet { if controlsVisible != oldValue { player.setSubtitleLifted(controlsVisible) } }
+    }
+
+    /// The four buttons under the info (Down shows them) and the panel one of them opened.
+    enum Panel: String, CaseIterable, Identifiable {
+        case episodes, subtitles, audio, quality
+        var id: String { rawValue }
+    }
+    var buttonsActive = false
+    var panel: Panel? {
+        didSet { if let panel { lastPanel = panel } }
+    }
+    /// The button focus returns to when its panel closes.
+    private(set) var lastPanel: Panel?
+    /// Buttons or a panel have the remote: the video's own controls (±10, scrub) wait.
+    var isPanelOpen: Bool { buttonsActive || panel != nil }
+    /// The player screen asks for the focus again (a panel or the buttons closed): otherwise
+    /// it's left nowhere and the next Menu press dismisses the whole player.
+    @ObservationIgnored var onRefocus: (() -> Void)?
+
+    /// Menu / Back while the buttons or a panel have the remote: one step back.
+    func stepBack() {
+        if panel != nil {
+            panel = nil
+        } else if buttonsActive {
+            buttonsActive = false
+            showControls()
+        }
+        onRefocus?()
+    }
+
+    /// The current episode's season (episodes panel), and the episode before it (remote ⏮).
+    private(set) var seasonEpisodes: [PlexItem] = []
+    private(set) var previousEpisode: PlexItem?
+    private(set) var quality: PlaybackQuality = .original
+    /// Plex transcode running for this player (stopped when it changes or the player closes).
+    var transcodeSessionID: String?
     var scrubPosition: Double?
     private(set) var skipAction: SkipAction?
     /// Intro / recap / credits: Plex markers, else chapter names (from Plex, then from the file via mpv).
@@ -130,10 +166,11 @@ final class PlayerSession {
     func start(url: URL, fromBeginning: Bool) {
         let resume = fromBeginning ? 0 : Double(item.viewOffset ?? 0) / 1000
         player.load(url, start: resume > 5 ? resume : 0)
+        player.setSubtitleLifted(controlsVisible)
         if item.duration.map({ $0 > 0 }) == true { duration = Double(item.duration!) / 1000 }
         if resume > 5 { position = resume }
         nowPlaying.start()
-        Task { nextEpisode = await client.nextEpisode(after: item) }
+        loadEpisodes(for: item)
         loadOnlineSegments(for: item)
         scheduleHide()
     }
@@ -157,6 +194,10 @@ final class PlayerSession {
             }
         }
         await reportStopped(item: item, positionSeconds: pos)
+        if let transcode = transcodeSessionID {
+            transcodeSessionID = nil
+            await client.stopTranscode(sessionID: transcode)
+        }
     }
 
     private func reportStopped(item: PlexItem, positionSeconds: Double) async {
@@ -325,7 +366,18 @@ final class PlayerSession {
     // MARK: Next episode
 
     func playNext() async {
-        guard let next = nextEpisode, !isSwitching else { onRequestClose?(); return }
+        guard let next = nextEpisode else { onRequestClose?(); return }
+        await play(episode: next)
+    }
+
+    func playPrevious() async {
+        guard let previous = previousEpisode else { return }
+        await play(episode: previous)
+    }
+
+    /// Another episode without leaving the player (next, previous, or the episodes panel).
+    func play(episode next: PlexItem) async {
+        guard !isSwitching, next.ratingKey != item.ratingKey else { return }
         isSwitching = true
         defer { isSwitching = false }
 
@@ -334,10 +386,11 @@ final class PlayerSession {
         Task { await reportStopped(item: previous, positionSeconds: max(previousPosition, Double(previous.duration ?? 0) / 1000)) }
 
         let detailed = (try? await client.metadata(next.ratingKey)) ?? next
-        guard let part = detailed.primaryPart?.key, let url = client.directURL(partKey: part) else {
+        guard let plan = plan(for: detailed, quality: quality) else {
             onRequestClose?()
             return
         }
+        replaceTranscode(with: plan)
         item = detailed
         markerSegments = detailed.markerSegments
         plexChapterSegments = detailed.plexChapterSegments
@@ -353,10 +406,63 @@ final class PlayerSession {
         nextEpisode = nil
         audioTracks = []
         subtitleTracks = []
-        player.load(url, start: 0)
+        player.load(plan.url, start: 0)
         nowPlaying.itemChanged()
         showControls()
-        nextEpisode = await client.nextEpisode(after: detailed)
+        loadEpisodes(for: detailed)
+    }
+
+    // MARK: Quality
+
+    /// Same position, new source: the original file or a Plex transcode capped at `quality`.
+    func setQuality(_ quality: PlaybackQuality) {
+        guard quality != self.quality, let plan = plan(for: item, quality: quality) else { return }
+        let resumeAt = max(player.position, position)
+        self.quality = quality
+        replaceTranscode(with: plan)
+        isBuffering = true
+        audioTracks = []
+        subtitleTracks = []
+        player.load(plan.url, start: resumeAt)
+        position = resumeAt
+        nowPlaying.update()
+    }
+
+    private func plan(for item: PlexItem, quality: PlaybackQuality) -> PlaybackPlan? {
+        client.playbackPlan(for: item,
+                            forceTranscode: quality != .original || PlaybackSettings.forceTranscode,
+                            maxBitrateKbps: quality.maxBitrateKbps ?? PlaybackSettings.maxBitrateKbps,
+                            nativeEngine: true,
+                            resolution: quality.resolution)
+    }
+
+    /// The previous transcode (if any) is stopped on the server once the new source is chosen.
+    private func replaceTranscode(with plan: PlaybackPlan) {
+        if let old = transcodeSessionID { Task { await client.stopTranscode(sessionID: old) } }
+        transcodeSessionID = plan.isTranscode ? plan.sessionID : nil
+    }
+
+    // MARK: Episodes
+
+    /// The season of `episode` and its neighbours across the whole show.
+    private func loadEpisodes(for episode: PlexItem) {
+        guard episode.isEpisode, let show = episode.grandparentRatingKey else {
+            seasonEpisodes = []
+            previousEpisode = nil
+            nextEpisode = nil
+            return
+        }
+        Task { [weak self] in
+            guard let self else { return }
+            let all = await client.allLeaves(show)
+            guard item.ratingKey == episode.ratingKey else { return }
+            seasonEpisodes = all.filter { $0.parentIndex == episode.parentIndex }
+            if let i = all.firstIndex(where: { $0.ratingKey == episode.ratingKey }) {
+                previousEpisode = i > 0 ? all[i - 1] : nil
+                nextEpisode = i + 1 < all.count ? all[i + 1] : nil
+            }
+            nowPlaying.update()
+        }
     }
 
     // MARK: mpv events

@@ -90,12 +90,13 @@ final class PlaybackManager {
         }
 
         let session = PlayerSession(item: item, client: client, player: mpv)
+        // The session stops it on close, or when the quality menu replaces it.
+        session.transcodeSessionID = plan.isTranscode ? plan.sessionID : nil
         let vc = MPVPlayerViewController(session: session, metalLayer: layer,
                                          displayCriteria: DisplayCriteriaFactory.make(for: item))
         vc.onDismiss = { [weak self] in
             Task { @MainActor in
                 await session.finish()
-                if plan.isTranscode { await client.stopTranscode(sessionID: plan.sessionID) }
                 NotificationCenter.default.post(name: .plexPlaybackDidEnd, object: nil)
                 self?.continuation?.resume()
                 self?.continuation = nil
@@ -112,7 +113,6 @@ final class PlaybackManager {
             vc.onDismiss = nil
             Task { @MainActor in
                 await session.finish()
-                if plan.isTranscode { await client.stopTranscode(sessionID: plan.sessionID) }
                 self?.continuation?.resume()
                 self?.continuation = nil
             }

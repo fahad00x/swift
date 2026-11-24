@@ -6,8 +6,9 @@ import UIKit
 /// Full-screen MPV player with Infuse-style remote controls:
 /// - Click / Play-Pause: pause & resume (or press the skip button when it is shown)
 /// - Left / Right: jump 10 s back / forward, swipe on the touch surface to scrub
-/// - Down / Up: audio & subtitle panel
-/// - Menu / Back: hide controls, then close
+/// - Down: the four buttons (episodes, subtitles, audio, quality); Left / Right move between
+///   them, click opens one's panel; Up hides them
+/// - Menu / Back: closes the panel, then the buttons, then the player
 final class MPVPlayerViewController: UIViewController {
     let session: PlayerSession
     private let metalLayer: MPVMetalLayer
@@ -51,6 +52,7 @@ final class MPVPlayerViewController: UIViewController {
         view.addGestureRecognizer(pan)
 
         session.onRequestClose = { [weak self] in self?.close() }
+        session.onRefocus = { [weak self] in self?.refocus(after: 0.05) }
 
         NotificationCenter.default.addObserver(self, selector: #selector(didEnterBackground),
                                                name: UIApplication.didEnterBackgroundNotification, object: nil)
@@ -102,45 +104,72 @@ final class MPVPlayerViewController: UIViewController {
         dismiss(animated: true)
     }
 
-    // MARK: Panel
+    // MARK: Buttons and panels
 
-    private func openPanel() {
-        session.isPanelOpen = true
+    private func showButtons() {
+        session.buttonsActive = true
         session.showControls(autoHide: false)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+        refocus(after: 0.05)
+    }
+
+    private func hideButtons() {
+        session.panel = nil
+        session.buttonsActive = false
+        session.showControls()
+        refocus(after: 0)
+    }
+
+    /// Menu / Back: one step back (the overlay usually takes it first, see PlayerChrome).
+    private func stepBack() {
+        if session.isPanelOpen { session.stepBack() } else { close() }
+    }
+
+    private func refocus(after delay: Double) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             self?.setNeedsFocusUpdate()
             self?.updateFocusIfNeeded()
         }
     }
 
-    private func closePanel() {
-        session.isPanelOpen = false
-        session.showControls()
-        setNeedsFocusUpdate()
-        updateFocusIfNeeded()
-    }
-
     // MARK: Remote input
+
+    /// A keyboard's Escape (simulator, a keyboard paired to the Apple TV) is Menu: handled
+    /// here once, instead of the system turning it into a second Menu press.
+    private static func type(of press: UIPress) -> UIPress.PressType? {
+        if press.key?.keyCode == .keyboardEscape { return .menu }
+        return press.type
+    }
 
     private static let handledTypes: Set<UIPress.PressType> = [.select, .playPause, .leftArrow, .rightArrow, .upArrow, .downArrow, .menu]
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        guard let press = presses.first, Self.handledTypes.contains(press.type) else {
+        guard let press = presses.first, let type = Self.type(of: press), Self.handledTypes.contains(type) else {
+            // Keyboard arrows / Return: the system turns them into remote presses.
             super.pressesBegan(presses, with: event)
             return
         }
 
         if session.isPanelOpen {
-            if press.type == .menu { closePanel() } else { super.pressesBegan(presses, with: event) }
+            switch type {
+            case .menu:
+                stepBack()
+            case .playPause:
+                session.togglePause(from: .press)
+            case .upArrow where session.panel == nil:
+                hideButtons()
+            default:
+                // Arrows move the focus, click picks (the buttons and panels handle them).
+                super.pressesBegan(presses, with: event)
+            }
             return
         }
 
         if session.errorMessage != nil {
-            if press.type == .menu || press.type == .select { close() }
+            if type == .menu || type == .select { close() }
             return
         }
 
-        switch press.type {
+        switch type {
         case .select:
             if session.skipAction != nil { session.performSkip() } else { session.togglePause(from: .press) }
         case .playPause:
@@ -150,7 +179,7 @@ final class MPVPlayerViewController: UIViewController {
         case .rightArrow:
             session.skip(by: 10, from: .press)
         case .downArrow:
-            openPanel()
+            showButtons()
         case .upArrow:
             session.showControls()
         case .menu:
@@ -161,17 +190,21 @@ final class MPVPlayerViewController: UIViewController {
     }
 
     override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        guard let press = presses.first, Self.handledTypes.contains(press.type), !session.isPanelOpen else {
-            super.pressesEnded(presses, with: event)
-            return
-        }
+        if passesToSystem(presses) { super.pressesEnded(presses, with: event) }
     }
 
     override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        guard let press = presses.first, Self.handledTypes.contains(press.type), !session.isPanelOpen else {
-            super.pressesCancelled(presses, with: event)
-            return
-        }
+        if passesToSystem(presses) { super.pressesCancelled(presses, with: event) }
+    }
+
+    /// The end of a press goes on only where its start did: arrows and click while the
+    /// buttons or a panel have the focus (they move it), presses the player doesn't use
+    /// otherwise. Never Menu: the system would dismiss the player on its own.
+    private func passesToSystem(_ presses: Set<UIPress>) -> Bool {
+        guard let press = presses.first, let type = Self.type(of: press) else { return true }
+        if type == .menu { return false }
+        if !Self.handledTypes.contains(type) { return true }
+        return session.isPanelOpen && [.upArrow, .downArrow, .leftArrow, .rightArrow, .select].contains(type)
     }
 
     @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {

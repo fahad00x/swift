@@ -28,6 +28,71 @@ struct MPVTrack: Identifiable, Hashable {
     let isSelected: Bool
     /// Stream index inside the container (Plex's stream `index`).
     let ffIndex: Int?
+    /// The file marks it as the default track.
+    var isDefault = false
+
+    /// Player menus: «اليابانية – AAC 2.0 (افتراضي)» for audio; «العربية (Arabic) – Full – ASS»
+    /// for subtitles (the track title tells apart several tracks of one language).
+    var menuName: String {
+        var parts: [String] = []
+        if let language, !language.isEmpty {
+            let arabic = Self.languageName(language)
+            let english = Locale(identifier: "en").localizedString(forLanguageCode: language)
+            parts.append(kind == .sub && english != nil && english != arabic ? "\(arabic) (\(english!))" : arabic)
+        }
+        if let title = title.flatMap(Self.readableTitle), !Self.repeatsLanguage(title, language) {
+            parts.append(title)
+        }
+        switch kind {
+        case .audio:
+            var tech = codec.map { Self.audioCodecName($0) } ?? ""
+            if let channels { tech += (tech.isEmpty ? "" : " ") + Self.channelLayout(channels) }
+            if !tech.isEmpty { parts.append(tech) }
+        case .sub:
+            if let codec { parts.append(Self.subtitleFormat(codec)) }
+            if isExternal { parts.append("ملف خارجي") }
+        case .video:
+            break
+        }
+        if parts.isEmpty { parts.append("مسار \(id)") }
+        // Isolated pieces: Latin names and codecs keep their order inside the Arabic line.
+        let line = parts.map { "\u{2068}\($0)\u{2069}" }.joined(separator: " – ")
+        return isDefault && kind == .audio ? line + " (افتراضي)" : line
+    }
+
+    /// «Arabic», «Japanese [Original]»: the language again in English.
+    private static func repeatsLanguage(_ title: String, _ language: String?) -> Bool {
+        guard let language else { return false }
+        let lower = title.lowercased()
+        if lower == language.lowercased() { return true }
+        let names = [Locale(identifier: "en").localizedString(forLanguageCode: language), languageName(language)]
+        return names.compactMap { $0?.lowercased() }.contains { lower == $0 }
+    }
+
+    static func audioCodecName(_ codec: String) -> String {
+        switch codec.lowercased() {
+        case "eac3": return "E-AC3"
+        case "truehd": return "TrueHD"
+        case "dts": return "DTS"
+        case "opus": return "Opus"
+        case "flac": return "FLAC"
+        case "vorbis": return "Vorbis"
+        default: return codec.uppercased()
+        }
+    }
+
+    /// 2 → «2.0», 6 → «5.1», 8 → «7.1».
+    static func channelLayout(_ channels: Int) -> String {
+        switch channels {
+        case 1: return "1.0"
+        case 2: return "2.0"
+        case 3: return "2.1"
+        case 6: return "5.1"
+        case 7: return "6.1"
+        case 8: return "7.1"
+        default: return "\(channels)ch"
+        }
+    }
 
     /// «العربية • SRT • ملف خارجي», «الإنجليزية • AAC Stereo». Technical stream names
     /// (textstream_ara=1000…) and titles repeating the language are left out.
@@ -162,9 +227,15 @@ final class MPVPlayer {
             ("subs-match-os-language", "yes"),
             ("subs-fallback", "yes"),
             ("sub-auto", "no"),
+            // Text subtitles (SRT…): white, bold, dark outline. Styled ASS keeps its own look:
+            // `scale` only resizes it with the video, never replaces its fonts or colours.
             ("sub-font-size", "46"),
-            ("sub-border-size", "2.5"),
+            ("sub-bold", "yes"),
+            ("sub-color", "#FFFFFFFF"),
+            ("sub-border-color", "#FF000000"),
+            ("sub-border-size", "3"),
             ("sub-shadow-offset", "1"),
+            ("sub-ass-override", "scale"),
             ("sub-margin-y", "60"),
             ("audio-channels", "auto-safe"),
             // On iOS / tvOS this only means a non-mixable audio session: by default mpv sets
@@ -223,6 +294,9 @@ final class MPVPlayer {
         set { setFlag("pause", newValue) }
     }
 
+    /// Text subtitles move up while the controls show (and back down after).
+    func setSubtitleLifted(_ lifted: Bool) { setString("sub-margin-y", lifted ? "330" : "60") }
+
     func selectAudio(_ id: Int) { setString("aid", "\(id)") }
     func selectSubtitle(_ id: Int?) { setString("sid", id.map(String.init) ?? "no") }
 
@@ -240,7 +314,8 @@ final class MPVPlayer {
                             title: string("\(p)/title"), language: string("\(p)/lang"),
                             codec: string("\(p)/codec"), channels: channels > 0 ? channels : nil,
                             isExternal: flag("\(p)/external"), isSelected: flag("\(p)/selected"),
-                            ffIndex: string("\(p)/ff-index").flatMap { Int($0) })
+                            ffIndex: string("\(p)/ff-index").flatMap { Int($0) },
+                            isDefault: flag("\(p)/default"))
         }
     }
 

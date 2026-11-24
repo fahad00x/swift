@@ -352,7 +352,8 @@ final class PlexServerClient: Sendable {
 
     /// - Parameter nativeEngine: true for the MPV engine, which plays every container/codec
     ///   itself, so the original file is streamed untouched unless bandwidth limits apply.
-    func playbackPlan(for item: PlexItem, forceTranscode: Bool, maxBitrateKbps: Int, nativeEngine: Bool = false) -> PlaybackPlan? {
+    func playbackPlan(for item: PlexItem, forceTranscode: Bool, maxBitrateKbps: Int, nativeEngine: Bool = false,
+                      resolution requestedResolution: String? = nil) -> PlaybackPlan? {
         guard let media = item.media.first, let part = media.parts.first, let partKey = part.key else { return nil }
         let session = UUID().uuidString
 
@@ -371,7 +372,8 @@ final class PlexServerClient: Sendable {
         }
 
         // Otherwise let Plex remux (direct stream) or transcode to HLS.
-        let resolution = maxBitrateKbps >= 20_000 ? "3840x2160" : (maxBitrateKbps >= 8_000 ? "1920x1080" : "1280x720")
+        let resolution = requestedResolution
+            ?? (maxBitrateKbps >= 20_000 ? "3840x2160" : (maxBitrateKbps >= 8_000 ? "1920x1080" : "1280x720"))
         var q: [(String, String)] = [
             ("path", "/library/metadata/\(item.ratingKey)"),
             ("mediaIndex", "0"), ("partIndex", "0"),
