@@ -94,6 +94,8 @@ final class PlayerSession {
     private static let log = Logger(subsystem: "com.fahad00x.lumen", category: "remote")
     /// TEMPORARY (remote test build): last command and its source, drawn over the player.
     private(set) var commandLog = "remote: –"
+    /// TEMPORARY: "mix=yes" = the audio session can't own Now Playing.
+    private(set) var audioState = ""
     private var commandCount = 0
     @ObservationIgnored private var lastAccepted: [CommandKind: (source: CommandSource, time: TimeInterval)] = [:]
     @ObservationIgnored private lazy var nowPlaying = NowPlayingController(session: self)
@@ -418,6 +420,11 @@ final class PlayerSession {
     }
 
     private func tick() {
+        let state = AVAudioSession.sharedInstance().categoryOptions.contains(.mixWithOthers) ? "mix=yes" : "mix=no"
+        if state != audioState {
+            audioState = state
+            Self.log.notice("audio session \(state, privacy: .public)")
+        }
         updateSkipAction()
         Task { await report(force: false) }
     }

@@ -26,7 +26,7 @@ struct PlayerOverlay: View {
                     skipButton(skip)
                 }
                 // TEMPORARY (remote test build): where the last command came from.
-                Text(verbatim: session.commandLog)
+                Text(verbatim: session.commandLog + " | " + session.audioState)
                     .font(.system(size: 20, design: .monospaced))
                     .foregroundStyle(.yellow)
                     .padding(40)

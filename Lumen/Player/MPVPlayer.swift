@@ -167,6 +167,9 @@ final class MPVPlayer {
             ("sub-shadow-offset", "1"),
             ("sub-margin-y", "60"),
             ("audio-channels", "auto-safe"),
+            // On iOS / tvOS this only means a non-mixable audio session: by default mpv sets
+            // MixWithOthers, and the system then never treats the app as Now Playing.
+            ("audio-exclusive", "yes"),
             ("tone-mapping", "auto"),
         ]
         // HDR passthrough: must be set before initialisation.
