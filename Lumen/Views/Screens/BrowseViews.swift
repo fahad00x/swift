@@ -91,7 +91,7 @@ struct LibraryView: View {
                         if rows.isEmpty && loaded {
                             ContentUnavailableView("لا توجد عناصر", systemImage: "tray").frame(maxWidth: .infinity)
                         }
-                        ForEach(rows) { shelf in
+                        ForEach(rows.shown(to: store)) { shelf in
                             PageRow(id: shelf.id) { ShelfView(shelf: shelf, client: client) }
                         }
                     case .browse:

@@ -54,6 +54,9 @@ struct DetailPage: View {
     @State private var episodesReady = false
     /// Bumped to rebuild the rows (see `focusPlay`).
     @State private var rowsToken = 0
+    @State private var askingRemove = false
+    /// The opened episode was marked here: Play moves on from it.
+    @State private var markedHere = false
     @State private var lastExit = Date.distantPast
     @State private var audioSelection = -1
     @State private var subtitleSelection = -1
@@ -64,7 +67,7 @@ struct DetailPage: View {
     @FocusState private var seasonFocus: String?
     @FocusState private var lowerFocus: String?
 
-    enum HeroButton: Hashable { case browse, play, watchlist, episodes, down, backToTop }
+    enum HeroButton: Hashable { case browse, play, watchlist, episodes, more, down, backToTop }
 
     /// Side inset of rows on the full-screen episodes view.
     static let sideInset: CGFloat = CardKind.inset
@@ -136,7 +139,7 @@ struct DetailPage: View {
     /// instead: where it stopped, episode 1 of a show it never started.
     private var fromServerRow: Bool { context?.rowID.hasPrefix("hub-") ?? false }
     /// Episode the Play button should start (e.g. opened from Continue Watching).
-    private var preferredEpisode: PlexItem? { current.isEpisode && !fromServerRow ? current : nil }
+    private var preferredEpisode: PlexItem? { current.isEpisode && !fromServerRow && !markedHere ? current : nil }
 
     private var currentIndex: Int? { context?.items.firstIndex { $0.id == current.id } }
     private var hasPrevious: Bool { (currentIndex ?? 0) > 0 }
@@ -274,7 +277,7 @@ struct DetailPage: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 guard !scrolled else { return }
                 switch heroFocus {
-                case .play?, .watchlist?, .episodes?, .browse?: return
+                case .play?, .watchlist?, .episodes?, .more?, .browse?: return
                 default: break
                 }
                 if delay == 0.7 { rowsToken += 1 }
@@ -478,15 +481,22 @@ struct DetailPage: View {
             }
             .nativeCircleButton()
             .focused($heroFocus, equals: .episodes)
+
+            // Watched marks and Continue Watching.
+            Menu { historyMenu(item) } label: { Image(systemName: "ellipsis") }
+                .menuStyle(.button)
+                .nativeCircleButton()
+                .focused($heroFocus, equals: .more)
         }
         .focusSection()
+        .modifier(RemoveFromContinueDialog(isPresented: $askingRemove, title: item.title, key: item.ratingKey))
     }
 
     private func handleHeroFocus(from old: HeroButton?, to new: HeroButton?) {
         switch new {
         case .browse?:
             setBrowsing(true)
-        case .play?, .watchlist?, .episodes?:
+        case .play?, .watchlist?, .episodes?, .more?:
             setBrowsing(false)
         case .down?:
             setScrolled(true)
@@ -521,6 +531,7 @@ struct DetailPage: View {
         let next = context.items[i + delta]
         withAnimation(.easeOut(duration: 0.2)) { revealed = false }
         returnState.set(rowID: context.rowID, itemID: next.id)
+        markedHere = false
         DispatchQueue.main.async {
             withAnimation(.spring(response: 0.55, dampingFraction: 1.0)) { current = next }
         }
@@ -550,6 +561,53 @@ struct DetailPage: View {
             if let url = artURL(for: neighbour) { _ = await ImageLoader.shared.image(for: url) }
             await loadLogo(key)
         }
+    }
+
+    @ViewBuilder
+    private func historyMenu(_ item: PlexItem) -> some View {
+        if item.isShow, let episode = playTarget {
+            let code = ArabicFormat.shortEpisodeCode(season: episode.parentIndex, episode: episode.index) ?? ""
+            let watched = store.state(for: episode.ratingKey)?.watched ?? false
+            Button(watched ? "\(code): تحديد كغير مُشاهَدة" : "\(code): تحديد كمُشاهَدة",
+                   systemImage: watched ? "eye.slash" : "checkmark.circle") {
+                Task { await setWatched(episode, !watched) }
+            }
+            Button("تحديد كل الحلقات كمُشاهَدة", systemImage: "checkmark.circle.fill") { Task { await setWatched(item, true) } }
+            Button("تحديد كل الحلقات كغير مُشاهَدة", systemImage: "eye.slash") { Task { await setWatched(item, false) } }
+        } else {
+            let watched = store.state(for: item.ratingKey)?.watched ?? false
+            Button(watched ? "تحديد كغير مُشاهَد" : "تحديد كمُشاهَد", systemImage: watched ? "eye.slash" : "checkmark.circle") {
+                Task { await setWatched(item, !watched) }
+            }
+        }
+        if store.isInContinue(item.ratingKey) {
+            Button("إزالة من متابعة المشاهدة", systemImage: "minus.circle", role: .destructive) { askingRemove = true }
+        }
+    }
+
+    /// Watched marks of one episode, and of everything up to it.
+    @ViewBuilder
+    private func episodeMarks(_ episode: PlexItem) -> some View {
+        let watched = store.state(for: episode.ratingKey)?.watched ?? episode.isWatched
+        let started = store.progress(of: episode) != nil
+        Button(watched ? "تحديد كغير مُشاهَدة" : "تحديد كمُشاهَدة", systemImage: watched ? "eye.slash" : "checkmark.circle") {
+            Task { await setWatched(episode, !watched) }
+        }
+        if started {
+            Button("مسح مكان التوقف", systemImage: "arrow.uturn.backward") { Task { await setWatched(episode, false) } }
+        }
+        let before = episodesBefore(episode)
+        if before.contains(where: { !(store.state(for: $0.ratingKey)?.watched ?? false) }) {
+            Button("تحديد كل ما قبلها كمُشاهَد", systemImage: "checkmark.circle.fill") {
+                Task { await setWatched(before) }
+            }
+        }
+    }
+
+    /// Regular episodes before this one, all seasons.
+    private func episodesBefore(_ episode: PlexItem) -> [PlexItem] {
+        func order(_ e: PlexItem) -> (Int, Int) { (e.parentIndex ?? 0, e.index ?? 0) }
+        return episodesBySeason.values.flatMap { $0 }.filter { $0.parentIndex != 0 && order($0) < order(episode) }
     }
 
     @ViewBuilder
@@ -670,11 +728,7 @@ struct DetailPage: View {
                         .buttonStyle(.borderless)
                         .focused($lowerFocus, equals: "ep-\(episode.id)")
                         .contextMenu {
-                            let watched = store.state(for: episode.ratingKey)?.watched ?? episode.isWatched
-                            Button(watched ? "تحديد كغير مُشاهَد" : "تحديد كمُشاهَد",
-                                   systemImage: watched ? "eye.slash" : "checkmark.circle") {
-                                Task { await setWatched(episode, !watched) }
-                            }
+                            episodeMarks(episode)
                             Button(store.isOnMyList(item.ratingKey) ? "إزالة من قائمتي" : "إضافة إلى قائمتي",
                                    systemImage: store.isOnMyList(item.ratingKey) ? "minus" : "plus") {
                                 store.toggleMyList(item.mediaInfo)
@@ -934,6 +988,16 @@ struct DetailPage: View {
             infos = [target.mediaInfo]
         }
         store.setWatched(infos, watched: watched)
+        await afterMarks()
+    }
+
+    private func setWatched(_ episodes: [PlexItem]) async {
+        store.setWatched(episodes.map(\.mediaInfo), watched: true)
+        await afterMarks()
+    }
+
+    private func afterMarks() async {
+        markedHere = true
         await load()
         NotificationCenter.default.post(name: .plexPlaybackDidEnd, object: nil)
     }

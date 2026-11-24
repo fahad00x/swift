@@ -69,6 +69,10 @@ struct ProfileSettings: Codable, Hashable, Sendable {
     var sidebarScopes: [String]?
     var autoSkipIntro: Bool?
     var autoPlayNext: Bool?
+    /// «قائمتي» as a row of Home, right after Continue Watching.
+    var myListOnHome: Bool?
+    /// Show / movie → when it was removed from Continue Watching (back once watched after).
+    var continueHidden: [String: Date]?
 
     /// Device keys these mirror (the players read them from UserDefaults).
     static let autoSkipIntroKey = "playback.autoSkipIntro"

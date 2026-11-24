@@ -332,6 +332,51 @@ final class ProfileStore {
         if notify { changed() }
     }
 
+    // MARK: - Continue Watching
+
+    /// When a show (any episode) or a movie was last watched or started.
+    private func lastActivity(of key: String) -> Date? {
+        activeStates.filter { ($0.showKey == key || $0.ratingKey == key) && ($0.watched || $0.offsetMs > 10_000) }
+            .map(\.lastViewedAt).max()
+    }
+
+    /// Started (or watched) and not removed from Continue Watching.
+    func isInContinue(_ key: String) -> Bool { lastActivity(of: key) != nil && !isHiddenFromContinue(key) }
+
+    func isHiddenFromContinue(_ key: String) -> Bool {
+        guard let hidden = activeProfile?.settings?.continueHidden?[key] else { return false }
+        return (lastActivity(of: key) ?? .distantPast) <= hidden
+    }
+
+    /// Out of Continue Watching until something of it is watched again; the history stays.
+    func hideFromContinue(_ key: String) {
+        let now = Date()
+        updateSettings { settings in
+            var hidden = settings.continueHidden ?? [:]
+            hidden[key] = now
+            // The newest ones only (a removed title watched again is back anyway).
+            if hidden.count > 200 {
+                hidden = Dictionary(uniqueKeysWithValues: hidden.sorted { $0.value > $1.value }.prefix(200).map { ($0.key, $0.value) })
+            }
+            settings.continueHidden = hidden
+        }
+    }
+
+    /// A show's (every episode's) or a movie's progress and watched marks: as if never watched.
+    /// Chosen tracks stay.
+    func clearHistory(of key: String) {
+        let now = Date()
+        for old in activeStates where (old.showKey == key || old.ratingKey == key) && (old.watched || old.offsetMs > 0) {
+            var state = old
+            state.watched = false
+            state.offsetMs = 0
+            state.modifiedAt = now
+            states[old.recordName] = state
+            markDirty(old.recordName, now)
+        }
+        changed()
+    }
+
     // MARK: - My List
 
     var myList: [WatchlistEntry] {

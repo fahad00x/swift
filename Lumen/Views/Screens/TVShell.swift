@@ -144,6 +144,7 @@ struct MainTabView: View {
     /// The sidebar is on screen (hidden completely while closed).
     @State private var sidebarVisible = false
     @State private var shell = ShellState()
+    @State private var news = MyListNews()
     @FocusState private var sidebarFocus: TVDestination?
     @FocusState private var edgeFocused: Bool
     @State private var edgeArmed = false
@@ -220,6 +221,12 @@ struct MainTabView: View {
         .environment(\.contentFilter, filter)
         .environment(prefs)
         .environment(shell)
+        .environment(news)
+        .task(id: profile.id) { news.refresh(client: client, store: store) }
+        .onReceive(NotificationCenter.default.publisher(for: .myListDidChange)) { _ in news.refresh(client: client, store: store) }
+        .onReceive(NotificationCenter.default.publisher(for: .plexPlaybackDidEnd)) { _ in news.refresh(client: client, store: store) }
+        .onReceive(NotificationCenter.default.publisher(for: .localLibraryDidChange)) { _ in news.refresh(client: client, store: store) }
+        .onReceive(NotificationCenter.default.publisher(for: .profileDataDidChangeRemotely)) { _ in news.refresh(client: client, store: store) }
         .ignoresSafeArea(.container, edges: .horizontal)
         .task {
             checkForNewLibraries()
@@ -316,6 +323,8 @@ struct MainTabView: View {
 /// shown only while it has focus. Header with the profile and the clock, filled-symbol rows,
 /// one white pill on the focused row, Settings at the bottom.
 private struct TVSidebar: View {
+    @Environment(MyListNews.self) private var news: MyListNews?
+
     @Binding var selection: TVDestination
     var focus: FocusState<TVDestination?>.Binding
     let profile: UserProfile
@@ -420,6 +429,14 @@ private struct TVSidebar: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)
                 Spacer(minLength: 0)
+                // «قائمتي»: how many of its shows have new episodes.
+                if destination == .myList, let count = news?.counts.count, count > 0 {
+                    Text(ArabicFormat.digits(count))
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(.black)
+                        .frame(minWidth: 34, minHeight: 34)
+                        .background(Circle().fill(ArtworkStatusOverlay.orange))
+                }
             }
         }
         .buttonStyle(SidebarButtonStyle(selected: selected ?? (selection == destination), dimText: false))
@@ -504,6 +521,23 @@ struct HomeView: View {
     @State private var focusedBanner = false
 
     private var isEmpty: Bool { banner.isEmpty && rows.isEmpty }
+    @State private var myList: [PlexItem] = []
+
+    /// The profile's rows: without what it removed from Continue Watching, and «قائمتي» right
+    /// after it when the profile wants it on Home.
+    private var homeRows: [Shelf] {
+        var out = rows.shown(to: store)
+        if store.activeProfile?.settings?.myListOnHome == true, !myList.isEmpty {
+            out.insert(Shelf(id: "mylist", title: "قائمتي", kind: .poster, items: myList),
+                       at: out.first?.id == "continue" ? 1 : 0)
+        }
+        return out
+    }
+
+    private func loadMyList() async {
+        guard store.activeProfile?.settings?.myListOnHome == true else { myList = []; return }
+        myList = await UserFeed.myList(store: store, client: client, filter: filter)
+    }
 
     var body: some View {
         BrowseContainer(client: client, showsBackdrop: false) {
@@ -520,9 +554,12 @@ struct HomeView: View {
                                                          : "أضف أفلاماً ومسلسلات إلى خادم Plex لتظهر هنا."))
             } else {
                 BannerPage(banner: banner, chipTitle: "الرئيسية", client: client, bannerFocus: $bannerFocus,
-                           firstRowID: rows.first?.id) {
-                    ForEach(rows) { shelf in
-                        PageRow(id: shelf.id) { ShelfView(shelf: shelf, client: client) }
+                           firstRowID: homeRows.first?.id) {
+                    ForEach(homeRows) { shelf in
+                        PageRow(id: shelf.id) {
+                            ShelfView(shelf: shelf, client: client)
+                                .environment(\.marksNewEpisodes, shelf.id == "mylist")
+                        }
                     }
                 }
             }
@@ -533,6 +570,8 @@ struct HomeView: View {
             await load()
         }
         .onAppear { if !isEmpty { Task { await load(cached: false) } } }
+        .task(id: "\(filter.signature)|\(store.activeProfile?.settings?.myListOnHome == true)") { await loadMyList() }
+        .onReceive(NotificationCenter.default.publisher(for: .myListDidChange)) { _ in Task { await loadMyList() } }
         // Opening the app lands on the banner's Play (like Apple's TV app), not on nothing.
         .onChange(of: banner.isEmpty, initial: true) { _, empty in
             guard !empty, !focusedBanner else { return }
@@ -736,34 +775,64 @@ struct TVMyListView: View {
     let client: PlexServerClient
 
     @Environment(ProfileStore.self) private var store
+    @Environment(MyListNews.self) private var news: MyListNews?
     @Environment(\.contentFilter) private var filter
     @State private var items: [PlexItem] = []
     @State private var loaded = false
 
     var body: some View {
+        let new = items.filter { news?.counts[$0.ratingKey] != nil }
+        let rest = items.filter { news?.counts[$0.ratingKey] == nil }
         BrowseContainer(client: client) {
             ScrollViewReader { proxy in
                 ScrollView(.vertical) {
                     VStack(alignment: .leading, spacing: 20) {
-                        Text("قائمتي")
-                            .font(.system(size: 44, weight: .bold))
-                            .padding(.horizontal, CardKind.inset)
+                        HStack {
+                            Text("قائمتي").font(.system(size: 44, weight: .bold))
+                            Spacer()
+                            SettingsSwitch("إظهارها في الرئيسية", isOn: Self.onHome(store))
+                                .frame(width: 440)
+                        }
+                        .padding(.horizontal, CardKind.inset)
+                        .focusSection()
                         if items.isEmpty && loaded {
                             ContentUnavailableView("قائمتك فارغة", systemImage: "bookmark",
                                                    description: Text("أضف أفلاماً ومسلسلات من صفحة التفاصيل."))
                                 .frame(maxWidth: .infinity)
                         }
-                        PosterGrid(items: items, client: client, scrollProxy: proxy)
+                        if !new.isEmpty {
+                            header("فيها حلقات جديدة")
+                            PosterGrid(items: new, client: client, scrollProxy: proxy, rowID: "mylist-new")
+                            if !rest.isEmpty { header("باقي القائمة") }
+                        }
+                        if !rest.isEmpty {
+                            PosterGrid(items: rest, client: client, scrollProxy: proxy)
+                        }
                     }
                     .padding(.vertical, 50)
                 }
                 .sidebarSafeArea()
             }
         }
+        .environment(\.marksNewEpisodes, true)
         .task { await load() }
         .onReceive(NotificationCenter.default.publisher(for: .myListDidChange)) { _ in
             Task { await load() }
         }
+    }
+
+    private func header(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 30))
+            .foregroundStyle(.white.opacity(0.6))
+            .padding(.horizontal, CardKind.inset)
+            .padding(.top, 10)
+    }
+
+    /// The profile's «قائمتي on Home» setting.
+    static func onHome(_ store: ProfileStore) -> Binding<Bool> {
+        Binding { store.activeProfile?.settings?.myListOnHome ?? false }
+            set: { on in store.updateSettings { $0.myListOnHome = on } }
     }
 
     private func load() async {

@@ -102,6 +102,18 @@ private struct LandscapeCaption: View {
 
 // MARK: - Poster
 
+/// «قائمتي»: posters say when the show has new episodes.
+private struct MarksNewEpisodesKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var marksNewEpisodes: Bool {
+        get { self[MarksNewEpisodesKey.self] }
+        set { self[MarksNewEpisodesKey.self] = newValue }
+    }
+}
+
 /// Artwork only (the title is drawn under the card by `MediaCardLink`), with the status
 /// overlays: unwatched triangle + progress bar, unwatched episode count, quality and the
 /// «يُعرض» ribbon (no rating: posters often have it printed on them already) for shows with a recent episode.
@@ -114,6 +126,8 @@ struct PosterCard: View {
     var size: CGSize = CardKind.poster.size
 
     @Environment(ProfileStore.self) private var store
+    @Environment(MyListNews.self) private var news: MyListNews?
+    @Environment(\.marksNewEpisodes) private var marksNews
     /// Focus of the enclosing (native card) button.
     @Environment(\.isFocused) private var isFocused
 
@@ -127,6 +141,16 @@ struct PosterCard: View {
                         ? client.posterURL(item)
                         : client.imageURL(item.posterPath, width: Int(size.width * 2), height: Int(size.height * 2)))
             PosterBadges(corner: cornerText)
+            if marksNews, item.isShow, let count = news?.counts[item.ratingKey] {
+                Text(MyListNews.title(count))
+                    .font(.system(size: 19, weight: .bold))
+                    .foregroundStyle(.black)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 40)
+                    .background(ArtworkStatusOverlay.orange)
+                    .frame(maxHeight: .infinity, alignment: .bottom)
+            }
         }
         .animation(.easeOut(duration: 0.2), value: isFocused)
         .frame(width: size.width, height: size.height)
@@ -328,6 +352,7 @@ struct MediaCardLink: View {
             }
             // Native tvOS card focus: lift, soft shadow, moving shine and parallax tilt.
             .buttonStyle(.card)
+            .continueMenu(context?.rowID == "continue", item: item, client: client)
             // Focused poster: «مسلسل • كوميديا» just under it (badges printed on server posters
             // stay readable); takes no room in the row.
             .overlay(alignment: .bottom) {
@@ -373,6 +398,13 @@ struct MediaCardLink: View {
             // Grids show the focused item's artwork behind them (Home has its banner instead).
             backdrop.url = client.imageURL(item.backdropPath, width: 1280, height: 720)
         })
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func continueMenu(_ on: Bool, item: PlexItem, client: PlexServerClient) -> some View {
+        if on { modifier(ContinueCardMenu(item: item, client: client)) } else { self }
     }
 }
 
@@ -464,11 +496,22 @@ struct ShelfView: View {
             }
             .focusSection()
             .defaultFocus($focusedID, lastFocusedID ?? items.first?.id, priority: .userInitiated)
+            .onChange(of: items.map(\.id)) { old, new in keepFocus(from: old, to: new) }
             .onChange(of: focusedID) { old, id in
                 if let id { lastFocusedID = id }
                 // Focus entered this row: the page brings it to its reading position.
                 if old == nil, id != nil { pageRowFocused?(shelf.id) }
             }
+        }
+    }
+
+    /// The focused card was just removed: the one that took its place, not the banner.
+    private func keepFocus(from old: [String], to new: [String]) {
+        guard shelf.id == "continue", Date().timeIntervalSince(ContinueActions.removedAt) < 3,
+              let gone = lastFocusedID, !new.contains(gone), let index = old.firstIndex(of: gone), !new.isEmpty else { return }
+        let next = new[min(index, new.count - 1)]
+        for delay in [0.05, 0.4, 0.8] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { if focusedID == nil { focusedID = next } }
         }
     }
 

@@ -208,6 +208,9 @@ struct SettingsView: View {
                 SettingsSwitch("تذكّر آخر مستخدم", detail: "يفتح عليه مباشرة بدون شاشة «مين يشاهد؟»",
                                isOn: Binding(get: { store.rememberLastProfile }, set: { store.setRememberLastProfile($0) }))
             }
+            SettingsCard("الرئيسية") {
+                SettingsSwitch("إظهار «قائمتي» في الرئيسية", detail: "بعد متابعة المشاهدة مباشرة", isOn: TVMyListView.onHome(store))
+            }
             SettingsCard("سجل المشاهدة") {
                 SettingsRow("استيراد سجل المشاهدة من Plex", detail: "لهذا المستخدم فقط", arrow: true) { guarded { importing = true } }
                 if store.canUndoImport {
