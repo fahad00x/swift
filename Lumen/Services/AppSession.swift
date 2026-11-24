@@ -251,7 +251,11 @@ enum PlaybackSettings {
     static let autoPlayNextKey = "playback.autoPlayNext"
     static let forceTranscodeKey = "playback.forceTranscode"
     static let maxBitrateKey = "playback.maxBitrateKbps"
+    static let skipSecondsKey = "playback.skipSeconds"
+    static let subtitleSizeKey = "playback.subtitleSize"
     static let defaultBitrate = 1_000_000
+    static let defaultSkip = 10
+    static let defaultSubtitleSize = 44
 
     static var engine: PlaybackEngine {
         UserDefaults.standard.string(forKey: engineKey).flatMap(PlaybackEngine.init(rawValue:)) ?? .mpv
@@ -262,6 +266,21 @@ enum PlaybackSettings {
         let v = UserDefaults.standard.integer(forKey: maxBitrateKey)
         return v == 0 ? defaultBitrate : v
     }
+
+    /// Left / Right in the player.
+    static var skipSeconds: Double {
+        let v = UserDefaults.standard.integer(forKey: skipSecondsKey)
+        return Double(v == 0 ? defaultSkip : v)
+    }
+    /// Text subtitles (styled ASS and picture subtitles keep their own size).
+    static var subtitleSize: Int {
+        let v = UserDefaults.standard.integer(forKey: subtitleSizeKey)
+        return v == 0 ? defaultSubtitleSize : v
+    }
+
+    static let subtitleSizes: [(title: String, size: Int)] = [
+        ("صغير", 36), ("متوسط", 44), ("كبير", 54), ("كبير جدًا", 66),
+    ]
 
     static let bitrateOptions: [(title: String, kbps: Int)] = [
         ("الأصلية (بدون حد)", 1_000_000),

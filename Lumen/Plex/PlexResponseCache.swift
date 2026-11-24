@@ -55,6 +55,14 @@ enum PlexResponseCache {
         }
     }
 
+    static func size() -> Int { size(of: directory) }
+
+    /// Bytes of the files in a folder.
+    static func size(of folder: URL) -> Int {
+        let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.fileSizeKey])) ?? []
+        return files.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
+    }
+
     static func clear() {
         let fm = FileManager.default
         for url in (try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [] {

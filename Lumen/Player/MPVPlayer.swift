@@ -174,6 +174,7 @@ final class MPVPlayer {
     struct Configuration {
         var hdr = false
         var fastProfile = false
+        var subtitleSize = 44
         var preferredLanguages = ["ara", "ar", "eng", "en"]
     }
 
@@ -229,7 +230,7 @@ final class MPVPlayer {
             ("sub-auto", "no"),
             // Text subtitles (SRT…): white, bold, dark outline. Styled ASS keeps its own look:
             // `scale` only resizes it with the video, never replaces its fonts or colours.
-            ("sub-font-size", "44"),
+            ("sub-font-size", "\(configuration.subtitleSize)"),
             ("sub-bold", "yes"),
             ("sub-color", "#FFFFFFFF"),
             ("sub-border-color", "#CC000000"),

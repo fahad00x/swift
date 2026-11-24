@@ -83,6 +83,16 @@ actor ImageLoader {
         }
     }
 
+    /// Space the artwork takes on the device.
+    func diskSize() -> Int { PlexResponseCache.size(of: directory) }
+
+    func clearDisk() {
+        for file in (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [] {
+            try? FileManager.default.removeItem(at: file)
+        }
+        memory.removeAllObjects()
+    }
+
     private func diskFile(for url: URL) -> URL {
         var key = url.path
         if var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {

@@ -87,14 +87,14 @@ final class NowPlayingController {
 
     private func registerCommands() {
         let center = MPRemoteCommandCenter.shared()
-        center.skipForwardCommand.preferredIntervals = [10]
-        center.skipBackwardCommand.preferredIntervals = [10]
+        center.skipForwardCommand.preferredIntervals = [NSNumber(value: PlaybackSettings.skipSeconds)]
+        center.skipBackwardCommand.preferredIntervals = [NSNumber(value: PlaybackSettings.skipSeconds)]
 
         add(center.playCommand) { session, _ in session.setPaused(false, from: .remote) }
         add(center.pauseCommand) { session, _ in session.setPaused(true, from: .remote) }
         add(center.togglePlayPauseCommand) { session, _ in session.togglePause(from: .remote) }
-        add(center.skipForwardCommand) { session, _ in session.skip(by: 10, from: .remote) }
-        add(center.skipBackwardCommand) { session, _ in session.skip(by: -10, from: .remote) }
+        add(center.skipForwardCommand) { session, _ in session.skip(by: PlaybackSettings.skipSeconds, from: .remote) }
+        add(center.skipBackwardCommand) { session, _ in session.skip(by: -PlaybackSettings.skipSeconds, from: .remote) }
         add(center.changePlaybackPositionCommand) { session, position in
             guard let position else { return false }
             return session.jump(to: position, from: .remote)
