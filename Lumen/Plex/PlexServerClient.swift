@@ -237,6 +237,24 @@ final class PlexServerClient: Sendable {
         ((try? await container("/library/sections/\(section)/genre").directories) ?? []).filter { !$0.title.isEmpty }
     }
 
+    /// Keys of a library's titles that have one of these genres (ids); nil if the server can't
+    /// be reached. Listings carry two genres per title only, so this asks the server.
+    func ratingKeys(section: PlexDirectory, genres ids: [String]) async -> Set<String>? {
+        let size = 1000
+        var keys = Set<String>()
+        var start = 0
+        while true {
+            guard let c = try? await container("/library/sections/\(section.key)/all",
+                                               [("type", section.type == "movie" ? "1" : "2"),
+                                                ("genre", ids.joined(separator: ",")),
+                                                ("X-Plex-Container-Start", "\(start)"),
+                                                ("X-Plex-Container-Size", "\(size)")]) else { return nil }
+            keys.formUnion(c.metadata.map(\.ratingKey))
+            start += c.metadata.count
+            if c.metadata.isEmpty || start >= (c.totalSize ?? c.size ?? 0) { return keys }
+        }
+    }
+
     /// Genre names used in a library.
     func genres(section: PlexDirectory) async -> [String] {
         ((try? await container("/library/sections/\(section.key)/genre").directories) ?? []).map(\.title).filter { !$0.isEmpty }

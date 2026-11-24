@@ -43,14 +43,14 @@ struct BrowseContainer<Content: View>: View {
 // MARK: - Library page
 
 /// A library like a page of Apple's TV app: its banner, a glass tab bar
-/// (مقترح / تصفح / المجموعات / قوائم التشغيل / الفئات), then the chosen tab. The bar scrolls
+/// (مقترح / تصفح / المجموعات / قوائم التشغيل / فلترة), then the chosen tab. The bar scrolls
 /// away with the page when moving into the rows.
 struct LibraryView: View {
     let client: PlexServerClient
     let scope: LibraryScope
 
     enum Tab: String, CaseIterable, Identifiable {
-        case suggested, browse, collections, playlists, categories
+        case suggested, browse, collections, playlists, filter
         var id: String { rawValue }
         var title: String {
             switch self {
@@ -58,7 +58,7 @@ struct LibraryView: View {
             case .browse: return "تصفح"
             case .collections: return "المجموعات"
             case .playlists: return "قوائم التشغيل"
-            case .categories: return "الفئات"
+            case .filter: return "فلترة"
             }
         }
     }
@@ -66,6 +66,7 @@ struct LibraryView: View {
     @Environment(ProfileStore.self) private var store
     @Environment(\.contentFilter) private var filter
     @State private var tab: Tab = .suggested
+    @State private var filterModel = LibraryFilterModel()
     @State private var banner: [BannerItem] = []
     @State private var rows: [Shelf] = []
     @State private var loaded = false
@@ -99,8 +100,8 @@ struct LibraryView: View {
                         ListingGrid(client: client, path: "/library/sections/\(scope.section.key)/collections")
                     case .playlists:
                         ListingGrid(client: client, path: "/playlists", query: [("playlistType", "video")])
-                    case .categories:
-                        CategoryGrid(client: client, section: scope.section)
+                    case .filter:
+                        LibraryFilterGrid(client: client, scope: scope, model: filterModel, scrollProxy: proxy)
                     }
                 }
             }
@@ -327,52 +328,7 @@ private struct ListingGrid: View {
     }
 }
 
-/// «الفئات»: the library's genres; each opens the library filtered by it.
-private struct CategoryGrid: View {
-    let client: PlexServerClient
-    let section: PlexDirectory
-
-    @State private var genres: [PlexDirectory] = []
-    @State private var loaded = false
-
-    var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: 30)], alignment: .leading, spacing: 30) {
-            ForEach(genres) { genre in
-                NavigationLink(value: BrowseRoute(title: ArabicFormat.genre(genre.title),
-                                                  path: "/library/sections/\(section.key)/all",
-                                                  query: ["genre": Self.genreID(genre.key)])) {
-                    Text(ArabicFormat.genre(genre.title))
-                        .font(.system(size: 28, weight: .semibold))
-                        .lineLimit(1)
-                        .frame(width: 340, height: 120)
-                        .background(RoundedRectangle(cornerRadius: CardKind.cornerRadius, style: .continuous)
-                            .fill(Color.white.opacity(0.1)))
-                }
-                .buttonStyle(.card)
-            }
-        }
-        .padding(.horizontal, CardKind.inset)
-        .overlay {
-            if genres.isEmpty && loaded {
-                ContentUnavailableView("لا توجد فئات", systemImage: "square.grid.2x2")
-            }
-        }
-        .task {
-            genres = await client.genreDirectories(section: section.key)
-            loaded = true
-        }
-    }
-
-    /// The genre's id: Plex gives it alone ("123") or inside a filter path ("…/all?genre=123").
-    static func genreID(_ key: String) -> String {
-        if let range = key.range(of: "genre=") {
-            return String(key[range.upperBound...].prefix { $0 != "&" })
-        }
-        return key.split(separator: "/").last.map(String.init) ?? key
-    }
-}
-
-/// A plain listing pushed from a collection, a playlist or a category.
+/// A plain listing pushed from a collection or a playlist.
 struct ItemListPage: View {
     let client: PlexServerClient
     let route: BrowseRoute

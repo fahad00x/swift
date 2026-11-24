@@ -182,6 +182,8 @@ enum ArabicFormat {
         "suspense": "تشويق", "talk": "حواري", "thriller": "إثارة", "war": "حرب",
         "war & politics": "حرب وسياسة", "western": "غربي", "game show": "مسابقات",
         "mini-series": "مسلسل قصير", "tv movie": "فيلم تلفزيوني", "children": "أطفال",
+        "action/adventure": "أكشن ومغامرة", "martial arts": "فنون قتالية",
+        "动画": "رسوم متحركة", "喜剧": "كوميديا",
         "soap": "دراما يومية", "food": "طبخ", "travel": "سفر", "home and garden": "منزل وحديقة",
     ]
 
