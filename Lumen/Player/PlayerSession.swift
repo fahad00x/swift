@@ -53,7 +53,16 @@ final class PlayerSession {
     }
     var buttonsActive = false
     var panel: Panel? {
-        didSet { if let panel { lastPanel = panel } }
+        didSet {
+            if let panel { lastPanel = panel }
+            // However it closed (a choice too), the focus needs a place.
+            if panel == nil, oldValue != nil { onRefocus?() }
+        }
+    }
+    /// The focus left the open panel for a button: the panel closes, the focus stays there.
+    func closePanel(focusedOn button: Panel) {
+        lastPanel = button
+        panel = nil
     }
     /// The button focus returns to when its panel closes.
     private(set) var lastPanel: Panel?
@@ -292,13 +301,14 @@ final class PlayerSession {
         showControls(autoHide: false)
     }
 
-    func updateScrub(delta: Double) {
-        guard let start = scrubPosition else { return }
-        scrubPosition = min(max(0, start + delta), max(0, duration - 1))
+    /// Moves the scrub by `delta` seconds from where it is (not from where it began).
+    func moveScrub(by delta: Double) {
+        guard let current = scrubPosition else { return }
+        scrubPosition = min(max(0, current + delta), max(0, duration - 1))
     }
 
-    func commitScrub(base: Double, delta: Double) {
-        let target = min(max(0, base + delta), max(0, duration - 1))
+    func commitScrub() {
+        guard let target = scrubPosition else { return }
         scrubPosition = nil
         seek(to: target)
     }

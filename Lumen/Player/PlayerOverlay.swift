@@ -132,14 +132,32 @@ private struct PlayerChrome: View {
         .onChange(of: session.panel) { old, new in
             if let new {
                 DispatchQueue.main.async { focus = .row(selectedRowID(new) ?? "") }
-            } else if let old, session.buttonsActive {
-                DispatchQueue.main.async { focus = .button(old) }
+            } else if old != nil, session.buttonsActive {
+                restoreButtonFocus()
+            }
+        }
+        // Swiped / pressed out of the panel onto the buttons: the panel closes.
+        .onChange(of: focus) { old, new in
+            if case .row = old, case .button(let button) = new, session.panel != nil {
+                session.closePanel(focusedOn: button)
             }
         }
         .onAppear {
             if session.buttonsActive { focus = .button(panels.first ?? .subtitles) }
         }
 
+    }
+
+    /// A panel closed: its button takes the focus. Asked again while the panel fades out,
+    /// since its rows can still hold the focus and leave it nowhere once they're gone.
+    private func restoreButtonFocus() {
+        for delay in [0, 0.1, 0.3, 0.6] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard session.buttonsActive, session.panel == nil else { return }
+                if case .button = focus { return }
+                focus = .button(session.lastPanel ?? panels.first ?? .subtitles)
+            }
+        }
     }
 
     // MARK: Info

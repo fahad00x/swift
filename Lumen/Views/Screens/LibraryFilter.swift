@@ -335,6 +335,7 @@ struct LibraryFilterGrid: View {
 
     @Environment(\.contentFilter) private var filter
     @Environment(ProfileStore.self) private var store
+    @Environment(ShellState.self) private var shell: ShellState?
     @State private var open: Field?
     @FocusState private var focused: Field?
     /// Posters drawn so far (the rest on scroll).
@@ -418,7 +419,8 @@ struct LibraryFilterGrid: View {
         .onChange(of: model.order) { shown = Self.page }
         // The focused poster went away with the last result.
         .onChange(of: model.results.isEmpty) { _, empty in
-            if empty, open == nil { focused = fields.first }
+            // (Not under a details page: it would take the focus from it.)
+            if empty, open == nil, (shell?.pushedPages ?? 0) == 0 { focused = fields.first }
         }
         .fullScreenCover(item: $open) { field in
             FilterPanel(field: field, model: model, movies: scope.section.type == "movie")

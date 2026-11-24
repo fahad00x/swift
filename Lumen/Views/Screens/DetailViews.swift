@@ -52,6 +52,9 @@ struct DetailPage: View {
     /// The scroll to the episodes finished (Up to the top works only then, so focus landing
     /// on the top strip while it moves doesn't scroll back again).
     @State private var episodesReady = false
+    /// Bumped to rebuild the rows (see `focusPlay`).
+    @State private var rowsToken = 0
+    @State private var lastExit = Date.distantPast
     @State private var audioSelection = -1
     @State private var subtitleSelection = -1
     /// Selection last loaded from the profile (changes from the menu differ from it).
@@ -162,6 +165,7 @@ struct DetailPage: View {
                 // Card state: drawn a little smaller, on the text's margins, and cut at the
                 // card's edges (visual only, the rows keep their layout and scroll position).
                 lowerContent(item)
+                    .id(rowsToken)
                     .scaleEffect(fullScreen ? 1 : Self.cardRowScale, anchor: .top)
                     .offset(y: (scrolled ? Self.episodesTop : Self.peekTop) - leadIn * (fullScreen ? 1 : Self.cardRowScale))
                     .frame(width: Self.screen.width, height: Self.screen.height, alignment: .top)
@@ -191,6 +195,8 @@ struct DetailPage: View {
         .frame(width: Self.screen.width, height: Self.screen.height)
         .ignoresSafeArea()
         .onExitCommand(perform: exitAction)
+        // On the episodes Back must never leave the page.
+        .background(MenuCatcher(active: scrolled, action: exitAction))
         .onChange(of: audioSelection) { _, id in
             guard id > 0, id != shownStreams.audio else { return }
             shownStreams.audio = id
@@ -231,7 +237,7 @@ struct DetailPage: View {
         .onReceive(NotificationCenter.default.publisher(for: .plexPlaybackDidEnd)) { _ in
             Task { await load() }
         }
-        .defaultFocus($heroFocus, canBrowse ? .browse : .play)
+        .defaultFocus($heroFocus, canBrowse && browsing ? .browse : .play)
         .onAppear {
             shell?.pushedPages += 1
             // Back lands on the same poster (or the last one reached by paging).
@@ -242,14 +248,34 @@ struct DetailPage: View {
 
     /// Back goes one step back: from the episodes to the top, from the top to the poster.
     private func exitAction() {
+        // One press can arrive twice (the catcher and onExitCommand).
+        guard Date().timeIntervalSince(lastExit) > 0.35 else { return }
+        lastExit = Date()
         if scrolled {
             lowerFocus = nil
             seasonFocus = nil
             setScrolled(false)
             // Once the buttons are visible again (they can't take focus while invisible).
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { heroFocus = .play }
+            focusPlay()
         } else {
             dismiss()
+        }
+    }
+
+    /// Once the buttons are back on screen. Right after the player focus requests don't take
+    /// (the focus stays on the hidden episode): the rows are rebuilt, which frees it, and
+    /// asked again.
+    private func focusPlay() {
+        for delay in [0.3, 0.7, 1.0, 1.3] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard !scrolled else { return }
+                switch heroFocus {
+                case .play?, .watchlist?, .episodes?, .browse?: return
+                default: break
+                }
+                if delay == 0.7 { rowsToken += 1 }
+                heroFocus = .play
+            }
         }
     }
 
@@ -464,6 +490,7 @@ struct DetailPage: View {
         case .backToTop?:
             setScrolled(false)
             DispatchQueue.main.async { heroFocus = .play }
+            focusPlay()
         case nil:
             break
         }
@@ -606,13 +633,18 @@ struct DetailPage: View {
     private var seasonLabels: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 44) {
-                ForEach(seasons) { season in
+                // One season: nothing to choose, so Up from the episodes goes straight to the top.
+                if seasons.count == 1, let season = seasons.first {
+                    Text(seasonTitle(season))
+                        .font(.system(size: 30, weight: .semibold))
+                        .foregroundStyle(.white)
+                } else { ForEach(seasons) { season in
                     Button { selectedSeasonKey = season.ratingKey } label: {
                         Text(seasonTitle(season))
                     }
                     .buttonStyle(SeasonLabelStyle(isSelected: season.ratingKey == selectedSeasonKey))
                     .focused($seasonFocus, equals: season.ratingKey)
-                }
+                } }
             }
             .padding(.horizontal, Self.sideInset)
             .padding(.vertical, 10)

@@ -14,7 +14,8 @@ final class MPVPlayerViewController: UIViewController {
     private let metalLayer: MPVMetalLayer
     private var overlayHost: UIHostingController<PlayerOverlay>!
     private let displayCriteria: AVDisplayCriteria?
-    private var scrubBase: Double = 0
+    private var lastTranslation: CGFloat = 0
+    private var scrubStart: Double = 0
     private var lastMenu: CFTimeInterval = 0
 
     var onDismiss: (() -> Void)?
@@ -50,6 +51,9 @@ final class MPVPlayerViewController: UIViewController {
 
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
         pan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirect.rawValue)]
+        // Only for scrubbing (see gestureRecognizerShouldBegin): it must not take the swipes
+        // that move the focus between the buttons or in a panel.
+        pan.delegate = self
         view.addGestureRecognizer(pan)
 
         // Menu comes here first, wherever the focus is. Without our own recognizer, a press
@@ -222,21 +226,36 @@ final class MPVPlayerViewController: UIViewController {
     }
 
     @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
-        guard !session.isPanelOpen, session.duration > 0 else { return }
-        // A full swipe across the touch surface ≈ 5 minutes (or the whole file if shorter).
-        let span = min(session.duration, 300)
-        let delta = Double(gesture.translation(in: view).x / max(view.bounds.width, 1)) * span
+        guard session.duration > 0 else { return }
+        let width = max(view.bounds.width, 1)
         switch gesture.state {
         case .began:
-            scrubBase = session.position
+            scrubStart = session.position
+            lastTranslation = gesture.translation(in: view).x
             session.beginScrub()
         case .changed:
-            session.updateScrub(delta: delta)
+            let x = gesture.translation(in: view).x
+            let step = Double((x - lastTranslation) / width)
+            lastTranslation = x
+            // Slow: fine (45 s across the screen); fast: up to 5 minutes. Short videos: less.
+            let speed = min(1, Double(abs(gesture.velocity(in: view).x) / width) / 4)
+            let span = min(45 + 255 * speed * speed, max(45, session.duration / 4))
+            session.moveScrub(by: step * span)
         case .ended:
-            if abs(delta) > 1 { session.commitScrub(base: scrubBase, delta: delta) } else { session.cancelScrub() }
+            let moved = abs((session.scrubPosition ?? scrubStart) - scrubStart)
+            if moved > 1 { session.commitScrub() } else { session.cancelScrub() }
         default:
             session.cancelScrub()
         }
+    }
+}
+
+extension MPVPlayerViewController: UIGestureRecognizerDelegate {
+    func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
+        guard let pan = gesture as? UIPanGestureRecognizer else { return true }
+        guard !session.isPanelOpen, session.errorMessage == nil else { return false }
+        let velocity = pan.velocity(in: view)
+        return abs(velocity.x) > abs(velocity.y)
     }
 }
 
