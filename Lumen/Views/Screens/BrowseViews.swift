@@ -178,23 +178,26 @@ private struct LibraryTabBar: View {
 
 private struct TabPillStyle: ButtonStyle {
     let selected: Bool
+    /// Smaller, for choices under the tabs.
+    var compact = false
 
-    func makeBody(configuration: Configuration) -> some View { PillBody(configuration: configuration, selected: selected) }
+    func makeBody(configuration: Configuration) -> some View { PillBody(configuration: configuration, selected: selected, compact: compact) }
 
     private struct PillBody: View {
         let configuration: ButtonStyleConfiguration
         let selected: Bool
+        let compact: Bool
         @Environment(\.isFocused) private var isFocused
         @Environment(\.pageContentFocused) private var pageContentFocused
 
         var body: some View {
             configuration.label
                 .onChange(of: isFocused) { _, focused in if focused { pageContentFocused?() } }
-                .font(.system(size: 26, weight: selected ? .semibold : .regular))
+                .font(.system(size: compact ? 23 : 26, weight: selected ? .semibold : .regular))
                 .foregroundStyle(isFocused ? Color.black : (selected ? Color.white : Color.white.opacity(0.7)))
                 .environment(\.colorScheme, isFocused ? .light : .dark)
-                .padding(.horizontal, 30)
-                .frame(height: 60)
+                .padding(.horizontal, compact ? 24 : 30)
+                .frame(height: compact ? 50 : 60)
                 .background(Capsule().fill(isFocused ? Color.white : (selected ? Color.white.opacity(0.18) : Color.clear)))
                 .scaleEffect(isFocused ? 1.05 : 1)
                 .animation(.easeOut(duration: 0.15), value: isFocused)
@@ -220,18 +223,27 @@ private struct LibraryBrowseGrid: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
-            HStack(spacing: 30) {
+            // Sort choices centred under the library's tabs (same pills, smaller and without
+            // the bar); the count on the reading side of the same line.
+            ZStack {
                 if let total, total > 0 {
-                    Text("\(ArabicFormat.digits(total)) عنصر").font(.callout).foregroundStyle(.secondary)
+                    Text("\(ArabicFormat.digits(total)) عنصر")
+                        .font(.system(size: 24))
+                        .foregroundStyle(.white.opacity(0.5))
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                Spacer(minLength: 40)
-                Picker("الترتيب", selection: $sort) {
-                    ForEach(LibrarySort.allCases) { Text($0.title).tag($0) }
+                HStack(spacing: 8) {
+                    ForEach(LibrarySort.allCases) { option in
+                        Button { sort = option } label: { Text(option.title) }
+                            .buttonStyle(TabPillStyle(selected: option == sort, compact: true))
+                    }
                 }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 1000)
+                .frame(maxWidth: .infinity)
+                .focusSection()
             }
             .padding(.horizontal, CardKind.inset)
+            // Closer to the tabs they belong to (40 pt under the bar otherwise).
+            .padding(.top, -12)
 
             if items.isEmpty && loadedOnce && !isLoading {
                 ContentUnavailableView("لا توجد عناصر", systemImage: "tray").frame(maxWidth: .infinity)
