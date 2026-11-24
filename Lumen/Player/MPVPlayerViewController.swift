@@ -142,13 +142,13 @@ final class MPVPlayerViewController: UIViewController {
 
         switch press.type {
         case .select:
-            if session.skipAction != nil { session.performSkip() } else { session.togglePause() }
+            if session.skipAction != nil { session.performSkip() } else { session.togglePause(from: .press) }
         case .playPause:
-            session.togglePause()
+            session.togglePause(from: .press)
         case .leftArrow:
-            session.seek(by: -10)
+            session.skip(by: -10, from: .press)
         case .rightArrow:
-            session.seek(by: 10)
+            session.skip(by: 10, from: .press)
         case .downArrow:
             openPanel()
         case .upArrow:

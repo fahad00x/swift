@@ -1,5 +1,7 @@
+import AVFoundation
 import Foundation
 import Observation
+import os
 
 /// State + logic for one MPV playback, shared by the view controller (input) and the SwiftUI overlay.
 @MainActor
@@ -86,6 +88,17 @@ final class PlayerSession {
         }
     }
 
+    /// Where a play / skip command came from.
+    enum CommandSource: String { case press = "UIPress", remote = "MPRemoteCommand" }
+    private enum CommandKind: String { case playPause, skip }
+    private static let log = Logger(subsystem: "com.fahad00x.lumen", category: "remote")
+    /// TEMPORARY (remote test build): last command and its source, drawn over the player.
+    private(set) var commandLog = "remote: –"
+    private var commandCount = 0
+    @ObservationIgnored private var lastAccepted: [CommandKind: (source: CommandSource, time: TimeInterval)] = [:]
+    @ObservationIgnored private lazy var nowPlaying = NowPlayingController(session: self)
+    private let generation = PlaybackManager.shared.playbackGeneration
+
     /// Asks the hosting view controller to close the player.
     var onRequestClose: (() -> Void)?
 
@@ -121,6 +134,8 @@ final class PlayerSession {
         let resume = fromBeginning ? 0 : Double(item.viewOffset ?? 0) / 1000
         player.load(url, start: resume > 5 ? resume : 0)
         if item.duration.map({ $0 > 0 }) == true { duration = Double(item.duration!) / 1000 }
+        if resume > 5 { position = resume }
+        nowPlaying.start()
         Task { nextEpisode = await client.nextEpisode(after: item) }
         loadOnlineSegments(for: item)
         scheduleHide()
@@ -131,8 +146,19 @@ final class PlayerSession {
         guard !finished else { return }
         finished = true
         hideTask?.cancel()
+        nowPlaying.stop()
         let pos = player.position > 0 ? player.position : position
-        player.shutdown()
+        let generation = self.generation
+        // Not awaited: closing never waits for mpv. The audio session is released once mpv
+        // is gone, unless another playback started in the meantime.
+        player.shutdown {
+            guard PlaybackManager.shared.playbackGeneration == generation else { return }
+            do {
+                try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            } catch {
+                Self.log.error("audio session release failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
         await reportStopped(item: item, positionSeconds: pos)
     }
 
@@ -159,16 +185,72 @@ final class PlayerSession {
         showControls()
     }
 
+    private var canControl: Bool { !finished && errorMessage == nil }
+
+    /// Siri Remote presses can arrive twice: as a UIPress and as a system command. The second
+    /// one, from the other source within 0.3 s, is dropped; quick presses from one source all count.
+    private func accept(_ kind: CommandKind, _ detail: String, from source: CommandSource) -> Bool {
+        let now = ProcessInfo.processInfo.systemUptime
+        let last = lastAccepted[kind]
+        let duplicate = last.map { $0.source != source && now - $0.time < 0.3 } ?? false
+        if !duplicate { lastAccepted[kind] = (source, now) }
+        commandCount += 1
+        commandLog = "#\(commandCount) \(detail) ← \(source.rawValue)\(duplicate ? " (duplicate)" : "")"
+        Self.log.notice("\(self.commandLog, privacy: .public)")
+        return !duplicate
+    }
+
+    /// Returns false when the player can't take the command.
+    @discardableResult
+    func togglePause(from source: CommandSource) -> Bool {
+        guard canControl else { return false }
+        if accept(.playPause, "toggle", from: source) { togglePause() }
+        return true
+    }
+
+    /// Play / pause to an exact state (repeating it changes nothing).
+    @discardableResult
+    func setPaused(_ paused: Bool, from source: CommandSource) -> Bool {
+        guard canControl else { return false }
+        if accept(.playPause, paused ? "pause" : "play", from: source) {
+            player.isPaused = paused
+            showControls()
+        }
+        return true
+    }
+
+    @discardableResult
+    func skip(by seconds: Double, from source: CommandSource) -> Bool {
+        guard canControl, duration > 0 else { return false }
+        if accept(.skip, seconds > 0 ? "+10" : "-10", from: source) { seek(by: seconds) }
+        return true
+    }
+
+    /// Scrubber of the Now Playing card.
+    @discardableResult
+    func jump(to seconds: Double, from source: CommandSource) -> Bool {
+        guard canControl, duration > 0, seconds.isFinite else { return false }
+        commandCount += 1
+        commandLog = "#\(commandCount) jump \(Int(seconds)) ← \(source.rawValue)"
+        Self.log.notice("\(self.commandLog, privacy: .public)")
+        seek(to: min(max(0, seconds), max(0, duration - 1)))
+        return true
+    }
+
     func seek(by seconds: Double) {
+        // Unknown duration: clamping would jump back to the start.
+        guard duration > 0 else { return }
         let target = min(max(0, position + seconds), max(0, duration - 1))
         position = target
         player.seek(to: target)
+        nowPlaying.update()
         showControls()
     }
 
     func seek(to seconds: Double) {
         position = seconds
         player.seek(to: seconds)
+        nowPlaying.update()
         showControls()
     }
 
@@ -280,6 +362,7 @@ final class PlayerSession {
         audioTracks = []
         subtitleTracks = []
         player.load(url, start: 0)
+        nowPlaying.itemChanged()
         showControls()
         nextEpisode = await client.nextEpisode(after: detailed)
     }
@@ -293,13 +376,18 @@ final class PlayerSession {
             case "time-pos":
                 if let v = value as? Double { position = v; tick() }
             case "duration":
-                if let v = value as? Double, v > 0 { duration = v }
+                if let v = value as? Double, v > 0, abs(v - duration) > 0.5 {
+                    duration = v
+                    nowPlaying.update()
+                }
             case "pause":
                 isPaused = (value as? Bool) ?? false
+                nowPlaying.update()
                 if isPaused { showControls(autoHide: false) } else { scheduleHide() }
                 Task { await report(force: true) }
             case "paused-for-cache":
                 isBuffering = (value as? Bool) ?? false
+                nowPlaying.update()
             case "track-list/count", "aid", "sid":
                 refreshTracks()
             default:
@@ -308,6 +396,7 @@ final class PlayerSession {
         case .fileLoaded:
             isBuffering = false
             errorMessage = nil
+            nowPlaying.update()
             addExternalSubtitles()
             applyPreferredStreams()
             refreshTracks()
@@ -315,6 +404,7 @@ final class PlayerSession {
         case .endFile(let reachedEOF, let error):
             if let error {
                 errorMessage = "تعذّر تشغيل الملف: \(error)"
+                nowPlaying.update()
                 showControls(autoHide: false)
             } else if reachedEOF {
                 if nextEpisode != nil && UserDefaults.standard.object(forKey: PlaybackSettings.autoPlayNextKey) as? Bool ?? true {

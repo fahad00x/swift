@@ -31,12 +31,17 @@ final class PlaybackManager {
 
     private init() {}
 
+    /// Grows with every playback (any engine): a closing player leaves the audio session
+    /// alone when another playback has started meanwhile.
+    private(set) var playbackGeneration = 0
+
     /// True while a player is on screen.
     var isPlaying: Bool { continuation != nil }
 
     /// Plays an item and returns once the player has been dismissed.
     func play(_ item: PlexItem, client: PlexServerClient, fromBeginning: Bool = false) async {
         guard continuation == nil else { return }
+        playbackGeneration += 1
 
         // Always refresh: we need streams and intro/credits markers.
         let full = (try? await client.metadata(item.ratingKey)) ?? item

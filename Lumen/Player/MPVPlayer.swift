@@ -253,15 +253,20 @@ final class MPVPlayer {
         }
     }
 
-    /// Tears the player down; safe to call more than once.
-    func shutdown() {
-        guard let mpv = handle else { return }
+    /// Tears the player down; safe to call more than once. mpv is destroyed in the background:
+    /// `completion` runs on the main queue once it's really gone.
+    func shutdown(completion: (@MainActor () -> Void)? = nil) {
+        guard let mpv = handle else {
+            if let completion { DispatchQueue.main.async { completion() } }
+            return
+        }
         onEvent = nil
         handle = nil
         queue.async { [retainedSelf] in
             mpv_set_wakeup_callback(mpv, nil, nil)
             mpv_terminate_destroy(mpv)
             retainedSelf?.release()
+            if let completion { DispatchQueue.main.async { completion() } }
         }
         retainedSelf = nil
     }

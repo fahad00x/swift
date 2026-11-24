@@ -99,6 +99,7 @@ targets:
           - PlaybackManager.swift
       - path: Lumen/Player/MPVPlayer.swift
       - path: Lumen/Player/PlayerSession.swift
+      - path: Lumen/Player/NowPlayingController.swift
       - path: Lumen/Resources
     entitlements:
       path: LumenMobile/LumenMobile.entitlements
