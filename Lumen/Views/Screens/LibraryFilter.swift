@@ -357,27 +357,35 @@ struct LibraryFilterGrid: View {
                 .frame(maxWidth: .infinity)
                 .focusSection()
 
-                // The order, how many there are, and clearing the choices.
-                HStack(spacing: 24) {
-                    pill(.order)
-                    if model.loaded {
-                        Text(FilterText.results(model.results.count))
-                            .font(.system(size: 24))
-                            .foregroundStyle(.white.opacity(0.5))
-                            .opacity(model.isLoading || model.failed ? 0 : 1)
-                    }
+                // On the posters' edges, plain text: how many (and clearing the choices) on the
+                // reading side, the order on the other.
+                HStack(spacing: 4) {
+                    Text(FilterText.results(model.results.count))
+                        .font(.system(size: 24))
+                        .foregroundStyle(.white.opacity(0.5))
+                        .opacity(!model.loaded || model.isLoading || model.failed ? 0 : 1)
                     if !model.criteria.isEmpty {
                         Button {
                             // This button goes away: keep the focus on the pills.
                             focused = fields.first
                             model.criteria = FilterCriteria()
-                        } label: {
-                            Label("مسح الكل", systemImage: "xmark")
-                        }
-                        .buttonStyle(FilterPillStyle(selected: false))
+                        } label: { Text("مسح الكل") }
+                            .buttonStyle(FilterTextStyle(accent: true))
                     }
+                    Spacer(minLength: 40)
+                    Button { open = .order } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: model.order.ascending ? "arrow.up" : "arrow.down")
+                                .font(.system(size: 19, weight: .semibold))
+                            Text(model.order.key.title)
+                        }
+                    }
+                    .buttonStyle(FilterTextStyle(accent: false))
+                    .focused($focused, equals: .order)
+                    // The text itself on the posters' edge.
+                    .padding(.trailing, -FilterTextStyle.inset)
                 }
-                .frame(maxWidth: .infinity)
+                .frame(height: 48)
                 .focusSection()
             }
             .padding(.horizontal, CardKind.inset)
@@ -408,6 +416,10 @@ struct LibraryFilterGrid: View {
         }
         .onChange(of: model.criteria) { shown = Self.page }
         .onChange(of: model.order) { shown = Self.page }
+        // The focused poster went away with the last result.
+        .onChange(of: model.results.isEmpty) { _, empty in
+            if empty, open == nil { focused = fields.first }
+        }
         .fullScreenCover(item: $open) { field in
             FilterPanel(field: field, model: model, movies: scope.section.type == "movie")
         }
@@ -416,15 +428,12 @@ struct LibraryFilterGrid: View {
     private func pill(_ field: Field) -> some View {
         Button { open = field } label: {
             HStack(spacing: 10) {
-                if field == .order {
-                    Image(systemName: model.order.ascending ? "arrow.up" : "arrow.down").font(.system(size: 18, weight: .semibold))
-                }
                 // What's chosen says enough on its own.
                 Text(value(field) ?? field.title).lineLimit(1).minimumScaleFactor(0.75)
                 Image(systemName: "chevron.down").font(.system(size: 16, weight: .semibold)).opacity(0.6)
             }
         }
-        .buttonStyle(FilterPillStyle(selected: field != .order && value(field) != nil))
+        .buttonStyle(FilterPillStyle(selected: value(field) != nil))
         .focused($focused, equals: field)
     }
 
@@ -454,7 +463,7 @@ struct LibraryFilterGrid: View {
             let movies = scope.section.type == "movie"
             return FilterText.list(FilterWatched.choices(movies: movies).filter(c.watched.contains).map { $0.title(movies: movies) })
         case .order:
-            return "الترتيب: " + model.order.key.title
+            return model.order.key.title
         }
     }
 }
@@ -738,6 +747,34 @@ private struct GenreRowStyle: ButtonStyle {
             .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(isFocused ? Color.white : Color.clear))
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .animation(.easeOut(duration: 0.15), value: isFocused)
+        }
+    }
+}
+
+/// Plain text; focused: white capsule.
+private struct FilterTextStyle: ButtonStyle {
+    let accent: Bool
+    static let inset: CGFloat = 20
+
+    func makeBody(configuration: Configuration) -> some View { TextBody(configuration: configuration, accent: accent) }
+
+    private struct TextBody: View {
+        let configuration: ButtonStyleConfiguration
+        let accent: Bool
+        @Environment(\.isFocused) private var isFocused
+        @Environment(\.pageContentFocused) private var pageContentFocused
+
+        var body: some View {
+            configuration.label
+                .onChange(of: isFocused) { _, focused in if focused { pageContentFocused?() } }
+                .font(.system(size: 24, weight: .medium))
+                .lineLimit(1)
+                .foregroundStyle(isFocused ? Color.black : (accent ? ArtworkStatusOverlay.orange : Color.white.opacity(0.75)))
+                .padding(.horizontal, FilterTextStyle.inset)
+                .frame(height: 48)
+                .background(Capsule().fill(isFocused ? Color.white : Color.clear))
+                .scaleEffect(configuration.isPressed ? 0.97 : 1)
+                .animation(.easeOut(duration: 0.15), value: isFocused)
         }
     }
 }
