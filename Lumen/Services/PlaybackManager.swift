@@ -1,5 +1,6 @@
 import AVFoundation
 import AVKit
+import OSLog
 import UIKit
 
 /// AVPlayerViewController that tells us when the user leaves playback (Menu / Back).
@@ -20,6 +21,8 @@ final class LumenPlayerViewController: AVPlayerViewController {
 @MainActor
 final class PlaybackManager {
     static let shared = PlaybackManager()
+    /// Why a Play press didn't open the player (it used to fail silently).
+    nonisolated static let log = Logger(subsystem: "com.fahad00x.lumen", category: "playback")
 
     private var player: AVPlayer?
     private var timeObserver: Any?
@@ -40,7 +43,10 @@ final class PlaybackManager {
 
     /// Plays an item and returns once the player has been dismissed.
     func play(_ item: PlexItem, client: PlexServerClient, fromBeginning: Bool = false) async {
-        guard continuation == nil else { return }
+        guard continuation == nil else {
+            Self.log.error("Play ignored: a player is already open")
+            return
+        }
         playbackGeneration += 1
 
         // Always refresh: we need streams and intro/credits markers.
@@ -62,9 +68,15 @@ final class PlaybackManager {
         guard let plan = client.playbackPlan(for: item,
                                              forceTranscode: PlaybackSettings.forceTranscode,
                                              maxBitrateKbps: PlaybackSettings.maxBitrateKbps,
-                                             nativeEngine: true),
-              let presenter = Self.topViewController()
-        else { return }
+                                             nativeEngine: true)
+        else {
+            Self.log.error("Play: no playable file for \(item.ratingKey, privacy: .public)")
+            return
+        }
+        guard let presenter = Self.topViewController() else {
+            Self.log.error("Play: no screen to present the player on")
+            return
+        }
 
         let layer = MPVMetalLayer()
         var config = MPVPlayer.Configuration()
@@ -91,6 +103,19 @@ final class PlaybackManager {
         }
         presenter.present(vc, animated: true) {
             session.start(url: plan.url, fromBeginning: fromBeginning)
+        }
+        // UIKit drops a presentation it can't make without telling us: don't stay "playing"
+        // forever (every later Play would be ignored).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self, weak vc] in
+            guard let vc, vc.presentingViewController == nil, !vc.isBeingPresented else { return }
+            Self.log.error("Play: the player could not be presented")
+            vc.onDismiss = nil
+            Task { @MainActor in
+                await session.finish()
+                if plan.isTranscode { await client.stopTranscode(sessionID: plan.sessionID) }
+                self?.continuation?.resume()
+                self?.continuation = nil
+            }
         }
         await withCheckedContinuation { self.continuation = $0 }
     }
@@ -244,7 +269,9 @@ final class PlaybackManager {
             .flatMap(\.windows)
             .first { $0.isKeyWindow }
         var top = window?.rootViewController
-        while let presented = top?.presentedViewController { top = presented }
+        // A screen still closing (the previous player) can't present: presenting on it fails
+        // without an error and the player never shows.
+        while let presented = top?.presentedViewController, !presented.isBeingDismissed { top = presented }
         return top
     }
 }

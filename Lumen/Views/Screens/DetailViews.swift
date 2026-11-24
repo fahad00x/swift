@@ -890,9 +890,22 @@ struct DetailPage: View {
 
     // MARK: - Actions
 
+    /// Play pressed before the page knew what to start (the show's episodes still loading,
+    /// or just paged): work it out now instead of doing nothing.
     private func play(_ target: PlexItem?, fromBeginning: Bool = false) {
-        guard let target else { return }
-        Task { await PlaybackManager.shared.play(target, client: client, fromBeginning: fromBeginning) }
+        let shown = item
+        let opened = preferredEpisode
+        Task {
+            var resolved = target ?? opened
+            if resolved == nil, let shown {
+                resolved = shown.isShow ? await client.episodeToPlay(showKey: shown.ratingKey) : shown
+            }
+            guard let resolved else {
+                PlaybackManager.log.error("Play: nothing to play yet for \(ratingKey, privacy: .public)")
+                return
+            }
+            await PlaybackManager.shared.play(resolved, client: client, fromBeginning: fromBeginning)
+        }
     }
 
     private func toggleWatchlist() {
