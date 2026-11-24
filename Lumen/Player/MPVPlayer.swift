@@ -229,12 +229,13 @@ final class MPVPlayer {
             ("sub-auto", "no"),
             // Text subtitles (SRT…): white, bold, dark outline. Styled ASS keeps its own look:
             // `scale` only resizes it with the video, never replaces its fonts or colours.
-            ("sub-font-size", "46"),
+            ("sub-font-size", "44"),
             ("sub-bold", "yes"),
             ("sub-color", "#FFFFFFFF"),
-            ("sub-border-color", "#FF000000"),
-            ("sub-border-size", "3"),
-            ("sub-shadow-offset", "1"),
+            ("sub-border-color", "#CC000000"),
+            ("sub-border-size", "1.6"),
+            ("sub-shadow-color", "#80000000"),
+            ("sub-shadow-offset", "2"),
             ("sub-ass-override", "scale"),
             ("sub-margin-y", "60"),
             ("audio-channels", "auto-safe"),
@@ -295,7 +296,7 @@ final class MPVPlayer {
     }
 
     /// Text subtitles move up while the controls show (and back down after).
-    func setSubtitleLifted(_ lifted: Bool) { setString("sub-margin-y", lifted ? "330" : "60") }
+    func setSubtitleLifted(_ lifted: Bool) { setString("sub-margin-y", lifted ? "210" : "60") }
 
     func selectAudio(_ id: Int) { setString("aid", "\(id)") }
     func selectSubtitle(_ id: Int?) { setString("sid", id.map(String.init) ?? "no") }

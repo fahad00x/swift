@@ -20,12 +20,6 @@ struct PlayerOverlay: View {
                     PlayerChrome(session: session)
                         .transition(.opacity)
                 }
-                if session.isPaused && !session.isPanelOpen {
-                    Image(systemName: "pause.fill")
-                        .font(.system(size: 90))
-                        .foregroundStyle(.white.opacity(0.85))
-                        .shadow(radius: 20)
-                }
                 if let skip = session.skipAction, !session.isPanelOpen {
                     skipButton(skip)
                 }
@@ -103,11 +97,10 @@ private struct PlayerChrome: View {
             // Dark only at the bottom; the picture above stays clear.
             LinearGradient(stops: [
                 .init(color: .clear, location: 0),
-                .init(color: .black.opacity(0.5), location: 0.35),
-                .init(color: .black.opacity(0.78), location: 0.7),
-                .init(color: .black.opacity(0.9), location: 1),
+                .init(color: .black.opacity(0.25), location: 0.45),
+                .init(color: .black.opacity(0.55), location: 1),
             ], startPoint: .top, endPoint: .bottom)
-            .frame(height: 520)
+            .frame(height: 420)
             .frame(maxHeight: .infinity, alignment: .bottom)
             .allowsHitTesting(false)
 
@@ -117,8 +110,10 @@ private struct PlayerChrome: View {
                     Spacer(minLength: 40)
                     buttons
                 }
-                timeline
-                times
+                VStack(spacing: 18) {
+                    timeline
+                    times
+                }
             }
             .padding(.horizontal, Self.sideInset)
             .padding(.bottom, 56)
@@ -155,8 +150,8 @@ private struct PlayerChrome: View {
         return VStack(alignment: .leading, spacing: 8) {
             if item.isEpisode {
                 Text(episodeLine(item))
-                    .font(.system(size: 22, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.7))
+                    .font(.system(size: 26, weight: .regular))
+                    .foregroundStyle(.white.opacity(0.88))
                     .lineLimit(1)
             }
             Text(item.isEpisode ? (item.grandparentTitle ?? item.title) : item.title)
@@ -182,7 +177,7 @@ private struct PlayerChrome: View {
     // MARK: Buttons
 
     private var buttons: some View {
-        HStack(spacing: 22) {
+        HStack(spacing: 24) {
             ForEach(panels) { panel in
                 Button { session.panel = panel } label: {
                     Image(systemName: icon(panel))
@@ -208,36 +203,49 @@ private struct PlayerChrome: View {
 
     // MARK: Progress
 
-    /// Thin and full width; only what's been watched (no intro / credits marks). Time runs
-    /// left to right, as in every player.
+    /// Full width, 8 pt (Infuse); only what's been watched (no intro / credits marks), a
+    /// small tick at the playhead. Time runs left to right, as in every player.
     private var timeline: some View {
         GeometryReader { geo in
-            let total = max(session.duration, 1)
-            let played = min(1, (session.scrubPosition ?? session.position) / total)
+            let played = playedFraction
             ZStack(alignment: .leading) {
-                Capsule().fill(Color.white.opacity(0.28))
-                Capsule().fill(Color.white).frame(width: geo.size.width * played)
-                if session.scrubPosition != nil {
-                    Capsule().fill(Color.white)
-                        .frame(width: 4, height: 26)
-                        .offset(x: geo.size.width * played - 2)
-                }
+                Capsule().fill(Color.white.opacity(0.32)).frame(height: 6)
+                Capsule().fill(Color.white.opacity(0.62)).frame(width: max(6, geo.size.width * played), height: 6)
+            }
+            .frame(height: 6)
+            // The playhead tick rises above the bar without making it thicker.
+            .overlay(alignment: .leading) {
+                Rectangle().fill(Color.white)
+                    .frame(width: 2.5, height: session.scrubPosition != nil ? 28 : 14)
+                    .offset(x: geo.size.width * played - 1.25, y: -3)
             }
         }
         .frame(height: 6)
         .environment(\.layoutDirection, .leftToRight)
     }
 
-    /// Elapsed on the left, «-23:38» on the right (digits isolated, so RTL doesn't reorder them).
+    private var playedFraction: Double {
+        min(1, max(0, (session.scrubPosition ?? session.position) / max(session.duration, 1)))
+    }
+
+    /// Elapsed under the playhead (moves with it, kept on screen), «-23:38» at the right end.
     private var times: some View {
         let shown = session.scrubPosition ?? session.position
-        return HStack {
-            Text("\u{2066}" + PlayerOverlay.format(shown) + "\u{2069}")
-            Spacer()
-            Text("\u{2066}-" + PlayerOverlay.format(max(0, session.duration - shown)) + "\u{2069}")
+        return GeometryReader { geo in
+            let remaining = Text("\u{2066}-" + PlayerOverlay.format(max(0, session.duration - shown)) + "\u{2069}")
+            let elapsed = Text("\u{2066}" + PlayerOverlay.format(shown) + "\u{2069}")
+            ZStack(alignment: .topLeading) {
+                remaining
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                elapsed
+                    .fixedSize()
+                    .frame(width: 140)
+                    .position(x: min(max(70, geo.size.width * playedFraction), geo.size.width - 230), y: 14)
+            }
         }
+        .frame(height: 30)
         .font(.system(size: 24, weight: .medium).monospacedDigit())
-        .foregroundStyle(.white.opacity(0.85))
+        .foregroundStyle(.white.opacity(0.9))
         .environment(\.layoutDirection, .leftToRight)
     }
 
@@ -334,7 +342,8 @@ private struct PlayerChrome: View {
 
 // MARK: - Pieces
 
-/// Small translucent circle (Infuse); focused: white with a dark glyph, lifted.
+/// Infuse's round glass button: dark smoked glass with a light top edge; focused, lighter
+/// glass with a bright rim and a slight lift. The glyph stays white either way.
 private struct GlassRoundButtonStyle: ButtonStyle {
     var open: Bool
 
@@ -347,20 +356,23 @@ private struct GlassRoundButtonStyle: ButtonStyle {
 
         var body: some View {
             configuration.label
-                .font(.system(size: 26, weight: .regular))
-                .foregroundStyle(isFocused ? Color.black : Color.white)
-                .frame(width: 68, height: 68)
+                .font(.system(size: 28, weight: .medium))
+                .foregroundStyle(.white.opacity(isFocused ? 1 : 0.92))
+                .frame(width: 63, height: 63)
                 .background {
-                    if isFocused {
-                        Circle().fill(Color.white)
-                    } else {
-                        Circle().fill(.ultraThinMaterial)
-                        Circle().fill(Color.black.opacity(open ? 0.05 : 0.25))
-                        Circle().strokeBorder(Color.white.opacity(open ? 0.6 : 0.15), lineWidth: 1)
-                    }
+                    Circle().fill(.ultraThinMaterial)
+                    Circle().fill(isFocused ? Color.white.opacity(0.3) : Color.black.opacity(open ? 0.25 : 0.42))
+                    // The shine: a light rim, strongest at the top.
+                    Circle().strokeBorder(
+                        LinearGradient(colors: [.white.opacity(isFocused ? 0.75 : 0.32),
+                                                .white.opacity(isFocused ? 0.25 : 0.04),
+                                                .white.opacity(isFocused ? 0.45 : 0.12)],
+                                       startPoint: .top, endPoint: .bottom),
+                        lineWidth: isFocused ? 1.6 : 1)
                 }
-                .scaleEffect(configuration.isPressed ? 0.94 : (isFocused ? 1.12 : 1))
-                .shadow(color: .black.opacity(isFocused ? 0.4 : 0), radius: 14, y: 8)
+                .environment(\.colorScheme, .dark)
+                .scaleEffect(configuration.isPressed ? 0.95 : (isFocused ? 1.1 : 1))
+                .shadow(color: .black.opacity(isFocused ? 0.35 : 0.15), radius: isFocused ? 12 : 4, y: isFocused ? 6 : 2)
                 .animation(.easeOut(duration: 0.15), value: isFocused)
         }
     }
