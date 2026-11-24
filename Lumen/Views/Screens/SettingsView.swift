@@ -71,6 +71,8 @@ struct SettingsView: View {
     @State private var versionTaps = HiddenTapCounter()
     @State private var showDiagnostics = false
     @State private var confirmSignOut = false
+    @State private var importing = false
+    @State private var confirmUndo = false
     @State private var connection: ConnectionCheck = .idle
     @State private var artworkSize: Int?
     @State private var responseSize: Int?
@@ -109,12 +111,23 @@ struct SettingsView: View {
         .fullScreenCover(item: $editing) { profile in
             ProfileEditorView(client: client, sections: sections, existing: profile)
         }
+        .fullScreenCover(isPresented: $importing) {
+            if let profile = store.activeProfile {
+                PlexImportView(client: client, sections: filter.sections, profile: profile)
+            }
+        }
         .fullScreenCover(item: $choosing) { ChoicePanel(list: $0) }
         .alert("تسجيل الخروج من Plex؟", isPresented: $confirmSignOut) {
             Button("تسجيل الخروج", role: .destructive) { session.signOut() }
             Button("إلغاء", role: .cancel) {}
         } message: {
             Text("ستحتاج ربط الجهاز من جديد برمز plex.tv/link.")
+        }
+        .alert("التراجع عن آخر استيراد؟", isPresented: $confirmUndo) {
+            Button("تراجع", role: .destructive) { store.undoImport() }
+            Button("إلغاء", role: .cancel) {}
+        } message: {
+            Text("يرجع سجل هذا المستخدم كما كان قبل الاستيراد. ما شاهدته بعده يبقى.")
         }
         .pinRequest($pin)
     }
@@ -193,6 +206,12 @@ struct SettingsView: View {
                 SettingsRow("تعديل المستخدم", detail: "الاسم والصورة والرمز والمكتبات", arrow: true) { editProfile(profile) }
                 SettingsSwitch("تذكّر آخر مستخدم", detail: "يفتح عليه مباشرة بدون شاشة «مين يشاهد؟»",
                                isOn: Binding(get: { store.rememberLastProfile }, set: { store.setRememberLastProfile($0) }))
+            }
+            SettingsCard("سجل المشاهدة") {
+                SettingsRow("استيراد سجل المشاهدة من Plex", detail: "لهذا المستخدم فقط", arrow: true) { guarded { importing = true } }
+                if store.canUndoImport {
+                    SettingsRow("التراجع عن آخر استيراد", detail: "يرجّع السجل كما كان قبله") { confirmUndo = true }
+                }
             }
             SettingsCard("iCloud", footer: "تقدّم المشاهدة والمشاهَد وقائمتي والمكتبات محفوظة في iCloud وعلى الجهاز، ولا تُرسل إلى Plex.") {
                 if store.cloudStatus == .localOnly {
@@ -489,7 +508,7 @@ struct SettingsView: View {
 // MARK: - Pieces
 
 /// Rows on a rounded card, with an optional title above and note under it.
-private struct SettingsCard<Content: View>: View {
+struct SettingsCard<Content: View>: View {
     let title: String?
     let footer: String?
     let content: Content
@@ -524,7 +543,7 @@ private struct SettingsCard<Content: View>: View {
 }
 
 /// A row that does something: title (and a note), its value, an arrow when it opens something.
-private struct SettingsRow: View {
+struct SettingsRow: View {
     let title: String
     let detail: String?
     let value: String?
@@ -562,7 +581,7 @@ private struct SettingsRow: View {
 }
 
 /// On / off, drawn as a switch.
-private struct SettingsSwitch: View {
+struct SettingsSwitch: View {
     let title: String
     let detail: String?
     @Binding var isOn: Bool
@@ -591,7 +610,7 @@ private struct SettingsSwitch: View {
     }
 }
 
-private struct SettingsTitle: View {
+struct SettingsTitle: View {
     let title: String
     let detail: String?
 
@@ -604,7 +623,7 @@ private struct SettingsTitle: View {
 }
 
 /// Information only (not focusable).
-private struct SettingsInfo: View {
+struct SettingsInfo: View {
     let title: String
     let value: String
 
@@ -626,7 +645,7 @@ private struct SettingsInfo: View {
 }
 
 /// Focused: white with dark text. A category that's open: lighter.
-private struct SettingsRowStyle: ButtonStyle {
+struct SettingsRowStyle: ButtonStyle {
     let selected: Bool
     /// A category (more room), not a row on a card.
     let standalone: Bool

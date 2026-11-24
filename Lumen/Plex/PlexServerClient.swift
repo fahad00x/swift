@@ -340,25 +340,53 @@ final class PlexServerClient: Sendable {
         ShowEpisodes.next(in: await allLeaves(showKey))
     }
 
-    // MARK: One-time import of the data that existed before profiles
+    // MARK: Import of the Plex account's own history
 
-    /// Raw Plex progress (in progress + watched items) of a library, with Plex's shared values.
+    /// `history(section:)` for the first run, where a library that fails is skipped.
     func importableHistory(section: PlexDirectory) async -> [PlexItem] {
+        (try? await history(section: section)) ?? []
+    }
+
+    /// Everything watched or started in a library, with the Plex account's own values. All of it
+    /// or an error: a page that fails is asked again, never skipped. Only what was viewed is
+    /// asked for (walking every episode of a big library took a minute and broke easily).
+    func history(section: PlexDirectory) async throws -> [PlexItem] {
         let type = section.type == "show" ? "4" : "1"
-        var out: [PlexItem] = []
-        var start = 0
         let size = 500
-        while true {
-            guard let c = try? await container("/library/sections/\(section.key)/all",
-                                               [("type", type), ("X-Plex-Container-Start", "\(start)"),
-                                                ("X-Plex-Container-Size", "\(size)")], raw: true)
-            else { break }
-            out += c.metadata.filter { ($0.viewCount ?? 0) > 0 || ($0.viewOffset ?? 0) > 0 }
-            start += c.metadata.count
-            let total = c.totalSize ?? c.size ?? 0
-            if c.metadata.isEmpty || start >= total { break }
+        func page(_ filter: [(String, String)], _ start: Int) async throws -> MediaContainer {
+            var attempt = 0
+            while true {
+                do {
+                    return try await container("/library/sections/\(section.key)/all",
+                                               [("type", type)] + filter + [("X-Plex-Container-Start", "\(start)"),
+                                                                            ("X-Plex-Container-Size", "\(size)")], raw: true)
+                } catch {
+                    try Task.checkCancellation()
+                    attempt += 1
+                    if attempt == 3 { throw error }
+                    try await Task.sleep(for: .seconds(Double(attempt)))
+                }
+            }
         }
-        return out
+        var found: [String: PlexItem] = [:]
+        // Watched (also marked by hand, which may have no date).
+        var start = 0
+        while true {
+            let c = try await page([("unwatched", "0")], start)
+            for item in c.metadata where (item.viewCount ?? 0) > 0 { found[item.ratingKey] = item }
+            start += c.metadata.count
+            if c.metadata.isEmpty || start >= (c.totalSize ?? 0) { break }
+        }
+        // Started: the last viewed first, until those never viewed.
+        start = 0
+        while true {
+            let c = try await page([("sort", "lastViewedAt:desc")], start)
+            let viewed = c.metadata.filter { $0.lastViewedAt != nil || ($0.viewOffset ?? 0) > 0 || ($0.viewCount ?? 0) > 0 }
+            for item in viewed where (item.viewCount ?? 0) > 0 || (item.viewOffset ?? 0) > 0 { found[item.ratingKey] = item }
+            start += c.metadata.count
+            if viewed.isEmpty || start >= (c.totalSize ?? 0) { break }
+        }
+        return Array(found.values)
     }
 
     private static let discover = "https://discover.provider.plex.tv"

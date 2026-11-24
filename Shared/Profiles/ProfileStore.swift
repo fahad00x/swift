@@ -398,6 +398,153 @@ final class ProfileStore {
         NotificationCenter.default.post(name: .profileDataDidChangeRemotely, object: nil)
     }
 
+    // MARK: - Import from Plex into the active profile
+
+    enum ImportMode: Sendable {
+        /// Adds what's missing; watched here or there = watched; the latest position wins.
+        case merge
+        /// The chosen libraries become what Plex says (anything else watched there is cleared).
+        case replace
+    }
+
+    struct ImportSummary: Equatable, Sendable {
+        var added = 0
+        var updated = 0
+        var cleared = 0
+    }
+
+    private struct ImportBackup: Codable {
+        var date: Date
+        var states: [MediaState]
+        /// Records the import created.
+        var added: [String]
+    }
+
+    private func importBackupURL(_ profileID: String) -> URL {
+        cacheURL.deletingLastPathComponent().appendingPathComponent("import-undo-\(profileID).json")
+    }
+
+    /// Items of `sections` watched or started on Plex, for one profile only (nothing if it's no
+    /// longer the active one). Never touches the other profiles, My List or chosen tracks.
+    @discardableResult
+    func importHistory(_ imported: [ImportedState], sections: Set<String>, mode: ImportMode,
+                       into profileID: String) -> ImportSummary? {
+        guard profileID == activeProfileID else { return nil }
+        let now = Date()
+        var summary = ImportSummary()
+        var before: [MediaState] = []
+        var added: [String] = []
+        var seen = Set<String>()
+
+        func save(_ state: MediaState, replacing old: MediaState) {
+            before.append(old)
+            var state = state
+            state.modifiedAt = now
+            states[old.recordName] = state
+            markDirty(old.recordName, now)
+        }
+
+        for item in imported {
+            let name = MediaState.recordName(profileID: profileID, ratingKey: item.info.ratingKey)
+            guard seen.insert(name).inserted else { continue }
+            guard let old = states[name] else {
+                states[name] = MediaState(profileID: profileID, ratingKey: item.info.ratingKey, type: item.info.type,
+                                          showKey: item.info.showKey, seasonKey: item.info.seasonKey,
+                                          sectionKey: item.info.sectionKey, sortIndex: item.info.sortIndex,
+                                          genres: item.info.genres, offsetMs: item.offsetMs,
+                                          durationMs: item.info.durationMs, watched: item.watched,
+                                          lastViewedAt: item.lastViewedAt, modifiedAt: now)
+                markDirty(name, now)
+                added.append(name)
+                summary.added += 1
+                continue
+            }
+            var new = old
+            new.showKey = new.showKey ?? item.info.showKey
+            new.seasonKey = new.seasonKey ?? item.info.seasonKey
+            new.sectionKey = new.sectionKey ?? item.info.sectionKey
+            new.sortIndex = new.sortIndex ?? item.info.sortIndex
+            if new.durationMs == 0 { new.durationMs = item.info.durationMs }
+            // Not touched here yet (tracks chosen only, or cleared): its date says nothing.
+            let untouched = !old.watched && old.offsetMs == 0
+            switch mode {
+            case .replace:
+                new.watched = item.watched
+                new.offsetMs = item.offsetMs
+                new.lastViewedAt = item.lastViewedAt
+            case .merge:
+                new.watched = old.watched || item.watched
+                if untouched || item.lastViewedAt > old.lastViewedAt {
+                    new.offsetMs = item.offsetMs
+                    new.lastViewedAt = item.lastViewedAt
+                }
+                if new.watched { new.offsetMs = 0 }
+            }
+            guard new.watched != old.watched || new.offsetMs != old.offsetMs || new.lastViewedAt != old.lastViewedAt else { continue }
+            save(new, replacing: old)
+            summary.updated += 1
+        }
+
+        if mode == .replace {
+            for old in states.values where old.profileID == profileID && !seen.contains(old.recordName)
+                && old.sectionKey.map(sections.contains) == true && (old.watched || old.offsetMs > 0) {
+                // Kept (chosen tracks, and so the change reaches the other devices), but cleared.
+                var new = old
+                new.watched = false
+                new.offsetMs = 0
+                save(new, replacing: old)
+                summary.cleared += 1
+            }
+        }
+
+        guard !before.isEmpty || !added.isEmpty else { return summary }
+        if let data = try? JSONEncoder().encode(ImportBackup(date: now, states: before, added: added)) {
+            try? data.write(to: importBackupURL(profileID), options: .atomic)
+        }
+        changed()
+        saveToDisk()
+        NotificationCenter.default.post(name: .profileDataDidChangeRemotely, object: nil)
+        return summary
+    }
+
+    /// The last import into the active profile can be taken back (on this device).
+    var canUndoImport: Bool {
+        _ = revision
+        guard let activeProfileID else { return false }
+        return FileManager.default.fileExists(atPath: importBackupURL(activeProfileID).path)
+    }
+
+    /// What the last import changed goes back to what it was; anything watched since is kept.
+    func undoImport() {
+        guard let profileID = activeProfileID,
+              let data = try? Data(contentsOf: importBackupURL(profileID)),
+              let backup = try? JSONDecoder().decode(ImportBackup.self, from: data) else { return }
+        let now = Date()
+        // Everything the import wrote has its date (iCloud may round it); another one means it
+        // was played or marked since.
+        func untouched(_ name: String) -> Bool {
+            states[name].map { abs($0.modifiedAt.timeIntervalSince(backup.date)) < 1 } ?? false
+        }
+        for old in backup.states where untouched(old.recordName) {
+            var state = old
+            state.modifiedAt = now
+            states[old.recordName] = state
+            markDirty(old.recordName, now)
+        }
+        for name in backup.added where untouched(name) {
+            guard var state = states[name] else { continue }
+            state.watched = false
+            state.offsetMs = 0
+            state.modifiedAt = now
+            states[name] = state
+            markDirty(name, now)
+        }
+        try? FileManager.default.removeItem(at: importBackupURL(profileID))
+        changed()
+        saveToDisk()
+        NotificationCenter.default.post(name: .profileDataDidChangeRemotely, object: nil)
+    }
+
     // MARK: - Change tracking
 
     private func markDirty(_ recordName: String, _ date: Date) {
