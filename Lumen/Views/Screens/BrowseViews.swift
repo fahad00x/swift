@@ -79,7 +79,9 @@ struct LibraryView: View {
                            bannerFocus: $bannerFocus,
                            firstRowID: BannerPageID.firstRow) {
                     Color.clear.frame(height: 1).id(BannerPageID.firstRow)
-                    LibraryTabBar(selection: $tab)
+                    LibraryTabBar(selection: $tab, hasBanner: tab == .suggested && !banner.isEmpty) {
+                        bannerFocus = .play
+                    }
                         .padding(.top, banner.isEmpty ? 20 : 0)
                         .padding(.bottom, 40)
 
@@ -136,21 +138,41 @@ struct LibraryView: View {
 /// Glass segmented pill bar under a library's banner.
 private struct LibraryTabBar: View {
     @Binding var selection: LibraryView.Tab
+    /// A banner is above the tabs.
+    let hasBanner: Bool
+    let onUp: () -> Void
+
+    @FocusState private var focusedTab: LibraryView.Tab?
+    @FocusState private var catcherFocused: Bool
 
     var body: some View {
-        HStack(spacing: 6) {
-            ForEach(LibraryView.Tab.allCases) { tab in
-                Button { selection = tab } label: { Text(tab.title) }
-                    .buttonStyle(TabPillStyle(selected: tab == selection))
+        VStack(spacing: 0) {
+            // Up from any tab: the banner's buttons sit on one side, so the focus engine finds
+            // nothing above the other tabs. Only while a tab has focus (Down from the banner
+            // must not land here).
+            Color.white.opacity(0.001)
+                .frame(maxWidth: .infinity)
+                .frame(height: 4)
+                .focusable(hasBanner && (focusedTab != nil || catcherFocused))
+                .focused($catcherFocused)
+                .onChange(of: catcherFocused) { _, focused in
+                    if focused { DispatchQueue.main.async { onUp() } }
+                }
+            HStack(spacing: 6) {
+                ForEach(LibraryView.Tab.allCases) { tab in
+                    Button { selection = tab } label: { Text(tab.title) }
+                        .buttonStyle(TabPillStyle(selected: tab == selection))
+                        .focused($focusedTab, equals: tab)
+                }
             }
+            .padding(7)
+            .background {
+                Capsule().fill(.ultraThinMaterial)
+                Capsule().strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+            }
+            .frame(maxWidth: .infinity)
+            .focusSection()
         }
-        .padding(7)
-        .background {
-            Capsule().fill(.ultraThinMaterial)
-            Capsule().strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
-        }
-        .frame(maxWidth: .infinity)
-        .focusSection()
     }
 }
 
