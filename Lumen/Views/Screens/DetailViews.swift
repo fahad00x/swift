@@ -461,7 +461,7 @@ struct DetailPage: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
             if let entry = entryEpisode(currentEpisodes) {
                 lowerFocus = "ep-\(entry.id)"
-            } else if let first = related.uniqued().first {
+            } else if let first = related.mergingCopies(store).first {
                 lowerFocus = "rel-\(first.id)"
             } else if let first = extras.first {
                 lowerFocus = "extra-\(first.id)"
@@ -654,7 +654,7 @@ struct DetailPage: View {
     /// «ذات صلة»: posters with the page's own focus (Down from a movie's buttons lands on the
     /// first one). The header shows once scrolled, so at the top only the posters peek.
     private func relatedRow(_ item: PlexItem) -> some View {
-        let items = related.uniqued()
+        let items = related.mergingCopies(store)
         let context = BrowseContext(rowID: "related-\(item.ratingKey)", items: items)
         return VStack(alignment: .leading, spacing: 0) {
             Text("ذات صلة")

@@ -408,13 +408,14 @@ struct ShelfView: View {
     let shelf: Shelf
     let client: PlexServerClient
 
+    @Environment(ProfileStore.self) private var store
     @Environment(BrowseReturnState.self) private var returnState
     @Environment(\.pageRowFocused) private var pageRowFocused
     @FocusState private var focusedID: String?
     @State private var lastFocusedID: String?
 
     var body: some View {
-        let items = shelf.items.uniqued()
+        let items = shelf.items.mergingCopies(store)
         let context = BrowseContext(rowID: shelf.id, items: items)
         VStack(alignment: .leading, spacing: 0) {
             // Small grey header (Apple TV app), 34 pt above the posters.
