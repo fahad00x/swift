@@ -1,6 +1,7 @@
 import SwiftUI
 
-// «فلترة»: a library's titles narrowed by any mix of genre, rating, episodes, year, seasons.
+// «فلترة»: a library's titles narrowed by any mix of genre, rating, episodes, year, seasons and
+// what the profile watched, in a chosen order.
 // Every choice is optional. Everything is read on the device, except the library's own genres:
 // its listing only carries two per title, so they're asked from the server (and remembered).
 
@@ -18,14 +19,17 @@ struct FilterCriteria: Equatable {
     var toYear: Int?
     /// 5 = five or more.
     var seasons: Set<Int> = []
+    var watched: Set<FilterWatched> = []
 
     var isEmpty: Bool { self == FilterCriteria(matchAllGenres: matchAllGenres) }
 
     /// Everything but the genres.
-    func matches(_ item: PlexItem, rating: Double) -> Bool {
+    func matches(_ item: PlexItem, rating: Double, specials: Int, status: FilterWatched) -> Bool {
+        if !watched.isEmpty, !watched.contains(status) { return false }
         if let minRating, rating < minRating { return false }
         if moreEpisodes != nil || fewerEpisodes != nil {
-            guard let count = item.leafCount else { return false }
+            guard let leaves = item.leafCount else { return false }
+            let count = leaves - specials
             if let moreEpisodes, count <= moreEpisodes { return false }
             if let fewerEpisodes, count >= fewerEpisodes { return false }
         }
@@ -40,9 +44,61 @@ struct FilterCriteria: Equatable {
             else if let toYear, year > toYear { return false }
         }
         if !seasons.isEmpty {
-            guard let count = item.childCount, seasons.contains(min(count, 5)) else { return false }
+            guard let children = item.childCount else { return false }
+            let count = children - (specials > 0 ? 1 : 0)
+            guard seasons.contains(min(count, 5)) else { return false }
         }
         return true
+    }
+}
+
+/// Where the profile is with a title (always exactly one).
+enum FilterWatched: CaseIterable {
+    case notStarted, started
+    /// Everything out so far, of a show still getting episodes: not finished, nothing to watch
+    /// yet. Back to `started` when the next episode comes, `finished` once none comes anymore.
+    case upToDate
+    case finished
+
+    func title(movies: Bool) -> String {
+        switch self {
+        case .notStarted: return "لم أشاهده"
+        case .started: return movies ? "بدأته ولم أكمله" : "شاهدته ولم أكمله"
+        case .upToDate: return "متابع أول بأول"
+        case .finished: return movies ? "شاهدته" : "شاهدته وأكملته"
+        }
+    }
+
+    static func choices(movies: Bool) -> [FilterWatched] {
+        movies ? [.notStarted, .finished, .started] : [.notStarted, .finished, .started, .upToDate]
+    }
+}
+
+/// Order of the results.
+struct FilterOrder: Equatable {
+    enum Key: CaseIterable {
+        case added, title, year, rating
+        var title: String {
+            switch self {
+            case .added: return "أضيف مؤخرًا"
+            case .title: return "الاسم"
+            case .year: return "السنة"
+            case .rating: return "التقييم"
+            }
+        }
+    }
+
+    var key = Key.rating
+    var ascending = false
+
+    /// What the direction means for the key.
+    var meaning: String {
+        switch key {
+        case .added: return ascending ? "الأقدم إضافة أولًا" : "الأحدث إضافة أولًا"
+        case .title: return ascending ? "من A إلى Z" : "من Z إلى A"
+        case .year: return ascending ? "الأقدم أولًا" : "الأحدث أولًا"
+        case .rating: return ascending ? "الأقل تقييمًا أولًا" : "الأعلى تقييمًا أولًا"
+        }
     }
 }
 
@@ -53,6 +109,11 @@ struct FilterCriteria: Equatable {
 final class LibraryFilterModel {
     var criteria = FilterCriteria() {
         didSet { if criteria != oldValue { apply() } }
+    }
+
+    /// Kept when the choices are cleared.
+    var order = FilterOrder() {
+        didSet { if order != oldValue { apply() } }
     }
 
     struct Genre: Identifiable {
@@ -79,15 +140,24 @@ final class LibraryFilterModel {
     @ObservationIgnored private var animeTitles: [String: Set<String>] = [:]
     /// Genre name → titles that have it.
     @ObservationIgnored private var titles: [String: Set<String>] = [:]
+    /// Show → specials, left out of its episodes and seasons.
+    @ObservationIgnored private var specials: [String: Int] = [:]
+    /// Show → newest episode's air date ("yyyy-MM-dd"), for shows the profile started.
+    @ObservationIgnored private var aired: [String: String] = [:]
+    /// Position by date added (newest first).
+    @ObservationIgnored private var addedRank: [String: Int] = [:]
+    @ObservationIgnored private var store: ProfileStore?
     @ObservationIgnored private var work: Task<Void, Never>?
     @ObservationIgnored private var source: (client: PlexServerClient, section: PlexDirectory)?
 
-    func load(client: PlexServerClient, scope: LibraryScope, filter: ContentFilter) async {
+    func load(client: PlexServerClient, scope: LibraryScope, filter: ContentFilter, store: ProfileStore) async {
         source = (client, scope.section)
+        self.store = store
         if !loaded { isLoading = true }
         async let genreTask = client.genreDirectories(section: scope.section.key)
-        let items = (try? await client.items(section: scope.section, sort: .rating, start: 0, size: 100_000))?.items ?? []
+        let items = (try? await client.items(section: scope.section, sort: .recentlyAdded, start: 0, size: 100_000))?.items ?? []
         all = await filter.resolve(items, client: client, scope: scope)
+        addedRank = Dictionary(all.enumerated().map { ($1.ratingKey, $0) }, uniquingKeysWith: { a, _ in a })
         years = Set(all.compactMap(\.year)).sorted(by: >)
         let index = await AnimeIndex.shared.value
         let entries = all.compactMap { item in index.entry(item).map { (item.ratingKey, $0) } }
@@ -102,18 +172,25 @@ final class LibraryFilterModel {
             animeTitles = byGenre
             animeGenres = byGenre.keys.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
             ratingSource = index.officialMAL ? "MyAnimeList" : "تقريبي لـ MyAnimeList"
-            // Set before: `rating` depends on it.
-            all.sort { rating($0) > rating($1) }
         } else {
             ratings = [:]
             animeTitles = [:]
             animeGenres = []
             ratingSource = nil
         }
+        let shows = Set(store.activeStates.compactMap(\.showKey))
+        aired = [:]
+        for item in all where item.isShow && shows.contains(item.ratingKey) {
+            aired[item.ratingKey] = await client.latestAired(show: item.ratingKey)
+        }
         loaded = true
         isLoading = false
         apply()
 
+        if scope.section.type == "show", let found = await client.specials(section: scope.section), found != specials {
+            specials = found
+            apply()
+        }
         var grouped: [String: [String]] = [:]
         for directory in await genreTask {
             grouped[ArabicFormat.genre(directory.title), default: []].append(Self.genreID(directory.key))
@@ -131,9 +208,60 @@ final class LibraryFilterModel {
         return item.ratingDisplay?.value ?? 0
     }
 
+    /// Where the profile is with every title (specials left out).
+    private func statuses() -> [String: FilterWatched] {
+        var seen: [String: Int] = [:]
+        var started = Set<String>()
+        var out: [String: FilterWatched] = [:]
+        for state in store?.activeStates ?? [] {
+            let touched = state.watched || state.offsetMs > 10_000
+            guard touched else { continue }
+            guard state.type == "episode", let show = state.showKey else {
+                out[state.ratingKey] = state.watched ? .finished : .started
+                continue
+            }
+            // Season 0: «sortIndex» below 10 000.
+            if let order = state.sortIndex, order < 10_000 { continue }
+            started.insert(show)
+            if state.watched { seen[show, default: 0] += 1 }
+        }
+        // A new episode in the last three weeks (a skipped week or two is still weekly).
+        let recent = Date().addingTimeInterval(-21 * 86_400).formatted(.iso8601.year().month().day())
+        for item in all where item.isShow && started.contains(item.ratingKey) {
+            let total = (item.leafCount ?? 0) - (specials[item.ratingKey] ?? 0)
+            if total <= 0 || seen[item.ratingKey, default: 0] < total {
+                out[item.ratingKey] = .started
+            } else {
+                out[item.ratingKey] = (aired[item.ratingKey] ?? "") >= recent ? .upToDate : .finished
+            }
+        }
+        return out
+    }
+
+    private func sorted(_ items: [PlexItem], by order: FilterOrder) -> [PlexItem] {
+        func byAdded(_ a: PlexItem, _ b: PlexItem) -> Bool { addedRank[a.ratingKey, default: .max] < addedRank[b.ratingKey, default: .max] }
+        /// Titles without a value (no rating, no year) always last.
+        func byValue(_ value: (PlexItem) -> Double) -> [PlexItem] {
+            items.map { ($0, value($0)) }.sorted { a, b in
+                if a.1 == b.1 { return byAdded(a.0, b.0) }
+                if a.1 <= 0 || b.1 <= 0 { return a.1 > b.1 }
+                return order.ascending ? a.1 < b.1 : a.1 > b.1
+            }.map(\.0)
+        }
+        switch order.key {
+        case .added: return items.sorted { order.ascending ? byAdded($1, $0) : byAdded($0, $1) }
+        case .title:
+            return items.sorted {
+                $0.title.localizedStandardCompare($1.title) == (order.ascending ? .orderedAscending : .orderedDescending)
+            }
+        case .year: return byValue { Double($0.year ?? 0) }
+        case .rating: return byValue { rating($0) }
+        }
+    }
+
     private func apply() {
         work?.cancel()
-        let criteria = criteria
+        let criteria = criteria, order = order
         work = Task {
             // Genres not asked yet, at the same time.
             let missing = genres.filter {
@@ -157,13 +285,16 @@ final class LibraryFilterModel {
                 return anime.union(titles[name] ?? [])
             }
             failed = sets.count < criteria.genres.count
-            results = failed ? [] : all.filter { item in
-                guard criteria.matches(item, rating: rating(item)) else { return false }
+            let statuses = criteria.watched.isEmpty ? [:] : statuses()
+            let matching = failed ? [] : all.filter { item in
+                guard criteria.matches(item, rating: rating(item), specials: specials[item.ratingKey] ?? 0,
+                                       status: statuses[item.ratingKey] ?? .notStarted) else { return false }
                 guard !sets.isEmpty else { return true }
                 return criteria.matchAllGenres
                     ? sets.allSatisfy { $0.contains(item.ratingKey) }
                     : sets.contains { $0.contains(item.ratingKey) }
             }
+            results = sorted(matching, by: order)
             isLoading = false
         }
     }
@@ -187,7 +318,7 @@ struct LibraryFilterGrid: View {
     let scrollProxy: ScrollViewProxy
 
     enum Field: String, CaseIterable, Identifiable {
-        case genre, rating, episodes, year, seasons
+        case genre, rating, episodes, year, seasons, watched, order
         var id: String { rawValue }
         var title: String {
             switch self {
@@ -196,11 +327,14 @@ struct LibraryFilterGrid: View {
             case .episodes: return "عدد الحلقات"
             case .year: return "سنة الإصدار"
             case .seasons: return "المواسم"
+            case .watched: return "المشاهدة"
+            case .order: return "الترتيب"
             }
         }
     }
 
     @Environment(\.contentFilter) private var filter
+    @Environment(ProfileStore.self) private var store
     @State private var open: Field?
     @FocusState private var focused: Field?
     /// Posters drawn so far (the rest on scroll).
@@ -209,7 +343,8 @@ struct LibraryFilterGrid: View {
 
     /// Movies have no episodes or seasons.
     private var fields: [Field] {
-        scope.section.type == "movie" ? [.genre, .rating, .year] : Field.allCases
+        scope.section.type == "movie" 
+            ? [.genre, .rating, .year, .watched] : [.genre, .rating, .episodes, .year, .seasons, .watched]
     }
 
     var body: some View {
@@ -217,15 +352,19 @@ struct LibraryFilterGrid: View {
         VStack(alignment: .leading, spacing: 24) {
             VStack(spacing: 18) {
                 HStack(spacing: 14) {
-                    ForEach(fields) { field in
-                        Button { open = field } label: {
-                            HStack(spacing: 10) {
-                                Text(label(field)).lineLimit(1)
-                                Image(systemName: "chevron.down").font(.system(size: 16, weight: .semibold)).opacity(0.6)
-                            }
-                        }
-                        .buttonStyle(FilterPillStyle(selected: value(field) != nil))
-                        .focused($focused, equals: field)
+                    ForEach(fields) { pill($0) }
+                }
+                .frame(maxWidth: .infinity)
+                .focusSection()
+
+                // The order, how many there are, and clearing the choices.
+                HStack(spacing: 24) {
+                    pill(.order)
+                    if model.loaded {
+                        Text(FilterText.results(model.results.count))
+                            .font(.system(size: 24))
+                            .foregroundStyle(.white.opacity(0.5))
+                            .opacity(model.isLoading || model.failed ? 0 : 1)
                     }
                     if !model.criteria.isEmpty {
                         Button {
@@ -240,13 +379,6 @@ struct LibraryFilterGrid: View {
                 }
                 .frame(maxWidth: .infinity)
                 .focusSection()
-
-                if model.loaded {
-                    Text(FilterText.results(model.results.count))
-                        .font(.system(size: 24))
-                        .foregroundStyle(.white.opacity(0.5))
-                        .opacity(model.isLoading || model.failed ? 0 : 1)
-                }
             }
             .padding(.horizontal, CardKind.inset)
             .padding(.top, -12)
@@ -270,18 +402,30 @@ struct LibraryFilterGrid: View {
                 if item.id == items.last?.id, shown < model.results.count { shown += Self.page }
             }
         }
-        .task { await model.load(client: client, scope: scope, filter: filter) }
+        .task { await model.load(client: client, scope: scope, filter: filter, store: store) }
         .onReceive(NotificationCenter.default.publisher(for: .localLibraryDidChange)) { _ in
-            Task { await model.load(client: client, scope: scope, filter: filter) }
+            Task { await model.load(client: client, scope: scope, filter: filter, store: store) }
         }
         .onChange(of: model.criteria) { shown = Self.page }
+        .onChange(of: model.order) { shown = Self.page }
         .fullScreenCover(item: $open) { field in
-            FilterPanel(field: field, model: model)
+            FilterPanel(field: field, model: model, movies: scope.section.type == "movie")
         }
     }
 
-    private func label(_ field: Field) -> String {
-        value(field).map { "\(field.title): \($0)" } ?? field.title
+    private func pill(_ field: Field) -> some View {
+        Button { open = field } label: {
+            HStack(spacing: 10) {
+                if field == .order {
+                    Image(systemName: model.order.ascending ? "arrow.up" : "arrow.down").font(.system(size: 18, weight: .semibold))
+                }
+                // What's chosen says enough on its own.
+                Text(value(field) ?? field.title).lineLimit(1).minimumScaleFactor(0.75)
+                Image(systemName: "chevron.down").font(.system(size: 16, weight: .semibold)).opacity(0.6)
+            }
+        }
+        .buttonStyle(FilterPillStyle(selected: field != .order && value(field) != nil))
+        .focused($focused, equals: field)
     }
 
     /// What's chosen in a filter, in short; nil when nothing is.
@@ -291,21 +435,26 @@ struct LibraryFilterGrid: View {
         case .genre:
             return FilterText.list(c.genres.sorted())
         case .rating:
-            return c.minRating.map(FilterText.rating)
+            return c.minRating.map { "التقييم " + FilterText.rating($0) }
         case .episodes:
             let parts = [c.moreEpisodes.map { "أكثر من \(ArabicFormat.digits($0))" },
                          c.fewerEpisodes.map { "أقل من \(ArabicFormat.digits($0))" }].compactMap { $0 }
-            return parts.isEmpty ? nil : parts.joined(separator: "، ")
+            return parts.isEmpty ? nil : parts.joined(separator: "، ") + " حلقة"
         case .year:
             let from = c.fromYear.map { ArabicFormat.digits($0) }, to = c.toYear.map { ArabicFormat.digits($0) }
             switch (from, to) {
             case let (from?, to?): return from == to ? from : "\(from) – \(to)"
-            case let (from?, nil): return "من \(from)"
-            case let (nil, to?): return "إلى \(to)"
+            case let (from?, nil): return "من سنة \(from)"
+            case let (nil, to?): return "إلى سنة \(to)"
             default: return nil
             }
         case .seasons:
             return FilterText.list(c.seasons.sorted().map(FilterText.seasons))
+        case .watched:
+            let movies = scope.section.type == "movie"
+            return FilterText.list(FilterWatched.choices(movies: movies).filter(c.watched.contains).map { $0.title(movies: movies) })
+        case .order:
+            return "الترتيب: " + model.order.key.title
         }
     }
 }
@@ -315,6 +464,7 @@ struct LibraryFilterGrid: View {
 private struct FilterPanel: View {
     let field: LibraryFilterGrid.Field
     let model: LibraryFilterModel
+    let movies: Bool
 
     private static let width: CGFloat = 1400
     private static let inset: CGFloat = 70
@@ -369,6 +519,49 @@ private struct FilterPanel: View {
                            selection: $model.criteria.fromYear)
                 FigureLine(title: "إلى سنة", figures: model.years.map { (ArabicFormat.digits($0), $0) },
                            selection: $model.criteria.toYear)
+            }
+        case .watched:
+            VStack(spacing: 24) {
+                HStack(spacing: 16) {
+                    ForEach(FilterWatched.choices(movies: movies), id: \.self) { status in
+                        Button { model.criteria.watched.formSymmetricDifference([status]) } label: {
+                            Text(status.title(movies: movies))
+                        }
+                        .buttonStyle(FigureStyle(selected: model.criteria.watched.contains(status), width: 300))
+                    }
+                }
+                .focusSection()
+                if !movies {
+                    Text("متابع أول بأول: شاهدت كل حلقاته وما زالت تنزل له حلقات أسبوعية")
+                        .font(.system(size: 22))
+                        .foregroundStyle(.white.opacity(0.45))
+                }
+            }
+        case .order:
+            VStack(spacing: 40) {
+                HStack(spacing: 16) {
+                    ForEach(FilterOrder.Key.allCases, id: \.self) { key in
+                        Button {
+                            guard model.order.key != key else { return }
+                            // The usual direction of each: names A–Z, the rest newest / best first.
+                            model.order = FilterOrder(key: key, ascending: key == .title)
+                        } label: { Text(key.title) }
+                            .buttonStyle(FigureStyle(selected: model.order.key == key, width: 260))
+                    }
+                }
+                .focusSection()
+                VStack(spacing: 20) {
+                    HStack(spacing: 16) {
+                        Button { model.order.ascending = false } label: { Label("تنازلي", systemImage: "arrow.down") }
+                            .buttonStyle(FigureStyle(selected: !model.order.ascending, width: 260))
+                        Button { model.order.ascending = true } label: { Label("تصاعدي", systemImage: "arrow.up") }
+                            .buttonStyle(FigureStyle(selected: model.order.ascending, width: 260))
+                    }
+                    .focusSection()
+                    Text(model.order.meaning)
+                        .font(.system(size: 22))
+                        .foregroundStyle(.white.opacity(0.45))
+                }
             }
         case .seasons:
             HStack(spacing: 16) {

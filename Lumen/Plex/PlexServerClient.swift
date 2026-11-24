@@ -261,6 +261,26 @@ final class PlexServerClient: Sendable {
         }
     }
 
+    /// Show → its number of specials (season 0), which Plex counts among its episodes and
+    /// seasons; nil if the server never answered.
+    func specials(section: PlexDirectory) async -> [String: Int]? {
+        // The episodes themselves: seasons listed this way come without their episode count.
+        let query = [("type", "4"), ("season.index", "0"),
+                     ("excludeElements", "Media,Role,Director,Writer,Guid,Image,UltraBlurColors"),
+                     ("X-Plex-Container-Start", "0"), ("X-Plex-Container-Size", "10000")]
+        let path = "/library/sections/\(section.key)/all"
+        var page = try? await container(path, query)
+        if page == nil {
+            page = try? await PlexResponseCache.$policy.withValue(.cacheOnly) { try await container(path, query) }
+        }
+        guard let page else { return nil }
+        var counts: [String: Int] = [:]
+        for episode in page.metadata where episode.parentIndex == 0 {
+            if let show = episode.grandparentRatingKey { counts[show, default: 0] += 1 }
+        }
+        return counts
+    }
+
     /// Genre names used in a library.
     func genres(section: PlexDirectory) async -> [String] {
         ((try? await container("/library/sections/\(section.key)/genre").directories) ?? []).map(\.title).filter { !$0.isEmpty }
