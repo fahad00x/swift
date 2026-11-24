@@ -411,8 +411,12 @@ struct ShelfView: View {
     @Environment(ProfileStore.self) private var store
     @Environment(BrowseReturnState.self) private var returnState
     @Environment(\.pageRowFocused) private var pageRowFocused
+    /// Pages pushed over the row (details): when they're all gone, see `redrawAfterReturn`.
+    @Environment(ShellState.self) private var shell: ShellState?
     @FocusState private var focusedID: String?
     @State private var lastFocusedID: String?
+    /// Bumped to rebuild the cards (see `redrawAfterReturn`).
+    @State private var revision = 0
 
     var body: some View {
         let items = shelf.items.mergingCopies(store)
@@ -443,6 +447,7 @@ struct ShelfView: View {
                                           logoPath: shelf.logos[item.ratingKey],
                                           sourceID: context.sourceID(for: item),
                                           context: context)
+                                .id("\(item.id)#\(revision)")
                                 .focused($focusedID, equals: item.id)
                         }
                     }
@@ -463,6 +468,22 @@ struct ShelfView: View {
                 // Focus entered this row: the page brings it to its reading position.
                 if old == nil, id != nil { pageRowFocused?(shelf.id) }
             }
+            .onChange(of: shell?.pushedPages ?? 0) { old, new in
+                if old > 0, new == 0 { redrawAfterReturn(items) }
+            }
+        }
+    }
+
+    /// tvOS 27 (an Apple TV, not the 26 simulator): back from a details page opened from a row
+    /// of episodes (Continue Watching in a series library), the row's cards stayed invisible.
+    /// The zoom transition hides its source card and, the row being rebuilt meanwhile, never
+    /// shows it again. Once the transition is over, rebuild the cards; focus stays put.
+    private func redrawAfterReturn(_ items: [PlexItem]) {
+        guard items.contains(where: \.isEpisode) else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+            let focused = focusedID
+            revision += 1
+            if let focused { DispatchQueue.main.async { focusedID = focused } }
         }
     }
 
