@@ -19,9 +19,16 @@ struct ShowEpisodes {
             bySeason[episode.parentRatingKey ?? "", default: []].append(episode)
         }
         let target = preferred
-            ?? leaves.first { $0.progress != nil && !$0.isWatched }
-            ?? leaves.first { !$0.isWatched }
-            ?? leaves.first
+            ?? next(in: leaves)
         return ShowEpisodes(seasons: seasons, bySeason: bySeason, playTarget: target)
+    }
+
+    /// In progress, else the first unwatched, else the first; specials (season 0, which Plex
+    /// may list first) only after the regular episodes.
+    static func next(in leaves: [PlexItem]) -> PlexItem? {
+        let ordered = leaves.filter { $0.parentIndex != 0 } + leaves.filter { $0.parentIndex == 0 }
+        return ordered.first { $0.progress != nil && !$0.isWatched }
+            ?? ordered.first { !$0.isWatched }
+            ?? ordered.first
     }
 }

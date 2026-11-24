@@ -293,9 +293,7 @@ final class PlexServerClient: Sendable {
 
     /// Episode to start a show with: in progress, else first unwatched, else the first one.
     func episodeToPlay(showKey: String) async -> PlexItem? {
-        let all = await allLeaves(showKey)
-        guard !all.isEmpty else { return nil }
-        return all.first { $0.progress != nil && !$0.isWatched } ?? all.first { !$0.isWatched } ?? all.first
+        ShowEpisodes.next(in: await allLeaves(showKey))
     }
 
     // MARK: One-time import of the data that existed before profiles

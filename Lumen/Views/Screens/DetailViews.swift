@@ -121,14 +121,19 @@ struct DetailPage: View {
     /// Movie or show the page describes (episodes and seasons open their show).
     private var ratingKey: String { displayKey(current) }
     private var initialSeasonKey: String? {
+        guard !fromServerRow else { return nil }
         switch current.type {
         case "episode": return current.parentRatingKey
         case "season": return current.ratingKey
         default: return nil
         }
     }
+    /// Opened from one of the server's rows («حلقات نزلت مؤخرًا», «أضيف مؤخرًا»…): its newest
+    /// episode or season only says the show has something new. Play follows the profile
+    /// instead: where it stopped, episode 1 of a show it never started.
+    private var fromServerRow: Bool { context?.rowID.hasPrefix("hub-") ?? false }
     /// Episode the Play button should start (e.g. opened from Continue Watching).
-    private var preferredEpisode: PlexItem? { current.isEpisode ? current : nil }
+    private var preferredEpisode: PlexItem? { current.isEpisode && !fromServerRow ? current : nil }
 
     private var currentIndex: Int? { context?.items.firstIndex { $0.id == current.id } }
     private var hasPrevious: Bool { (currentIndex ?? 0) > 0 }
