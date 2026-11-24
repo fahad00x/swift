@@ -70,6 +70,10 @@ targets:
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
           NSAllowsLocalNetworking: true
+        # TMDB key for content advisories (nudity, violence…). Always empty in the repo: CI
+        # writes the TMDB_API_KEY secret into the generated (git-ignored) Info.plist. Empty =
+        # only the age rating's meaning is shown.
+        TMDBAPIKey: ""
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.fahad00x.lumen

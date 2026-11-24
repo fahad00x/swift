@@ -399,7 +399,9 @@ struct SearchView: View {
     private var movies: [PlexItem] { results.filter { !($0.isShow || $0.isSeason || $0.isEpisode) } }
 
     var body: some View {
-        BrowseContainer(client: client) {
+        // Plain background: the focused poster's full-screen artwork would sit behind the
+        // keyboard and the results would look mixed into it.
+        BrowseContainer(client: client, showsBackdrop: false) {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 30) {

@@ -33,6 +33,8 @@ struct DetailPage: View {
     @State private var current: PlexItem
     @State private var metadataCache: [String: PlexItem] = [:]
     @State private var logos: [String: UIImage] = [:]
+    /// ratingKey → what the title contains (TMDB), once looked up.
+    @State private var advisory: [String: [ContentFlag]] = [:]
 
     @State private var item: PlexItem?
     @State private var playTarget: PlexItem?
@@ -340,6 +342,17 @@ struct DetailPage: View {
                         .font(.system(size: 24, weight: .medium))
                         .foregroundStyle(.white.opacity(0.85))
                     if let rating = item.normalizedContentRating { AgeBadge(text: rating) }
+                }
+
+                // What the age rating means, then what this title contains (TMDB).
+                if let meaning = RatingGuide.explain(item.normalizedContentRating) {
+                    Text(meaning)
+                        .font(.system(size: 21))
+                        .foregroundStyle(.white.opacity(0.65))
+                        .lineLimit(1)
+                }
+                if let flags = advisory[item.ratingKey], !flags.isEmpty {
+                    ContentFlagsRow(flags: flags)
                 }
 
                 if let summary = item.summary, !summary.isEmpty {
@@ -710,7 +723,14 @@ struct DetailPage: View {
             ("الاستوديو", item.studio),
             ("تاريخ الإصدار", ArabicFormat.date(plex: item.originallyAvailableAt)),
             ("المدة", target.duration.map { ArabicFormat.duration(ms: $0) }),
-            ("التصنيف العمري", item.normalizedContentRating),
+            ("التصنيف العمري", item.normalizedContentRating.map { rating in
+                guard let meaning = RatingGuide.explain(rating) else { return rating }
+                // A bare age («14», «+18») is already in the meaning («فوق ١٤ (+١٤)…»).
+                if rating.allSatisfy({ $0.isNumber || $0 == "+" }) { return meaning }
+                // FSI…PDI keeps «TV-14» a left-to-right island so the colon lands after it in RTL.
+                return "\u{2068}\(rating)\u{2069}: \(meaning)"
+            }),
+            ("المحتوى", advisory[item.ratingKey].flatMap { $0.isEmpty ? nil : $0.map(\.title).joined(separator: "، ") }),
             ("الصوت", languages(target.audioStreams)),
             ("الترجمة", languages(target.subtitleStreams)),
             ("الجودة", badges.isEmpty ? nil : badges.joined(separator: ArabicFormat.separator)),
@@ -798,6 +818,11 @@ struct DetailPage: View {
         }
         item = detailed
         Task { await loadLogo(key) }
+        if advisory[key] == nil {
+            Task {
+                if let flags = await ContentAdvisory.shared.flags(for: detailed) { advisory[key] = flags }
+            }
+        }
 
         if detailed.isShow {
             guard let show = await showTask, key == self.ratingKey else { return }
@@ -1262,6 +1287,36 @@ private struct InfoBlockStyle: ButtonStyle {
                         .fill(Color.white.opacity(isFocused ? 0.1 : 0))
                 }
                 .animation(.easeOut(duration: 0.2), value: isFocused)
+        }
+    }
+}
+
+/// «عري • مشاهد دموية • ألفاظ» as small chips, the icon tinted by how sensitive it is.
+private struct ContentFlagsRow: View {
+    let flags: [ContentFlag]
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ForEach(flags.prefix(6), id: \.self) { flag in
+                HStack(spacing: 6) {
+                    Image(systemName: flag.symbol)
+                        .foregroundStyle(tint(flag))
+                    Text(flag.title)
+                        .foregroundStyle(.white.opacity(0.9))
+                }
+                .font(.system(size: 19, weight: .semibold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(Color.white.opacity(0.14)))
+            }
+        }
+    }
+
+    private func tint(_ flag: ContentFlag) -> Color {
+        switch flag {
+        case .nudity, .sex: return Color(red: 1, green: 0.42, blue: 0.42)
+        case .gore, .violence, .suicide: return Color(red: 1, green: 0.62, blue: 0.3)
+        default: return Color(red: 1, green: 0.82, blue: 0.35)
         }
     }
 }

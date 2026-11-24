@@ -487,29 +487,55 @@ struct PosterGrid: View {
 
     @Environment(BrowseReturnState.self) private var returnState
     @FocusState private var focusedID: String?
-    private let columns = Array(repeating: GridItem(.fixed(CardKind.poster.size.width), spacing: CardKind.spacing, alignment: .top), count: 6)
+    /// Width offered to the grid (measured; nil until then). The grid is drawn only once it's
+    /// known: drawn wider than its container it would push the container wider (next to the
+    /// grid keyboard tvOS then centres the over-wide results and they run under the keyboard).
+    @State private var width: CGFloat?
+
+    /// As many posters as fit at 230 pt or more, sized to fill the row exactly: 6 × 260 at
+    /// full width (1760 pt), 4 × ~242 next to the grid keyboard in Search (no empty strip).
+    private var layout: (count: Int, poster: CGSize) {
+        let full = CardKind.poster.size
+        let minimum: CGFloat = 230
+        let available = max((width ?? 0) - 2 * CardKind.inset, minimum)
+        let count = max(1, Int(((available + CardKind.spacing) / (minimum + CardKind.spacing)).rounded(.down)))
+        let w = ((available - CGFloat(count - 1) * CardKind.spacing) / CGFloat(count)).rounded(.down)
+        return (count, CGSize(width: w, height: (w * full.height / full.width).rounded()))
+    }
 
     var body: some View {
         let items = self.items.uniqued()
         let context = BrowseContext(rowID: rowID, items: items)
-        LazyVGrid(columns: columns, alignment: .leading, spacing: 56) {
-            ForEach(items) { item in
-                MediaCardLink(item: item, client: client, sourceID: context.sourceID(for: item), context: context)
-                    .focused($focusedID, equals: item.id)
-                    .onAppear { onItemAppear(item) }
+        let layout = self.layout
+        let columns = Array(repeating: GridItem(.fixed(layout.poster.width), spacing: CardKind.spacing, alignment: .top),
+                            count: layout.count)
+        VStack(alignment: .leading, spacing: 0) {
+            // The width offered to the grid (not the grid's own, which follows its columns).
+            Color.clear
+                .frame(maxWidth: .infinity, maxHeight: 0)
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+            if width != nil {
+                LazyVGrid(columns: columns, alignment: .leading, spacing: 56) {
+                    ForEach(items) { item in
+                        MediaCardLink(item: item, client: client, posterSize: layout.poster,
+                                      sourceID: context.sourceID(for: item), context: context)
+                            .focused($focusedID, equals: item.id)
+                            .onAppear { onItemAppear(item) }
+                    }
+                }
+                .padding(.horizontal, CardKind.inset)
+                .padding(.vertical, 30)
+                // Starts on the same line as the rows; the enclosing ScrollView adds the sidebar inset.
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // Entering the grid lands on its first item (reading side), not the one under the bar.
+                .focusSection()
+                .defaultFocus($focusedID, items.first?.id, priority: .userInitiated)
+                .onAppear {
+                    guard let id = returnState.take(for: rowID) else { return }
+                    scrollProxy?.scrollTo(id, anchor: .center)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { focusedID = id }
+                }
             }
-        }
-        .padding(.horizontal, CardKind.inset)
-        .padding(.vertical, 30)
-        // Starts on the same line as the rows; the enclosing ScrollView adds the sidebar inset.
-        .frame(maxWidth: .infinity, alignment: .leading)
-        // Entering the grid lands on its first item (reading side), not the one under the bar.
-        .focusSection()
-        .defaultFocus($focusedID, items.first?.id, priority: .userInitiated)
-        .onAppear {
-            guard let id = returnState.take(for: rowID) else { return }
-            scrollProxy?.scrollTo(id, anchor: .center)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { focusedID = id }
         }
     }
 }

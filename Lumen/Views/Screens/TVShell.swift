@@ -185,7 +185,7 @@ struct MainTabView: View {
 
             if sidebarVisible {
                 TVSidebar(selection: $selection, focus: $sidebarFocus, profile: profile,
-                          pinned: pinned, hasMore: !rest.isEmpty) {
+                          pinned: pinned, hasMore: !rest.isEmpty, onBack: sidebarBack) {
                     store.deactivate()
                 } onSelect: { destination in
                     selection = destination
@@ -242,6 +242,16 @@ struct MainTabView: View {
         withAnimation(.linear(duration: 0.05)) { sidebarVisible = false }
         sidebarFocus = nil
         DispatchQueue.main.async { resetFocus(in: shellNamespace) }
+    }
+
+    /// Back on the sidebar: first to «الرئيسية»; from there (nil: no handler) the system
+    /// leaves the app.
+    private var sidebarBack: (() -> Void)? {
+        if sidebarFocus == .home && selection == .home { return nil }
+        return {
+            selection = .home
+            sidebarFocus = .home
+        }
     }
 
     /// Back / Menu on a top-level screen, or Right at the edge: shows the sidebar on the
@@ -311,6 +321,8 @@ private struct TVSidebar: View {
     let profile: UserProfile
     let pinned: [LibraryScope]
     let hasMore: Bool
+    /// Back / Menu; nil lets the system handle it (leaves the app).
+    let onBack: (() -> Void)?
     let onProfile: () -> Void
     let onSelect: (TVDestination) -> Void
     let onClose: () -> Void
@@ -370,7 +382,8 @@ private struct TVSidebar: View {
             guard old == nil, let new, new != selection else { return }
             DispatchQueue.main.async { focus.wrappedValue = selection }
         }
-        // Menu on the sidebar leaves the app (the system handles it: no handler here).
+        // Menu on the sidebar: to «الرئيسية» first, then (no handler) the system leaves the app.
+        .onExitCommand(perform: onBack)
     }
 
     /// Avatar with the initial, the profile name, and the clock on the far side.

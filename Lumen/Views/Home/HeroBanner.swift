@@ -37,6 +37,7 @@ struct HeroBanner: View {
     @State private var ready: Set<String> = []
 
     private var current: BannerItem { items[min(max(index, 0), items.count - 1)] }
+    private var textShown: Bool { textVisible && ready.contains(current.id) }
 
     nonisolated static func lowResURL(_ item: BannerItem, client: PlexServerClient) -> URL? {
         client.imageURL(item.display.backdropPath, width: 480, height: 270)
@@ -61,16 +62,16 @@ struct HeroBanner: View {
     var body: some View {
         ZStack(alignment: .bottomLeading) {
             backdrop
-            Group {
-                textBlock
-                    .padding(.leading, CardKind.inset)
-                    .padding(.bottom, 110)
-                rating
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                    .padding(.trailing, CardKind.inset)
-                    .padding(.bottom, 130)
-            }
-            .opacity(textVisible && ready.contains(current.id) ? 1 : 0)
+            // The text fades while paging, but the buttons stay: a hidden (opacity 0) button
+            // can't hold focus, which would drop it to the rows below.
+            textBlock
+                .padding(.leading, CardKind.inset)
+                .padding(.bottom, 110)
+            rating
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.trailing, CardKind.inset)
+                .padding(.bottom, 130)
+                .opacity(textShown ? 1 : 0)
             pageDots
                 .frame(maxWidth: .infinity)
                 .padding(.bottom, 36)
@@ -137,54 +138,59 @@ struct HeroBanner: View {
     private var textBlock: some View {
         let item = current.display
         return VStack(alignment: .leading, spacing: 16) {
-            Text(current.label)
-                .font(.system(size: 24, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.75))
-
-            BannerLogo(item: item, client: client)
-                .frame(height: 170, alignment: .bottomLeading)
-
-            HStack(spacing: 14) {
-                Text(meta(item))
-                    .font(.system(size: 24, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.8))
-                if let rating = item.normalizedContentRating {
-                    Text(rating)
-                        .font(.system(size: 18, weight: .bold))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 2)
-                        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.white.opacity(0.7), lineWidth: 1.5))
-                        .foregroundStyle(.white.opacity(0.85))
-                }
-                ForEach(qualityBadges(item), id: \.self) { badge in
-                    Text(badge)
-                        .font(.system(size: 18, weight: .bold))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 2)
-                        .background(RoundedRectangle(cornerRadius: 5).fill(Color.white.opacity(0.18)))
-                        .foregroundStyle(.white.opacity(0.85))
-                }
-            }
-
-            if let summary = item.summary, !summary.isEmpty {
-                Text(summary)
-                    .font(.system(size: 28))
-                    .foregroundStyle(.white.opacity(0.7))
-                    .lineLimit(3)
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: 560, alignment: .leading)
-            }
-
-            if let highlight = current.highlight {
-                Text(highlight)
-                    .font(.system(size: 26, weight: .bold))
-                    .foregroundStyle(.white)
-            }
-
+            VStack(alignment: .leading, spacing: 16) { textLines(item) }
+                .opacity(textShown ? 1 : 0)
             buttons.padding(.top, 10)
         }
         .frame(maxWidth: 760, alignment: .leading)
         .shadow(color: .black.opacity(0.35), radius: 10)
+    }
+
+    @ViewBuilder
+    private func textLines(_ item: PlexItem) -> some View {
+        Text(current.label)
+            .font(.system(size: 24, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.75))
+
+        BannerLogo(item: item, client: client)
+            .frame(height: 170, alignment: .bottomLeading)
+
+        HStack(spacing: 14) {
+            Text(meta(item))
+                .font(.system(size: 24, weight: .medium))
+                .foregroundStyle(.white.opacity(0.8))
+            if let rating = item.normalizedContentRating {
+                Text(rating)
+                    .font(.system(size: 18, weight: .bold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.white.opacity(0.7), lineWidth: 1.5))
+                    .foregroundStyle(.white.opacity(0.85))
+            }
+            ForEach(qualityBadges(item), id: \.self) { badge in
+                Text(badge)
+                    .font(.system(size: 18, weight: .bold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(RoundedRectangle(cornerRadius: 5).fill(Color.white.opacity(0.18)))
+                    .foregroundStyle(.white.opacity(0.85))
+            }
+        }
+
+        if let summary = item.summary, !summary.isEmpty {
+            Text(summary)
+                .font(.system(size: 28))
+                .foregroundStyle(.white.opacity(0.7))
+                .lineLimit(3)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: 560, alignment: .leading)
+        }
+
+        if let highlight = current.highlight {
+            Text(highlight)
+                .font(.system(size: 26, weight: .bold))
+                .foregroundStyle(.white)
+        }
     }
 
     private var buttons: some View {
@@ -372,10 +378,11 @@ struct HeroBanner: View {
             if let url = Self.lowResURL(item, client: client) { _ = await ImageLoader.shared.image(for: url) }
             ready.insert(item.id)
         }
-        for offset in [1, 2] where items.count > offset {
-            let next = items[(index + offset) % items.count]
+        // Both neighbours (paging goes either way; Right from the first slide wraps to the last).
+        for offset in [1, -1, 2] where items.count > abs(offset) {
+            let next = items[(index + offset + items.count) % items.count]
             if let url = Self.lowResURL(next, client: client) { _ = await ImageLoader.shared.image(for: url) }
-            if offset == 1, let url = Self.fullResURL(next, client: client) { _ = await ImageLoader.shared.image(for: url) }
+            if abs(offset) == 1, let url = Self.fullResURL(next, client: client) { _ = await ImageLoader.shared.image(for: url) }
             ready.insert(next.id)
         }
         guard playTargets[item.id] == nil else { return }

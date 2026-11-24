@@ -118,6 +118,20 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
+      # Optional: content advisories from TMDB. The key goes only into the generated,
+      # git-ignored Info.plist — never on the xcodebuild command line, which would print it
+      # into archive.log (uploaded as an artifact on failure, where secrets aren't masked).
+      - name: Add TMDB key to the generated Info.plist
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+        run: |
+          if [ -n "$TMDB_API_KEY" ]; then
+            /usr/libexec/PlistBuddy -c "Set :TMDBAPIKey $TMDB_API_KEY" Lumen/Info.plist
+            echo "TMDB key added (content advisories on)."
+          else
+            echo "::notice::No TMDB_API_KEY secret: the app shows only the age rating's meaning."
+          fi
+
       - name: Resolve Swift packages (MPVKit)
         run: xcodebuild -resolvePackageDependencies -project Lumen.xcodeproj -scheme Lumen
 
@@ -254,4 +268,7 @@ jobs:
 
       - name: Remove API key
         if: always()
-        run: rm -rf "$RUNNER_TEMP/asc"
+        run: |
+          rm -rf "$RUNNER_TEMP/asc"
+          # Don't leave the TMDB key in the (self-hosted) runner's checkout.
+          [ -f Lumen/Info.plist ] && /usr/libexec/PlistBuddy -c "Set :TMDBAPIKey ''" Lumen/Info.plist || true
