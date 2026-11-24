@@ -57,16 +57,95 @@ enum UserFeed {
         return await filter.resolve(ordered, client: client)
     }
 
-    /// Genre → weight from what the profile watched (recent viewing counts more).
+    /// Genres of titles whose own data has none (episodes: Plex keeps genres on the show),
+    /// learned from the server by `taste(store:client:)` and reused by the synchronous version.
+    private static var learnedGenres: [String: [String]] = [:]
+
+    /// Genre → weight (see `taste(store:)`), for callers that can't wait for the server.
     static func genreAffinity(store: ProfileStore) -> [String: Double] {
-        var weights: [String: Double] = [:]
-        let now = Date()
-        for state in store.activeStates where state.watched || state.offsetMs > 60_000 {
-            let days = max(0, now.timeIntervalSince(state.lastViewedAt) / 86_400)
-            let weight = 1 / (1 + days / 30)
-            for genre in state.genres { weights[genre.lowercased(), default: 0] += weight }
+        taste(store: store).weights
+    }
+
+    /// `taste(store:)` after asking the server for the genres of the most recent titles that
+    /// have none (cached per session and on disk).
+    static func taste(store: ProfileStore, client: PlexServerClient) async -> TasteProfile {
+        let missing = taste(store: store).titles
+            .filter { $0.genres.isEmpty && learnedGenres[$0.key] == nil }
+            .sorted { $0.lastViewedAt > $1.lastViewedAt }
+            .prefix(HomeTuning.tasteMetadataLookups)
+            .map(\.key)
+        if !missing.isEmpty {
+            let found: [(String, [String])] = await withTaskGroup(of: (String, [String]).self) { group in
+                for key in missing {
+                    group.addTask {
+                        let item = await client.cachedMetadata(key)
+                        return (key, item?.genres.map { $0.tag.lowercased() } ?? [])
+                    }
+                }
+                var out: [(String, [String])] = []
+                for await result in group { out.append(result) }
+                return out
+            }
+            for (key, genres) in found where !genres.isEmpty { learnedGenres[key] = genres }
         }
-        return weights
+        return taste(store: store)
+    }
+
+    /// Genre → weight from what the profile watched, one entry per title (movie or show):
+    /// recency × engagement. Episodes count towards their show.
+    static func taste(store: ProfileStore) -> TasteProfile {
+        struct Group {
+            var type: String
+            var genres: Set<String> = []
+            var lastViewedAt = Date.distantPast
+            var watched = 0
+            var touched = 0
+            var bestProgress = 0.0
+        }
+
+        var groups: [String: Group] = [:]
+        for state in store.activeStates where state.watched || state.offsetMs > HomeTuning.tasteMinOffsetMs {
+            let isEpisode = state.type == "episode"
+            let key = isEpisode ? (state.showKey ?? state.ratingKey) : state.ratingKey
+            var group = groups[key] ?? Group(type: isEpisode ? "show" : state.type)
+            group.genres.formUnion(state.genres.map { $0.lowercased() })
+            group.lastViewedAt = max(group.lastViewedAt, state.lastViewedAt)
+            group.touched += 1
+            if state.watched { group.watched += 1 }
+            group.bestProgress = max(group.bestProgress, state.watched ? 1 : (state.progress ?? 0))
+            groups[key] = group
+        }
+
+        let now = Date()
+        var titles: [TasteProfile.Title] = []
+        var weights: [String: Double] = [:]
+        for (key, group) in groups {
+            let genres = group.genres.isEmpty ? Set(learnedGenres[key] ?? []) : group.genres
+            let days = max(0, now.timeIntervalSince(group.lastViewedAt) / 86_400)
+            let recency = 1 / (1 + days / HomeTuning.recencyDays)
+            let stale = days > HomeTuning.abandonedAfterDays
+            let abandoned: Bool
+            let engagement: Double
+            if group.type == "show" {
+                abandoned = stale && group.watched == 0 && group.touched <= 1
+                engagement = abandoned
+                    ? HomeTuning.abandonedEngagement
+                    : min(HomeTuning.showEngagementCap,
+                          1 + log(1 + Double(group.watched)) / HomeTuning.showEngagementDivisor)
+            } else {
+                abandoned = stale && group.watched == 0 && group.bestProgress < HomeTuning.abandonedMovieProgress
+                engagement = group.watched > 0
+                    ? HomeTuning.finishedMovieEngagement
+                    : (abandoned ? HomeTuning.abandonedEngagement : 1)
+            }
+            let title = TasteProfile.Title(key: key, type: group.type, genres: genres.sorted(),
+                                           lastViewedAt: group.lastViewedAt, watchedCount: group.watched,
+                                           abandoned: abandoned, recency: recency, engagement: engagement)
+            titles.append(title)
+            for genre in genres { weights[genre, default: 0] += title.weight }
+        }
+        titles.sort { $0.weight != $1.weight ? $0.weight > $1.weight : $0.key < $1.key }
+        return TasteProfile(titles: titles, weights: weights)
     }
 
     nonisolated static func score(_ item: PlexItem, affinity: [String: Double]) -> Double {

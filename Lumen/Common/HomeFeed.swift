@@ -125,7 +125,6 @@ struct HomeFeed: Codable {
 
         async let continueTask = UserFeed.continueWatching(store: store, client: client, filter: filter)
         async let listTask = UserFeed.myList(store: store, client: client, filter: filter)
-        let affinity = UserFeed.genreAffinity(store: store)
 
         // «أضيف مؤخراً في …» per enabled library / anime scope, in tab order.
         var recentByScope: [(LibraryScope, [PlexItem])] = []
@@ -149,6 +148,7 @@ struct HomeFeed: Codable {
         return HomeFeed(featured: [], continueWatching: await continueTask, continueLogos: [:],
                         myList: await listTask, rows: tvRows)
         #else
+        let affinity = await UserFeed.taste(store: store, client: client).weights
         let focusOnly = !filter.focusGenres.isEmpty
         let sample = await filter.resolve(perSection.values.flatMap(\.sample), client: client, focusedOnly: focusOnly)
         let topCandidates = await filter.resolve(perSection.values.flatMap(\.topRated), client: client, focusedOnly: focusOnly)
