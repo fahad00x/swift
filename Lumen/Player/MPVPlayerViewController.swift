@@ -15,6 +15,7 @@ final class MPVPlayerViewController: UIViewController {
     private var overlayHost: UIHostingController<PlayerOverlay>!
     private let displayCriteria: AVDisplayCriteria?
     private var scrubBase: Double = 0
+    private var lastMenu: CFTimeInterval = 0
 
     var onDismiss: (() -> Void)?
 
@@ -50,6 +51,13 @@ final class MPVPlayerViewController: UIViewController {
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
         pan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirect.rawValue)]
         view.addGestureRecognizer(pan)
+
+        // Menu comes here first, wherever the focus is. Without our own recognizer, a press
+        // made while a panel's row or a button has the focus goes to the system's, which
+        // dismisses the whole player (it never reaches pressesBegan).
+        let menu = UITapGestureRecognizer(target: self, action: #selector(handleMenu))
+        menu.allowedPressTypes = [NSNumber(value: UIPress.PressType.menu.rawValue)]
+        view.addGestureRecognizer(menu)
 
         session.onRequestClose = { [weak self] in self?.close() }
         session.onRefocus = { [weak self] in self?.refocus(after: 0.05) }
@@ -119,8 +127,12 @@ final class MPVPlayerViewController: UIViewController {
         refocus(after: 0)
     }
 
-    /// Menu / Back: one step back (the overlay usually takes it first, see PlayerChrome).
-    private func stepBack() {
+    /// Menu / Back: one step back (panel, buttons, player). One press can arrive twice (a
+    /// keyboard's Escape: as a key and as the Menu press made from it) and counts once.
+    @objc private func handleMenu() {
+        let now = CACurrentMediaTime()
+        guard now - lastMenu > 0.25 else { return }
+        lastMenu = now
         if session.isPanelOpen { session.stepBack() } else { close() }
     }
 
@@ -149,10 +161,14 @@ final class MPVPlayerViewController: UIViewController {
             return
         }
 
+        if type == .menu {
+            // The remote's Menu: the recognizer has it. Escape may only come as a key.
+            if press.key != nil { handleMenu() }
+            return
+        }
+
         if session.isPanelOpen {
             switch type {
-            case .menu:
-                stepBack()
             case .playPause:
                 session.togglePause(from: .press)
             case .downArrow where session.panel == nil:
@@ -165,7 +181,7 @@ final class MPVPlayerViewController: UIViewController {
         }
 
         if session.errorMessage != nil {
-            if type == .menu || type == .select { close() }
+            if type == .select { close() }
             return
         }
 
@@ -182,8 +198,6 @@ final class MPVPlayerViewController: UIViewController {
             showButtons()
         case .downArrow:
             session.showControls()
-        case .menu:
-            close()
         default:
             break
         }
