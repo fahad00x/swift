@@ -175,8 +175,20 @@ jobs:
             # the App Store with a cloud-managed certificate.
             if ! archive CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- PROVISIONING_PROFILE_SPECIFIER= \
                          CODE_SIGNING_REQUIRED=NO AD_HOC_CODE_SIGNING_ALLOWED=YES; then
-              echo "::warning title=iCloud::Ad-hoc signed archive failed; building without iCloud entitlements (profiles stay on the device only)."
+              # Xcode won't ad-hoc sign iCloud entitlements without a provisioning profile (and
+              # none can be made: the account is at its certificate limit). codesign itself
+              # doesn't ask for one: archive unsigned, then sign the nested code and the app
+              # with the entitlements; the export re-signs it for the App Store and keeps them.
+              echo "::warning title=iCloud::Xcode's ad-hoc signing needs a profile for iCloud; signing the archive with codesign instead."
               archive CODE_SIGNING_ALLOWED=NO
+              APP=$(ls -d "$ARCHIVE_PATH"/Products/Applications/*.app | head -1)
+              ENTITLEMENTS="$PWD/${SCHEME}/${SCHEME}.entitlements"
+              if [ -f "$ENTITLEMENTS" ] && bash scripts/adhoc_sign_with_entitlements.sh "$APP" "$ENTITLEMENTS"; then
+                echo "Archive signed locally with the iCloud entitlements."
+              else
+                echo "::warning title=iCloud::Signing with the iCloud entitlements failed; this build has no profile sync (profiles stay on the device only)."
+                archive CODE_SIGNING_ALLOWED=NO
+              fi
             fi
           else
             # Unsigned archive: Xcode signs it during export with a cloud-managed distribution
