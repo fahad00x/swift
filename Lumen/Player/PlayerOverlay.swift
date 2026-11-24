@@ -203,24 +203,24 @@ private struct PlayerChrome: View {
 
     // MARK: Progress
 
-    /// Full width, 8 pt (Infuse); only what's been watched (no intro / credits marks), a
+    /// Full width, 10 pt; only what's been watched (no intro / credits marks), a
     /// small tick at the playhead. Time runs left to right, as in every player.
     private var timeline: some View {
         GeometryReader { geo in
             let played = playedFraction
             ZStack(alignment: .leading) {
-                Capsule().fill(Color.white.opacity(0.32)).frame(height: 6)
-                Capsule().fill(Color.white.opacity(0.62)).frame(width: max(6, geo.size.width * played), height: 6)
+                Capsule().fill(Color.white.opacity(0.32)).frame(height: 10)
+                Capsule().fill(Color.white.opacity(0.62)).frame(width: max(10, geo.size.width * played), height: 10)
             }
-            .frame(height: 6)
+            .frame(height: 10)
             // The playhead tick rises above the bar without making it thicker.
             .overlay(alignment: .leading) {
                 Rectangle().fill(Color.white)
-                    .frame(width: 2.5, height: session.scrubPosition != nil ? 28 : 14)
-                    .offset(x: geo.size.width * played - 1.25, y: -3)
+                    .frame(width: 2.5, height: session.scrubPosition != nil ? 32 : 20)
+                    .offset(x: geo.size.width * played - 1.25, y: -4)
             }
         }
-        .frame(height: 6)
+        .frame(height: 10)
         .environment(\.layoutDirection, .leftToRight)
     }
 
