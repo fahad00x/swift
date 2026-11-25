@@ -315,6 +315,8 @@ struct DetailPage: View {
             .frame(width: Self.browseWidth, height: 420)
             .focusable(!scrolled)
             .focused($heroFocus, equals: .browse)
+            // A click enters too, like Down.
+            .onTapGesture { heroFocus = .play }
             .onMoveCommand { direction in
                 // Physical directions: in Arabic the next title comes from the left.
                 switch direction {

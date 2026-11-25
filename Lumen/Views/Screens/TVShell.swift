@@ -12,6 +12,8 @@ enum TVDestination: Hashable {
     case library(String)
     case more
     case settings
+    /// The sidebar's ends (never pages): catch Up on the first row and Down on the last.
+    case topEdge, bottomEdge
 }
 
 /// The four libraries pinned to the sidebar (per profile, chosen in Settings); the rest are under «المزيد».
@@ -274,7 +276,7 @@ struct MainTabView: View {
     @ViewBuilder
     private func content(filter: ContentFilter, rest: [LibraryScope]) -> some View {
         switch selection {
-        case .home, .profile:
+        case .home, .profile, .topEdge, .bottomEdge:
             HomeView(client: client)
         case .myList:
             TVMyListView(client: client)
@@ -350,6 +352,7 @@ private struct TVSidebar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            edge(.topEdge)
             header
                 .padding(.bottom, 14)
 
@@ -365,6 +368,7 @@ private struct TVSidebar: View {
 
             Spacer(minLength: 12)
             row(.settings, "الإعدادات", "gearshape.fill")
+            edge(.bottomEdge)
         }
         .padding(9)
         .padding(.top, 14)
@@ -388,12 +392,24 @@ private struct TVSidebar: View {
             if direction == .left { onClose() }
         }
         .onChange(of: focus.wrappedValue) { old, new in
+            // Past an end: stays on its row (the focus would leave and close the sidebar).
+            if old != nil, new == .topEdge { DispatchQueue.main.async { focus.wrappedValue = .profile }; return }
+            if old != nil, new == .bottomEdge { DispatchQueue.main.async { focus.wrappedValue = .settings }; return }
             // Entering from the content lands on the current page.
             guard old == nil, let new, new != selection else { return }
             DispatchQueue.main.async { focus.wrappedValue = selection }
         }
         // Menu on the sidebar: to «الرئيسية» first, then (no handler) the system leaves the app.
         .onExitCommand(perform: onBack)
+    }
+
+    private func edge(_ side: TVDestination) -> some View {
+        Color.white.opacity(0.001)
+            .frame(maxWidth: .infinity)
+            .frame(height: 2)
+            // Only while the sidebar has the focus: never a way in.
+            .focusable(focus.wrappedValue != nil)
+            .focused(focus, equals: side)
     }
 
     /// Avatar with the initial, the profile name, and the clock on the far side.
