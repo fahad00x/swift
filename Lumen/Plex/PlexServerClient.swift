@@ -409,7 +409,8 @@ final class PlexServerClient: Sendable {
     }
 
     func search(_ query: String) async throws -> [PlexItem] {
-        if let stored = await local.search(server: machineIdentifier, query: query, sections: nil) {
+        let aliases = await AnimeTitles.shared.aliases()
+        if let stored = await local.search(server: machineIdentifier, query: query, sections: nil, aliases: aliases) {
             return applied(stored)
         }
         let hubs = try await container("/hubs/search", [("query", query), ("limit", "30")]).hubs

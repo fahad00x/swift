@@ -32,6 +32,11 @@ struct LocalSection: Codable {
     var lastWanted: Date
     /// The first download finished (an interrupted one resumes where it stopped).
     var complete: Bool
+    /// Which item fields search needs were downloaded (older copies are fetched again once).
+    var searchVersion: Int?
+
+    /// 1: original titles (`originalTitle`).
+    static let currentSearchVersion = 1
 
     init(key: String, type: String, title: String) {
         self.key = key
@@ -47,6 +52,7 @@ struct LocalSection: Codable {
         episodeShows = [:]
         lastWanted = Date()
         complete = false
+        searchVersion = Self.currentSearchVersion
     }
 }
 
@@ -94,6 +100,11 @@ actor LocalLibrary {
     /// A few recently opened shows' episodes.
     private var episodeCache: [String: [PlexItem]] = [:]
     private var cacheOrder: [String] = []
+    /// Search entries by library (see `searchEntries`).
+    private var searchSections: [String: [SearchEntry]] = [:]
+    private var searchBuild: Task<Void, Never>?
+    private var searchGeneration = 0
+    private var searchChanged: [String: Int] = [:]
 
     // MARK: Files
 
@@ -140,6 +151,7 @@ actor LocalLibrary {
         if serverID == server { await loadTask?.value; return }
         serverID = server
         index = LibraryIndex()
+        for key in searchSections.keys { searchChanged(key) }
         episodeCache = [:]
         cacheOrder = []
         let read = Task.detached(priority: .utility) { () -> [String: LocalSection] in
@@ -191,6 +203,7 @@ actor LocalLibrary {
         let built = await Task.detached(priority: .utility) { LibraryIndex(sections: sections) }.value
         guard serverID == server else { return }
         index = built
+        searchChanged(section.key)
         for show in changedShows { episodeCache[show] = nil }
         cacheOrder.removeAll { episodeCache[$0] == nil }
         let dir = Self.sectionDirectory(server, section.key)
@@ -224,6 +237,7 @@ actor LocalLibrary {
         var sections = index.sections
         sections[key] = nil
         index = LibraryIndex(sections: sections)
+        searchChanged(key)
         episodeCache = [:]
         cacheOrder = []
         try? FileManager.default.removeItem(at: Self.sectionDirectory(server, key))
@@ -283,18 +297,71 @@ actor LocalLibrary {
         return index.section(ofShow: show)?.latestAired[show]
     }
 
-    /// Movies and shows whose title matches `query`, nil before the first download.
-    func search(server: String, query: String, sections keys: Set<String>?, limit: Int = 60) -> [PlexItem]? {
+    /// Movies and shows matching `query` (see `SmartSearch`), nil before the first download.
+    /// `aliases`: other titles by `AnimeTitles.key(for:)`.
+    func search(server: String, query: String, sections keys: Set<String>?,
+                aliases: [String: [SearchField]] = [:], limit: Int = 120) async -> [PlexItem]? {
         guard serverID == server, index.sections.values.contains(where: \.complete) else { return nil }
-        let q = query.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
-        var titles: [PlexItem] = []
-        for section in index.sections.values where keys?.contains(section.key) ?? true {
-            titles += section.items.filter {
-                $0.title.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil).contains(q)
-            }
+        let all = await searchEntries()
+        guard serverID == server, !Task.isCancelled else { return [] }
+        let entries = keys.map { keys in all.filter { keys.contains($0.section) } } ?? all
+        // Off the actor: the rest of the app keeps reading the library meanwhile.
+        let work = Task.detached(priority: .userInitiated) {
+            SmartSearch.run(query, entries: entries, aliases: aliases, limit: limit)
         }
-        titles.sort { ($0.title.count, $0.title) < ($1.title.count, $1.title) }
-        return Array(titles.uniqued().prefix(limit))
+        return await withTaskCancellationHandler { await work.value } onCancel: { work.cancel() }
+    }
+
+    /// Every library's movies and shows with their names prepared; a library is prepared when
+    /// first needed and again after it changes (not at each step of a download).
+    private func searchEntries() async -> [SearchEntry] {
+        while let missing = index.sections.keys.first(where: { searchSections[$0] == nil }) {
+            if let building = searchBuild { await building.value; continue }
+            let pending = index.sections.values.filter { searchSections[$0.key] == nil }
+            let generation = searchGeneration
+            let build = Task {
+                let made = await Task.detached(priority: .userInitiated) {
+                    await withTaskGroup(of: (String, [SearchEntry]).self) { group in
+                        for section in pending {
+                            group.addTask { (section.key, SearchEntry.make(section.items, section: section.key)) }
+                        }
+                        var out: [String: [SearchEntry]] = [:]
+                        for await (key, entries) in group { out[key] = entries }
+                        return out
+                    }
+                }.value
+                self.keep(made, generation: generation)
+            }
+            searchBuild = build
+            await build.value
+            _ = missing
+        }
+        return index.sections.keys.sorted().flatMap { searchSections[$0] ?? [] }
+    }
+
+    private func keep(_ made: [String: [SearchEntry]], generation: Int) {
+        searchBuild = nil
+        for (key, entries) in made where index.sections[key] != nil {
+            // Changed while it was prepared: prepared again.
+            if generation < (searchChanged[key] ?? 0) { continue }
+            searchSections[key] = entries
+        }
+    }
+
+    private func searchChanged(_ key: String) {
+        searchGeneration += 1
+        searchChanged[key] = searchGeneration
+        searchSections[key] = nil
+    }
+
+    /// Prepares the search in the background.
+    func prepareSearch() async { _ = await searchEntries() }
+
+    /// Anime movies and shows on the device (for their AniList titles).
+    func animeItems(server: String) async -> [PlexItem] {
+        guard serverID == server else { return [] }
+        let items = index.sections.values.flatMap(\.items)
+        return await Task.detached(priority: .background) { items.uniqued().filter(AnimeClassifier.isAnime) }.value
     }
 
     /// A show's episodes in order, from its file (a few shows are kept in memory).
@@ -400,7 +467,8 @@ final class LibrarySync {
         var changed = false
         for (i, stamp) in video.enumerated() {
             let existing = await library.section(server: server, key: stamp.key)
-            if let existing, existing.complete, let c = stamp.contentChangedAt, existing.contentChangedAt == c {
+            if let existing, existing.complete, let c = stamp.contentChangedAt, existing.contentChangedAt == c,
+               existing.searchVersion == LocalSection.currentSearchVersion {
                 if Date().timeIntervalSince(existing.lastWanted) > 86_400 {
                     var touched = existing
                     touched.lastWanted = Date()
@@ -429,6 +497,10 @@ final class LibrarySync {
         message = ""
         if changed { NotificationCenter.default.post(name: .localLibraryDidChange, object: nil) }
         await prefetchShows(client: client)
+        await library.prepareSearch()
+        // Other titles of the anime (AniList), in the background: never the Plex server.
+        let anime = await library.animeItems(server: server)
+        Task.detached(priority: .background) { await AnimeTitles.shared.refresh(anime) }
     }
 
     /// Episodes of the shows the active profile is following (Continue Watching, My List),
@@ -560,7 +632,8 @@ final class LibrarySync {
         let previousHighWater = section.highWater
 
         if stamp.type == "movie" {
-            if let existing, existing.complete, !existing.items.isEmpty {
+            if let existing, existing.complete, !existing.items.isEmpty,
+               existing.searchVersion == LocalSection.currentSearchVersion {
                 // Only what changed; everything again if something was removed.
                 async let total = count(client, section: stamp.key, type: 1)
                 let changed = try await all(client, section: stamp.key, type: 1,
@@ -584,6 +657,7 @@ final class LibrarySync {
             section.highWater = max(previousHighWater, section.items.compactMap { $0.updatedAt ?? $0.addedAt }.max() ?? 0)
             section.contentChangedAt = stamp.contentChangedAt
             section.complete = true
+            section.searchVersion = LocalSection.currentSearchVersion
             section.lastWanted = Date()
             await library.store(section, server: server)
             return
@@ -607,6 +681,7 @@ final class LibrarySync {
         section.highWater = max(previousHighWater, (shows + section.seasons).compactMap { $0.updatedAt ?? $0.addedAt }.max() ?? 0)
         section.contentChangedAt = stamp.contentChangedAt
         section.complete = true
+        section.searchVersion = LocalSection.currentSearchVersion
         section.lastWanted = Date()
         await library.store(section, server: server, changedShows: changedShows)
     }

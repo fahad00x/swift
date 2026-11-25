@@ -397,6 +397,7 @@ struct SearchView: View {
                     VStack(alignment: .leading, spacing: 30) {
                         if trimmed.isEmpty {
                             recentSearches
+                            kinds
                         } else if trimmed.count < 2 {
                             hint("اكتب حرفين على الأقل")
                         } else if results.isEmpty && searched == trimmed && !isSearching {
@@ -415,7 +416,7 @@ struct SearchView: View {
                     .padding(.top, 40)
                 }
                 .sidebarSafeArea()
-                .searchable(text: $query, prompt: "ابحث عن فيلم أو مسلسل")
+                .searchable(text: $query, prompt: "اسم، نوع، أو «مسلسل كوميدي»")
             }
         }
         .task(id: query) {
@@ -447,6 +448,27 @@ struct SearchView: View {
                 HStack(spacing: 20) {
                     ForEach(recent, id: \.self) { term in
                         Button(term) { query = term }
+                            .buttonStyle(.bordered)
+                            .buttonBorderShape(.capsule)
+                            .tint(nil)
+                    }
+                }
+                .padding(.horizontal, CardKind.inset)
+                .padding(.vertical, 20)
+            }
+            .scrollClipDisabled()
+            .focusSection()
+        }
+    }
+
+    /// «مسلسل كوميدي», «أنمي فانتازيا»…: one press searches by kind.
+    private var kinds: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header("ابحث حسب النوع")
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 20) {
+                    ForEach(SearchSuggestions.kinds, id: \.self) { kind in
+                        Button(kind) { query = kind }
                             .buttonStyle(.bordered)
                             .buttonBorderShape(.capsule)
                             .tint(nil)

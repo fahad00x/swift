@@ -110,6 +110,9 @@ struct SearchView: View {
     var body: some View {
         BrowseStack(client: client) {
             ScrollView {
+                if query.trimmingCharacters(in: .whitespaces).isEmpty {
+                    kinds
+                }
                 if results.isEmpty && query.count >= 2 && !isSearching {
                     ContentUnavailableView.search(text: query)
                         .padding(.top, 60)
@@ -120,7 +123,7 @@ struct SearchView: View {
             .overlay { if isSearching && results.isEmpty { ProgressView() } }
             .navigationTitle("بحث")
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always),
-                        prompt: "ابحث عن فيلم أو مسلسل")
+                        prompt: "اسم، نوع، أو «مسلسل كوميدي»")
         }
         .task(id: query) {
             let q = query.trimmingCharacters(in: .whitespaces)
@@ -135,5 +138,23 @@ struct SearchView: View {
             guard !Task.isCancelled else { return }
             results = visible
         }
+    }
+
+    /// «مسلسل كوميدي», «أنمي فانتازيا»…: one tap searches by kind.
+    private var kinds: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("ابحث حسب النوع")
+                .font(.headline)
+                .foregroundStyle(.secondary)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 10)], alignment: .leading, spacing: 10) {
+                ForEach(SearchSuggestions.kinds, id: \.self) { kind in
+                    Button(kind) { query = kind }
+                        .buttonStyle(.bordered)
+                        .buttonBorderShape(.capsule)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
     }
 }

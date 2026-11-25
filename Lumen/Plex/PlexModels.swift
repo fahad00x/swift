@@ -473,6 +473,8 @@ struct PlexItem: Codable, Identifiable, Hashable {
     let key: String?
     let type: String
     let title: String
+    /// The title in its own language or another spelling («Shingeki no Kyojin»), when Plex has one.
+    let originalTitle: String?
     let summary: String?
     let tagline: String?
     let year: Int?
@@ -535,7 +537,7 @@ struct PlexItem: Codable, Identifiable, Hashable {
     func hash(into hasher: inout Hasher) { hasher.combine(ratingKey) }
 
     enum CodingKeys: String, CodingKey {
-        case ratingKey, key, type, title, summary, tagline, year, thumb, art, composite, parentThumb, grandparentThumb,
+        case ratingKey, key, type, title, originalTitle, summary, tagline, year, thumb, art, composite, parentThumb, grandparentThumb,
              grandparentArt, duration, viewOffset, viewCount, leafCount, viewedLeafCount, childCount, index,
              parentIndex, parentTitle, grandparentTitle, parentRatingKey, grandparentRatingKey, contentRating,
              audienceRating, rating, audienceRatingImage, ratingImage, studio, originallyAvailableAt, guid, addedAt, updatedAt, subtype, lastViewedAt, librarySectionID
@@ -553,6 +555,7 @@ struct PlexItem: Codable, Identifiable, Hashable {
         key = c.lenientString(forKey: .key)
         type = c.lenientString(forKey: .type) ?? ""
         title = c.lenientString(forKey: .title) ?? ""
+        originalTitle = c.lenientString(forKey: .originalTitle).flatMap { $0.isEmpty ? nil : $0 }
         // Without the "---" source notes some agents append (display text only).
         summary = ArabicFormat.summary(c.lenientString(forKey: .summary))
         tagline = c.lenientString(forKey: .tagline)
