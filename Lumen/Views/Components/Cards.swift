@@ -102,7 +102,7 @@ private struct LandscapeCaption: View {
 
 // MARK: - Poster
 
-/// «قائمتي»: posters say when the show has new episodes.
+/// «قائمتي» and Continue Watching: posters say when the show has a new episode or season.
 private struct MarksNewEpisodesKey: EnvironmentKey {
     static let defaultValue = false
 }
@@ -126,7 +126,7 @@ struct PosterCard: View {
     var size: CGSize = CardKind.poster.size
 
     @Environment(ProfileStore.self) private var store
-    @Environment(MyListNews.self) private var news: MyListNews?
+    @Environment(ShowNews.self) private var news: ShowNews?
     @Environment(\.marksNewEpisodes) private var marksNews
     /// Focus of the enclosing (native card) button.
     @Environment(\.isFocused) private var isFocused
@@ -141,15 +141,26 @@ struct PosterCard: View {
                         ? client.posterURL(item)
                         : client.imageURL(item.posterPath, width: Int(size.width * 2), height: Int(size.height * 2)))
             PosterBadges(corner: cornerText)
-            if marksNews, item.isShow, let count = news?.counts[item.ratingKey] {
-                Text(MyListNews.title(count))
-                    .font(.system(size: 19, weight: .bold))
-                    .foregroundStyle(.black)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 40)
-                    .background(ArtworkStatusOverlay.orange)
+            if marksNews, let info = news?.of(item) {
+                if let title = info.title {
+                    Text(title)
+                        .font(.system(size: 19, weight: .bold))
+                        .foregroundStyle(.black)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 40)
+                        .background(ArtworkStatusOverlay.orange)
+                        .frame(maxHeight: .infinity, alignment: .bottom)
+                } else if item.isShow, let progress = info.progress {
+                    // The episode it stopped in (an episode's own poster has its bar already).
+                    ZStack(alignment: .leading) {
+                        Rectangle().fill(Color.black.opacity(0.45))
+                        Rectangle().fill(ArtworkStatusOverlay.orange).frame(width: size.width * progress)
+                    }
+                    .frame(height: 5)
                     .frame(maxHeight: .infinity, alignment: .bottom)
+                    .environment(\.layoutDirection, .leftToRight)
+                }
             }
         }
         .animation(.easeOut(duration: 0.2), value: isFocused)

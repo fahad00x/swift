@@ -71,6 +71,8 @@ struct ProfileSettings: Codable, Hashable, Sendable {
     var autoPlayNext: Bool?
     /// «قائمتي» as a row of Home, right after Continue Watching.
     var myListOnHome: Bool?
+    /// Continue Watching: shows with a new episode first (else the latest watched first).
+    var continueNewFirst: Bool?
     /// Show / movie → when it was removed from Continue Watching (back once watched after).
     var continueHidden: [String: Date]?
 

@@ -144,7 +144,7 @@ struct MainTabView: View {
     /// The sidebar is on screen (hidden completely while closed).
     @State private var sidebarVisible = false
     @State private var shell = ShellState()
-    @State private var news = MyListNews()
+    @State private var news = ShowNews()
     @FocusState private var sidebarFocus: TVDestination?
     @FocusState private var edgeFocused: Bool
     @State private var edgeArmed = false
@@ -323,7 +323,8 @@ struct MainTabView: View {
 /// shown only while it has focus. Header with the profile and the clock, filled-symbol rows,
 /// one white pill on the focused row, Settings at the bottom.
 private struct TVSidebar: View {
-    @Environment(MyListNews.self) private var news: MyListNews?
+    @Environment(ProfileStore.self) private var store
+    @Environment(ShowNews.self) private var news: ShowNews?
 
     @Binding var selection: TVDestination
     var focus: FocusState<TVDestination?>.Binding
@@ -430,7 +431,7 @@ private struct TVSidebar: View {
                     .multilineTextAlignment(.leading)
                 Spacer(minLength: 0)
                 // «قائمتي»: how many of its shows have new episodes.
-                if destination == .myList, let count = news?.counts.count, count > 0 {
+                if destination == .myList, let count = news?.count(in: store), count > 0 {
                     Text(ArabicFormat.digits(count))
                         .font(.system(size: 20, weight: .bold))
                         .foregroundStyle(.black)
@@ -513,6 +514,7 @@ struct HomeView: View {
 
     @Environment(ProfileStore.self) private var store
     @Environment(\.contentFilter) private var filter
+    @Environment(ShowNews.self) private var news: ShowNews?
     @State private var banner: [BannerItem] = []
     @State private var rows: [Shelf] = []
     @State private var isLoading = true
@@ -526,7 +528,7 @@ struct HomeView: View {
     /// The profile's rows: without what it removed from Continue Watching, and «قائمتي» right
     /// after it when the profile wants it on Home.
     private var homeRows: [Shelf] {
-        var out = rows.shown(to: store)
+        var out = rows.shown(to: store, news: news, filter: filter)
         if store.activeProfile?.settings?.myListOnHome == true, !myList.isEmpty {
             out.insert(Shelf(id: "mylist", title: "قائمتي", kind: .poster, items: myList),
                        at: out.first?.id == "continue" ? 1 : 0)
@@ -558,7 +560,7 @@ struct HomeView: View {
                     ForEach(homeRows) { shelf in
                         PageRow(id: shelf.id) {
                             ShelfView(shelf: shelf, client: client)
-                                .environment(\.marksNewEpisodes, shelf.id == "mylist")
+                                .environment(\.marksNewEpisodes, shelf.id == "mylist" || shelf.id == "continue")
                         }
                     }
                 }
@@ -775,14 +777,19 @@ struct TVMyListView: View {
     let client: PlexServerClient
 
     @Environment(ProfileStore.self) private var store
-    @Environment(MyListNews.self) private var news: MyListNews?
+    @Environment(ShowNews.self) private var news: ShowNews?
     @Environment(\.contentFilter) private var filter
     @State private var items: [PlexItem] = []
     @State private var loaded = false
 
     var body: some View {
-        let new = items.filter { news?.counts[$0.ratingKey] != nil }
-        let rest = items.filter { news?.counts[$0.ratingKey] == nil }
+        // What's new, then what the profile is watching, then the rest.
+        let new = items.filter { news?.of($0)?.badge != nil }
+            .sorted { (news?.of($0)?.newest ?? 0) > (news?.of($1)?.newest ?? 0) }
+        let others = items.filter { news?.of($0)?.badge == nil }
+        let watching = others.filter { store.isInContinue($0.ratingKey) && store.isUnwatched($0) }
+        let keys = Set(watching.map(\.ratingKey))
+        let rest = watching + others.filter { !keys.contains($0.ratingKey) }
         BrowseContainer(client: client) {
             ScrollViewReader { proxy in
                 ScrollView(.vertical) {
@@ -801,7 +808,7 @@ struct TVMyListView: View {
                                 .frame(maxWidth: .infinity)
                         }
                         if !new.isEmpty {
-                            header("فيها حلقات جديدة")
+                            header("نزل جديدها")
                             PosterGrid(items: new, client: client, scrollProxy: proxy, rowID: "mylist-new")
                             if !rest.isEmpty { header("باقي القائمة") }
                         }

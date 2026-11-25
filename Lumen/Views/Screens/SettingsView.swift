@@ -210,6 +210,10 @@ struct SettingsView: View {
             }
             SettingsCard("الرئيسية") {
                 SettingsSwitch("إظهار «قائمتي» في الرئيسية", detail: "بعد متابعة المشاهدة مباشرة", isOn: TVMyListView.onHome(store))
+                choice("ترتيب متابعة المشاهدة",
+                       selection: Binding(get: { store.activeProfile?.settings?.continueNewFirst ?? false },
+                                          set: { on in store.updateSettings { $0.continueNewFirst = on } }),
+                       options: [("الأحدث مشاهدة أولًا", false), ("الجديد أولًا", true)])
             }
             SettingsCard("سجل المشاهدة") {
                 SettingsRow("استيراد سجل المشاهدة من Plex", detail: "لهذا المستخدم فقط", arrow: true) { guarded { importing = true } }

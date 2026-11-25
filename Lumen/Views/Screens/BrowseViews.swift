@@ -65,6 +65,7 @@ struct LibraryView: View {
 
     @Environment(ProfileStore.self) private var store
     @Environment(\.contentFilter) private var filter
+    @Environment(ShowNews.self) private var news: ShowNews?
     @State private var tab: Tab = .suggested
     @State private var filterModel = LibraryFilterModel()
     @State private var banner: [BannerItem] = []
@@ -91,8 +92,11 @@ struct LibraryView: View {
                         if rows.isEmpty && loaded {
                             ContentUnavailableView("لا توجد عناصر", systemImage: "tray").frame(maxWidth: .infinity)
                         }
-                        ForEach(rows.shown(to: store)) { shelf in
-                            PageRow(id: shelf.id) { ShelfView(shelf: shelf, client: client) }
+                        ForEach(rows.shown(to: store, news: news, filter: filter, section: scope.section.key)) { shelf in
+                            PageRow(id: shelf.id) {
+                                ShelfView(shelf: shelf, client: client)
+                                    .environment(\.marksNewEpisodes, shelf.id == "continue")
+                            }
                         }
                     case .browse:
                         LibraryBrowseGrid(client: client, scope: scope, scrollProxy: proxy)
