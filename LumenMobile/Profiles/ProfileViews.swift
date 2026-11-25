@@ -29,7 +29,9 @@ struct ProfilePickerView: View {
     @State private var chosenID: String?
     @State private var choosingToEdit = false
 
-    private let circle: CGFloat = 104
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    private var circle: CGFloat { Metrics(sizeClass).isWide ? 150 : 104 }
 
     /// One centred row while it fits; a 3-column grid beyond that.
     private var columns: [GridItem] {

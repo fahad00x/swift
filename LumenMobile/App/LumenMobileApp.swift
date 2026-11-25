@@ -107,27 +107,57 @@ struct MainTabView: View {
 
     @Environment(ProfileStore.self) private var store
     @State private var newSections: [PlexDirectory] = []
+    /// «حلقة جديدة» / «موسم جديد» of the shows the profile follows.
+    @State private var news = ShowNews()
 
     var body: some View {
         let filter = ContentFilter(profile: profile, sections: sections)
-        TabView {
-            HomeView(client: client)
-                .tabItem { Label("الرئيسية", systemImage: "house.fill") }
-            MyListView(client: client)
-                .tabItem { Label("قائمتي", systemImage: "plus.rectangle.on.rectangle") }
-            SearchView(client: client)
-                .tabItem { Label("بحث", systemImage: "magnifyingglass") }
-            SettingsView(client: client, sections: sections)
-                .tabItem { Label("الإعدادات", systemImage: "gearshape.fill") }
-        }
+        tabs
         .environment(\.contentFilter, filter)
-        .task { checkForNewLibraries() }
+        .environment(news)
+        .task {
+            AppSessionClient.current = client
+            checkForNewLibraries()
+            news.refresh(client: client, store: store)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .plexPlaybackDidEnd)) { _ in news.refresh(client: client, store: store) }
+        .onReceive(NotificationCenter.default.publisher(for: .myListDidChange)) { _ in news.refresh(client: client, store: store) }
+        .onReceive(NotificationCenter.default.publisher(for: .localLibraryDidChange)) { _ in news.refresh(client: client, store: store) }
+        .onReceive(NotificationCenter.default.publisher(for: .profileDataDidChangeRemotely)) { _ in news.refresh(client: client, store: store) }
         .alert(newSections.count > 1 ? "فيه مكتبات جديدة" : "فيه مكتبة جديدة",
                isPresented: Binding(get: { !newSections.isEmpty }, set: { if !$0 { newSections = [] } })) {
             Button("إضافة") { acknowledge(enable: true) }
             Button("لا", role: .cancel) { acknowledge(enable: false) }
         } message: {
             Text("«\(newSections.map { ArabicFormat.isolated($0.title) }.joined(separator: "»، «"))» — تبي تضيفها لمكتباتك؟")
+        }
+    }
+
+    /// Tab bar on the iPhone; on the iPad (iPadOS 18+) the tab bar can also open as a sidebar.
+    @ViewBuilder
+    private var tabs: some View {
+        if #available(iOS 18.0, *) {
+            TabView {
+                Tab("الرئيسية", systemImage: "house.fill") { HomeView(client: client) }
+                Tab("قائمتي", systemImage: "plus.rectangle.on.rectangle") { MyListView(client: client) }
+                Tab("بحث", systemImage: "magnifyingglass") { SearchView(client: client) }
+                Tab("التنزيلات", systemImage: "arrow.down.circle") { DownloadsView(client: client) }
+                Tab("الإعدادات", systemImage: "gearshape.fill") { SettingsView(client: client, sections: sections) }
+            }
+            .tabViewStyle(.sidebarAdaptable)
+        } else {
+            TabView {
+                HomeView(client: client)
+                    .tabItem { Label("الرئيسية", systemImage: "house.fill") }
+                MyListView(client: client)
+                    .tabItem { Label("قائمتي", systemImage: "plus.rectangle.on.rectangle") }
+                SearchView(client: client)
+                    .tabItem { Label("بحث", systemImage: "magnifyingglass") }
+                DownloadsView(client: client)
+                    .tabItem { Label("التنزيلات", systemImage: "arrow.down.circle") }
+                SettingsView(client: client, sections: sections)
+                    .tabItem { Label("الإعدادات", systemImage: "gearshape.fill") }
+            }
         }
     }
 
@@ -149,13 +179,24 @@ struct MainTabView: View {
     }
 }
 
-/// Navigation stack used by every tab: items open their details page.
+/// Navigation stack used by every tab: items open their details page. Every push is by value
+/// (a page opened with `isPresented` can't push values itself), so a tab that opens pages from
+/// code passes its own `path`.
 struct BrowseStack<Content: View>: View {
     let client: PlexServerClient
+    var path: Binding<NavigationPath>?
     @ViewBuilder let content: () -> Content
 
+    init(client: PlexServerClient, path: Binding<NavigationPath>? = nil, @ViewBuilder content: @escaping () -> Content) {
+        self.client = client
+        self.path = path
+        self.content = content
+    }
+
+    @State private var ownPath = NavigationPath()
+
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: path ?? $ownPath) {
             content()
                 .navigationDestination(for: PlexItem.self) { item in
                     DetailView(client: client, entry: item)

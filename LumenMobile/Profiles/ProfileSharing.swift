@@ -93,6 +93,13 @@ final class LumenAppDelegate: NSObject, UIApplicationDelegate {
         configuration.delegateClass = LumenSceneDelegate.self
         return configuration
     }
+
+    /// The system woke the app for downloads that finished while it was closed.
+    func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String,
+                     completionHandler: @escaping () -> Void) {
+        guard identifier == Downloads.sessionID else { completionHandler(); return }
+        Downloads.shared.backgroundCompletion = completionHandler
+    }
 }
 
 final class LumenSceneDelegate: NSObject, UIWindowSceneDelegate {

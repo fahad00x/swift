@@ -12,11 +12,54 @@ struct LibraryGridView: View {
     @State private var loadedOnce = false
     @State private var serverOffset = 0
     @State private var exhausted = false
-
-
+    /// «تصفّح» (the server's pages) or «فلترة» (choices read on the device).
+    @State private var filtering = false
+    /// Kept with the page, so the choices stay when switching back and forth.
+    @State private var filterModel = LibraryFilterModel()
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
         ScrollView {
+            Picker("العرض", selection: $filtering) {
+                Text("تصفّح").tag(false)
+                Text("فلترة").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 360)
+            .padding(.horizontal, Metrics(sizeClass).margin)
+            .padding(.top, 4)
+
+            if filtering {
+                LibraryFilterSection(client: client, scope: scope, model: filterModel)
+                    .padding(.vertical, 8)
+            } else {
+                browse
+            }
+        }
+        .navigationTitle(scope.title)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                if !filtering {
+                    Menu {
+                        Picker("الترتيب", selection: $sort) {
+                            ForEach(LibrarySort.allCases) { Text($0.title).tag($0) }
+                        }
+                    } label: {
+                        Image(systemName: "arrow.up.arrow.down.circle")
+                    }
+                }
+            }
+        }
+        .task(id: sort) { await reload() }
+        .onReceive(NotificationCenter.default.publisher(for: .plexPlaybackDidEnd)) { _ in
+            Task { await reload() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .libraryShouldRefresh)) { _ in
+            Task { await reload() }
+        }
+    }
+
+    private var browse: some View {
             VStack(spacing: 16) {
                 if let total, total > 0 {
                     Text("\(ArabicFormat.digits(total)) عنصر")
@@ -34,26 +77,6 @@ struct LibraryGridView: View {
                 if isLoading { ProgressView().padding() }
             }
             .padding(.vertical, 8)
-        }
-        .navigationTitle(scope.title)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Picker("الترتيب", selection: $sort) {
-                        ForEach(LibrarySort.allCases) { Text($0.title).tag($0) }
-                    }
-                } label: {
-                    Image(systemName: "arrow.up.arrow.down.circle")
-                }
-            }
-        }
-        .task(id: sort) { await reload() }
-        .onReceive(NotificationCenter.default.publisher(for: .plexPlaybackDidEnd)) { _ in
-            Task { await reload() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .libraryShouldRefresh)) { _ in
-            Task { await reload() }
-        }
     }
 
     /// Cached first page right away, then the server's; more pages from the server on scroll.
@@ -106,6 +129,7 @@ struct SearchView: View {
     @State private var query = ""
     @State private var results: [PlexItem] = []
     @State private var isSearching = false
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
         BrowseStack(client: client) {
@@ -146,15 +170,25 @@ struct SearchView: View {
             Text("ابحث حسب النوع")
                 .font(.headline)
                 .foregroundStyle(.secondary)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 10)], alignment: .leading, spacing: 10) {
-                ForEach(SearchSuggestions.kinds, id: \.self) { kind in
-                    Button(kind) { query = kind }
-                        .buttonStyle(.bordered)
-                        .buttonBorderShape(.capsule)
+            if Metrics(sizeClass).isWide {
+                // Chips side by side at their own width, wrapping like words.
+                FlowLayout(spacing: 10) { kindButtons }
+            } else {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 10)], alignment: .leading, spacing: 10) {
+                    kindButtons
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
+        .padding(.horizontal, Metrics(sizeClass).margin)
+        .padding(.vertical)
+    }
+
+    private var kindButtons: some View {
+        ForEach(SearchSuggestions.kinds, id: \.self) { kind in
+            Button(kind) { query = kind }
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+        }
     }
 }

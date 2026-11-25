@@ -9,6 +9,7 @@ struct HomeView: View {
     @State private var isLoading = true
     @State private var isRefreshing = false
     @State private var shownSignature: String?
+    @Environment(ShowNews.self) private var news: ShowNews?
 
     var body: some View {
         BrowseStack(client: client) {
@@ -17,17 +18,20 @@ struct HomeView: View {
                     if !feed.featured.isEmpty {
                         HeroPager(items: feed.featured, client: client)
                     }
-                    if !feed.continueWatching.isEmpty {
-                        ShelfRow(title: "متابعة المشاهدة", items: feed.continueWatching, client: client,
+                    let continuing = ContinueActions.shown(feed.continueWatching, store: store, news: news, filter: filter)
+                    if !continuing.isEmpty {
+                        ShelfRow(title: "متابعة المشاهدة", items: continuing, client: client,
                                  style: .landscape, logos: feed.continueLogos)
+                            .environment(\.showsNewsMarks, true)
                     }
                     if !feed.myList.isEmpty {
                         ShelfRow(title: "قائمتي", items: feed.myList, client: client)
+                            .environment(\.showsNewsMarks, true)
                     }
                     ForEach(feed.rows) { row in
                         ShelfRow(title: row.title, items: row.items, client: client, ranked: row.ranked)
                     }
-                    if !isLoading && feed.isEmpty {
+                    if !isLoading && feed.isEmpty && continuing.isEmpty {
                         ContentUnavailableView("لا يوجد محتوى", systemImage: "film.stack",
                                                description: Text(filter.scopes.isEmpty
                                                                  ? "لا توجد مكتبات مفتوحة لهذا المستخدم. افتحها من الإعدادات ← إعدادات المستخدم."
@@ -112,6 +116,7 @@ struct HeroPager: View {
     let client: PlexServerClient
 
     @State private var selection: String?
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
         TabView(selection: $selection) {
@@ -121,7 +126,7 @@ struct HeroPager: View {
             }
         }
         .tabViewStyle(.page(indexDisplayMode: .always))
-        .frame(height: 560)
+        .frame(height: Metrics(sizeClass).heroHeight)
         .task(id: selection) {
             try? await Task.sleep(for: .seconds(7))
             guard !Task.isCancelled, items.count > 1, !PlaybackManager.shared.isPlaying else { return }
@@ -144,11 +149,18 @@ private struct HeroSlide: View {
     @Environment(ProfileStore.self) private var store
     @State private var showEpisode: PlexItem?
     @State private var starting = false
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
+        let metrics = Metrics(sizeClass)
         ZStack(alignment: .bottom) {
             Color.black
-            RemoteImage(url: client.imageURL(item.display.thumb ?? item.display.backdropPath, width: 900, height: 1350))
+            // A wide iPad shows the landscape backdrop; the iPhone the portrait poster.
+            if metrics.isWide {
+                RemoteImage(url: client.imageURL(item.display.backdropPath ?? item.display.thumb, width: 1920, height: 1080))
+            } else {
+                RemoteImage(url: client.imageURL(item.display.thumb ?? item.display.backdropPath, width: 900, height: 1350))
+            }
             LinearGradient(stops: [
                 .init(color: .black.opacity(0.35), location: 0),
                 .init(color: .clear, location: 0.25),
@@ -160,9 +172,9 @@ private struct HeroSlide: View {
                 Text(item.eyebrow)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.white.opacity(0.85))
-                TitleLogo(item: item.display, client: client, maxHeight: 90)
+                TitleLogo(item: item.display, client: client, maxHeight: metrics.logoHeight)
                 Text(metaLine)
-                    .font(.caption)
+                    .font(metrics.isWide ? .subheadline : .caption)
                     .foregroundStyle(.white.opacity(0.8))
                     .lineLimit(1)
 
@@ -190,9 +202,10 @@ private struct HeroSlide: View {
                             .foregroundStyle(.white)
                     }
                 }
+                .frame(maxWidth: metrics.actionsWidth)
                 .padding(.horizontal, 28)
             }
-            .padding(.bottom, 44)
+            .padding(.bottom, metrics.isWide ? 56 : 44)
         }
         .clipped()
         .task(id: item.id) {
@@ -248,7 +261,7 @@ struct TitleLogo: View {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFit()
-                    .frame(maxWidth: 280, maxHeight: maxHeight)
+                    .frame(maxWidth: maxHeight * 3.1, maxHeight: maxHeight)
             } else if failed || item.clearLogoPath == nil {
                 Text(item.title)
                     .font(.system(size: 32, weight: .heavy))

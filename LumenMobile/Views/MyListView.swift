@@ -21,6 +21,7 @@ struct MyListView: View {
                         .padding(.top, 80)
                 }
                 PosterGrid(items: visible, client: client)
+                    .environment(\.showsNewsMarks, true)
                     .padding(.vertical, 8)
             }
             .overlay { if !loaded { ProgressView() } }
@@ -57,6 +58,7 @@ struct LibrariesSettingsView: View {
 
     @Environment(ProfileStore.self) private var store
     @Environment(\.contentFilter) private var filter
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
         List {
@@ -81,6 +83,7 @@ struct LibrariesSettingsView: View {
                 Text("المكتبات المخفية تختفي من الرئيسية والبحث ومتابعة المشاهدة لهذا المستخدم فقط.")
             }
         }
+        .readableColumn(Metrics(sizeClass))
         .navigationTitle("المكتبات")
     }
 

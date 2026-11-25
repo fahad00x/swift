@@ -19,6 +19,9 @@ struct DetailView: View {
     @State private var audioSelection = -1
     @State private var subtitleSelection = -1
     @State private var shownStreams: (audio: Int, subtitle: Int) = (-1, -1)
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    private var metrics: Metrics { Metrics(sizeClass) }
 
     /// Movie or show the page describes.
     private var ratingKey: String {
@@ -34,20 +37,24 @@ struct DetailView: View {
             if let item {
                 VStack(alignment: .leading, spacing: 20) {
                     header(item)
-                    actions(item).padding(.horizontal, 16)
+                    actions(item)
+                        .frame(maxWidth: metrics.actionsWidth)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, metrics.margin)
                     if let summary = item.summary, !summary.isEmpty {
                         Text(summary)
                             .font(.callout)
                             .foregroundStyle(.white.opacity(0.85))
                             .lineLimit(summaryExpanded ? nil : 4)
                             .onTapGesture { withAnimation { summaryExpanded.toggle() } }
-                            .padding(.horizontal, 16)
+                            .frame(maxWidth: metrics.isWide ? 900 : .infinity, alignment: .leading)
+                            .padding(.horizontal, metrics.margin)
                     }
                     if !item.roles.isEmpty {
                         Text("بطولة: " + ArabicFormat.list(item.roles.prefix(4).map(\.tag)))
                             .font(.footnote)
                             .foregroundStyle(.secondary)
-                            .padding(.horizontal, 16)
+                            .padding(.horizontal, metrics.margin)
                     }
 
                     if item.isShow {
@@ -58,7 +65,7 @@ struct DetailView: View {
                     if !extras.isEmpty { extrasRow }
                     if !item.roles.isEmpty { castRow(item.roles) }
                     if let target = playTarget ?? (item.isShow ? nil : item), !target.media.isEmpty {
-                        fileInfo(target).padding(.horizontal, 16)
+                        fileInfo(target).padding(.horizontal, metrics.margin)
                     }
                 }
                 .padding(.bottom, 40)
@@ -94,7 +101,8 @@ struct DetailView: View {
     private func header(_ item: PlexItem) -> some View {
         ZStack(alignment: .bottom) {
             Color.black
-            RemoteImage(url: client.imageURL(item.backdropPath, width: 1600, height: 900))
+            RemoteImage(url: client.imageURL(item.backdropPath, width: metrics.isWide ? 1920 : 1600,
+                                              height: metrics.isWide ? 1080 : 900))
             LinearGradient(stops: [
                 .init(color: .clear, location: 0.3),
                 .init(color: .black.opacity(0.7), location: 0.7),
@@ -104,18 +112,18 @@ struct DetailView: View {
                 if let eyebrow {
                     Text(eyebrow).font(.caption.weight(.semibold)).foregroundStyle(.white.opacity(0.85))
                 }
-                TitleLogo(item: item, client: client, maxHeight: 90)
+                TitleLogo(item: item, client: client, maxHeight: metrics.logoHeight)
                 Text(infoLine(item))
-                    .font(.caption)
+                    .font(metrics.isWide ? .subheadline : .caption)
                     .foregroundStyle(.white.opacity(0.85))
                 if !badges.isEmpty {
                     HStack(spacing: 6) { ForEach(badges, id: \.self) { Badge(text: $0) } }
                 }
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, metrics.margin)
             .padding(.bottom, 8)
         }
-        .frame(height: 420)
+        .frame(height: metrics.detailHeaderHeight)
         .clipped()
     }
 
@@ -135,6 +143,11 @@ struct DetailView: View {
                 circleIcon(store.isOnMyList(item.ratingKey) ? "checkmark" : "plus")
             }
             .accessibilityLabel("قائمتي")
+
+            // A movie, or the episode Play starts.
+            if let target = item.isShow ? playTarget : item, target.isPlayable {
+                DownloadButton(item: target, client: client)
+            }
 
             Menu { moreMenu(item) } label: { circleIcon("ellipsis") }
         }
@@ -179,6 +192,13 @@ struct DetailView: View {
                 Label("التشغيل من البداية", systemImage: "arrow.counterclockwise")
             }
         }
+        if item.isShow, let season = seasons.first(where: { $0.ratingKey == selectedSeasonKey }) {
+            Button {
+                Task { await Downloads.shared.download(season, client: client) }
+            } label: {
+                Label("تحميل \(seasonTitle(season))", systemImage: "arrow.down.circle")
+            }
+        }
     }
 
     // MARK: Episodes
@@ -203,13 +223,15 @@ struct DetailView: View {
                     }
                 }
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, metrics.margin)
 
             let episodes = selectedSeasonKey.flatMap { episodesBySeason[$0] } ?? []
-            LazyVStack(alignment: .leading, spacing: 16) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 24, alignment: .top),
+                                     count: metrics.isWide ? 2 : 1),
+                      alignment: .leading, spacing: metrics.isWide ? 22 : 16) {
                 ForEach(episodes) { episode in
                     Button { play(episode) } label: {
-                        EpisodeRow(episode: episode, client: client)
+                        EpisodeRow(episode: episode, client: client, wide: metrics.isWide)
                     }
                     .buttonStyle(.plain)
                     .contextMenu {
@@ -222,16 +244,25 @@ struct DetailView: View {
                         Button { play(episode, fromBeginning: true) } label: {
                             Label("التشغيل من البداية", systemImage: "arrow.counterclockwise")
                         }
+                        if Downloads.shared.entry(episode.ratingKey) == nil {
+                            Button {
+                                Task { await Downloads.shared.download(episode, client: client) }
+                            } label: { Label("تحميل الحلقة", systemImage: "arrow.down.circle") }
+                        } else {
+                            Button(role: .destructive) { Downloads.shared.delete(episode.ratingKey) } label: {
+                                Label("حذف التنزيل", systemImage: "trash")
+                            }
+                        }
                     }
                 }
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, metrics.margin)
         }
     }
 
     private var extrasRow: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("العروض الدعائية والإضافات").font(.title3.weight(.bold)).padding(.horizontal, 16)
+            Text("العروض الدعائية والإضافات").font(.title3.weight(.bold)).padding(.horizontal, metrics.margin)
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(alignment: .top, spacing: 12) {
                     ForEach(extras) { extra in
@@ -251,14 +282,14 @@ struct DetailView: View {
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, metrics.margin)
             }
         }
     }
 
     private func castRow(_ roles: [PlexTag]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("طاقم التمثيل").font(.title3.weight(.bold)).padding(.horizontal, 16)
+            Text("طاقم التمثيل").font(.title3.weight(.bold)).padding(.horizontal, metrics.margin)
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(alignment: .top, spacing: 14) {
                     ForEach(roles.prefix(30)) { role in
@@ -278,7 +309,7 @@ struct DetailView: View {
                         .frame(width: 92)
                     }
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, metrics.margin)
             }
         }
     }
@@ -427,6 +458,7 @@ struct DetailView: View {
 private struct EpisodeRow: View {
     let episode: PlexItem
     let client: PlexServerClient
+    var wide = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -434,7 +466,7 @@ private struct EpisodeRow: View {
                 Color(white: 0.14)
                 RemoteImage(url: client.imageURL(episode.thumb ?? episode.art, width: 420, height: 236))
             }
-            .frame(width: 150, height: 84)
+            .frame(width: wide ? 224 : 150, height: wide ? 126 : 84)
             .artworkStatus(episode, triangleFraction: 0.12, barHeight: 3)
             .clipShape(RoundedRectangle(cornerRadius: 8))
 
@@ -444,8 +476,15 @@ private struct EpisodeRow: View {
                     .lineLimit(2)
                 let details = ArabicFormat.joined([ArabicFormat.date(plex: episode.originallyAvailableAt),
                                                    episode.duration.map(ArabicFormat.duration(ms:))].compactMap { $0 })
-                if !details.isEmpty {
-                    Text(details).font(.caption2).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    if let state = Downloads.shared.entry(episode.ratingKey)?.state {
+                        Image(systemName: state == .done ? "arrow.down.circle.fill" : "arrow.down.circle")
+                            .font(.caption2)
+                            .foregroundStyle(state == .failed ? Color.yellow : Theme.accent)
+                    }
+                    if !details.isEmpty {
+                        Text(details).font(.caption2).foregroundStyle(.secondary)
+                    }
                 }
                 if let summary = episode.summary, !summary.isEmpty {
                     Text(summary).font(.caption).foregroundStyle(.secondary).lineLimit(2)

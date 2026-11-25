@@ -9,6 +9,7 @@ struct LinkAccountView: View {
     @State private var errorMessage: String?
     @State private var attempt = 0
     @State private var copied = false
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
         ScrollView {
@@ -77,6 +78,9 @@ struct LinkAccountView: View {
                 }
             }
             .padding(24)
+            .frame(maxWidth: Metrics(sizeClass).isWide ? 540 : .infinity)
+            .frame(maxWidth: .infinity)
+            .padding(.top, Metrics(sizeClass).isWide ? 80 : 0)
         }
         .task(id: attempt) { await runLinkFlow() }
     }

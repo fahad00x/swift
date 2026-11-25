@@ -645,10 +645,13 @@ final class PlayerSession {
         StreamPreference.resolve(for: item, state: store.state(for: item.ratingKey), profile: store.activeProfile)
     }
 
+    /// Where a sidecar subtitle comes from (the iPhone: a downloaded copy); nil: the server.
+    var sidecarURL: ((PlexStream) -> URL?)?
+
     private func addExternalSubtitles() {
         let chosen = preferredStreams.subtitle?.id
         for stream in item.subtitleStreams {
-            guard let key = stream.key, let url = client.url(key, includeToken: true) else { continue }
+            guard let key = stream.key, let url = sidecarURL?(stream) ?? client.url(key, includeToken: true) else { continue }
             player.addSubtitle(url, title: stream.title ?? stream.displayTitle, language: stream.languageCode,
                                select: stream.id == chosen)
         }
