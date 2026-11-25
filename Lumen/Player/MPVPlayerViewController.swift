@@ -17,6 +17,9 @@ final class MPVPlayerViewController: UIViewController {
     private var lastTranslation: CGFloat = 0
     private var scrubStart: Double = 0
     private var lastMenu: CFTimeInterval = 0
+    private var lastVertical: CFTimeInterval = 0
+    /// Presses `pressesBegan` got (their recognizer has nothing left to do).
+    private var seenPresses = Set<UIPress.PressType>()
 
     var onDismiss: (() -> Void)?
 
@@ -62,6 +65,24 @@ final class MPVPlayerViewController: UIViewController {
         let menu = UITapGestureRecognizer(target: self, action: #selector(handleMenu))
         menu.allowedPressTypes = [NSNumber(value: UIPress.PressType.menu.rawValue)]
         view.addGestureRecognizer(menu)
+
+        // Up / Down: also as recognizers (tvOS 27.3 beta doesn't always bring the presses
+        // here) and as swipes on the touch surface.
+        for type in [UIPress.PressType.upArrow, .downArrow] {
+            let tap = UITapGestureRecognizer(target: self, action: #selector(handleArrow(_:)))
+            tap.allowedPressTypes = [NSNumber(value: type.rawValue)]
+            tap.cancelsTouchesInView = false
+            tap.delegate = self
+            view.addGestureRecognizer(tap)
+        }
+        for direction in [UISwipeGestureRecognizer.Direction.up, .down] {
+            let swipe = UISwipeGestureRecognizer(target: self, action: #selector(handleSwipe(_:)))
+            swipe.direction = direction
+            swipe.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirect.rawValue)]
+            swipe.cancelsTouchesInView = false
+            swipe.delegate = self
+            view.addGestureRecognizer(swipe)
+        }
 
         session.onRequestClose = { [weak self] in self?.close() }
         session.onRefocus = { [weak self] in self?.refocus(after: 0.05) }
@@ -118,6 +139,42 @@ final class MPVPlayerViewController: UIViewController {
 
     // MARK: Buttons and panels
 
+    @objc private func handleArrow(_ tap: UITapGestureRecognizer) {
+        let type: UIPress.PressType = tap.allowedPressTypes.contains(NSNumber(value: UIPress.PressType.upArrow.rawValue)) ? .upArrow : .downArrow
+        // pressesBegan had it.
+        if seenPresses.remove(type) != nil { return }
+        if type == .upArrow { upPressed() } else { downPressed() }
+    }
+
+    @objc private func handleSwipe(_ swipe: UISwipeGestureRecognizer) {
+        if swipe.direction == .up { upPressed() } else { downPressed() }
+    }
+
+    /// One move can come as a swipe and as a press.
+    private func isRepeat() -> Bool {
+        let now = CACurrentMediaTime()
+        defer { lastVertical = now }
+        return now - lastVertical < 0.25
+    }
+
+    /// Up: back to the skip button if it was left, else the buttons.
+    private func upPressed() {
+        guard !session.isPanelOpen, session.errorMessage == nil, !isRepeat() else { return }
+        if session.skipAction != nil, session.skipDeferred {
+            session.skipDeferred = false
+            session.showControls()
+        } else {
+            showButtons()
+        }
+    }
+
+    /// Down: from the skip button to the playhead (click pauses, not skips).
+    private func downPressed() {
+        guard !session.isPanelOpen, session.errorMessage == nil, !isRepeat() else { return }
+        if session.skipAction != nil { session.skipDeferred = true }
+        session.showControls()
+    }
+
     private func showButtons() {
         session.buttonsActive = true
         session.showControls(autoHide: false)
@@ -159,6 +216,7 @@ final class MPVPlayerViewController: UIViewController {
     private static let handledTypes: Set<UIPress.PressType> = [.select, .playPause, .leftArrow, .rightArrow, .upArrow, .downArrow, .menu]
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if let type = presses.first?.type { seenPresses.insert(type) }
         guard let press = presses.first, let type = Self.type(of: press), Self.handledTypes.contains(type) else {
             // Keyboard arrows / Return: the system turns them into remote presses.
             super.pressesBegan(presses, with: event)
@@ -191,7 +249,7 @@ final class MPVPlayerViewController: UIViewController {
 
         switch type {
         case .select:
-            if session.skipAction != nil { session.performSkip() } else { session.togglePause(from: .press) }
+            if session.skipAction != nil, !session.skipDeferred { session.performSkip() } else { session.togglePause(from: .press) }
         case .playPause:
             session.togglePause(from: .press)
         case .leftArrow:
@@ -199,9 +257,9 @@ final class MPVPlayerViewController: UIViewController {
         case .rightArrow:
             session.skip(by: PlaybackSettings.skipSeconds, from: .press)
         case .upArrow:
-            showButtons()
+            upPressed()
         case .downArrow:
-            session.showControls()
+            downPressed()
         default:
             break
         }
@@ -252,10 +310,17 @@ final class MPVPlayerViewController: UIViewController {
 
 extension MPVPlayerViewController: UIGestureRecognizerDelegate {
     func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
-        guard let pan = gesture as? UIPanGestureRecognizer else { return true }
+        guard let pan = gesture as? UIPanGestureRecognizer else { return !session.isPanelOpen }
         guard !session.isPanelOpen, session.errorMessage == nil else { return false }
         let velocity = pan.velocity(in: view)
         return abs(velocity.x) > abs(velocity.y)
+    }
+
+    /// With the buttons or a panel open, arrows and swipes move the focus.
+    func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldReceive press: UIPress) -> Bool { !session.isPanelOpen }
+
+    func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        gesture is UISwipeGestureRecognizer || other is UISwipeGestureRecognizer
     }
 }
 

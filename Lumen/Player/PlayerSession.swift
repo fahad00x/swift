@@ -90,7 +90,11 @@ final class PlayerSession {
     /// Plex transcode running for this player (stopped when it changes or the player closes).
     var transcodeSessionID: String?
     var scrubPosition: Double?
-    private(set) var skipAction: SkipAction?
+    private(set) var skipAction: SkipAction? {
+        didSet { if skipAction != oldValue { skipDeferred = false } }
+    }
+    /// Down from the skip button: it stays on screen but the click is the video's again.
+    var skipDeferred = false
     /// Intro / recap / credits: Plex markers, else chapter names (from Plex, then from the file via mpv).
     private(set) var segments: [SkipSegment] = []
     // Sources, best first: Plex markers, IntroDB / TheIntroDB, chapters mpv reads from the file,

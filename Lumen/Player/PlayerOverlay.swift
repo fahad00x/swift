@@ -46,11 +46,12 @@ struct PlayerOverlay: View {
                     Text(action.title)
                 }
                 .font(.system(size: 28, weight: .semibold))
-                .foregroundStyle(Color.black)
-                .environment(\.colorScheme, .light)
+                // White: a click skips. Left with Down: dark, the click is the video's.
+                .foregroundStyle(session.skipDeferred ? Color.white.opacity(0.85) : Color.black)
+                .environment(\.colorScheme, session.skipDeferred ? .dark : .light)
                 .padding(.horizontal, 36)
                 .padding(.vertical, 18)
-                .background(Capsule().fill(.white))
+                .background(Capsule().fill(session.skipDeferred ? Color.black.opacity(0.55) : .white))
                 .shadow(color: .black.opacity(0.5), radius: 20, y: 8)
             }
             .environment(\.layoutDirection, .leftToRight)
@@ -128,6 +129,8 @@ private struct PlayerChrome: View {
         }
         .onChange(of: session.buttonsActive) { _, active in
             focus = active ? .button(session.panel ?? panels.first ?? .subtitles) : nil
+            // The buttons were disabled until now: asked again once they can take it.
+            if active { restoreButtonFocus() }
         }
         .onChange(of: session.panel) { old, new in
             if let new {
@@ -143,7 +146,10 @@ private struct PlayerChrome: View {
             }
         }
         .onAppear {
-            if session.buttonsActive { focus = .button(panels.first ?? .subtitles) }
+            if session.buttonsActive {
+                focus = .button(panels.first ?? .subtitles)
+                restoreButtonFocus()
+            }
         }
 
     }
@@ -151,7 +157,7 @@ private struct PlayerChrome: View {
     /// A panel closed: its button takes the focus. Asked again while the panel fades out,
     /// since its rows can still hold the focus and leave it nowhere once they're gone.
     private func restoreButtonFocus() {
-        for delay in [0, 0.1, 0.3, 0.6] {
+        for delay in [0, 0.1, 0.3, 0.6, 1] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 guard session.buttonsActive, session.panel == nil else { return }
                 if case .button = focus { return }
