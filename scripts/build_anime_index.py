@@ -5,11 +5,15 @@ Sources: Fribb/anime-lists (ids) and manami-project/anime-offline-database (tags
 of the sites' scores; ODbL 1.0). With MAL_CLIENT_ID set (a free client id from
 myanimelist.net/apiconfig), ratings are MyAnimeList's own, from its official API.
 
+Also writes AnimeNames.json next to it: other Latin / Arabic titles of each anime, for search.
+
 Usage: build_anime_index.py <anime-list-full.json> <anime-offline-database-minified.json> <out.json>
 """
 import json
 import os
+import re
 import sys
+import unicodedata
 import urllib.request
 
 # Tags of the database → the genre shown in the app.
@@ -94,6 +98,72 @@ def main():
     with open(sys.argv[3], "w", encoding="utf-8") as file:
         json.dump(out, file, ensure_ascii=False, separators=(",", ":"))
     print({k: len(v) for k, v in out.items() if isinstance(v, dict)}, len(names), "genres")
+    write_names(ids, by_mal, os.path.join(os.path.dirname(sys.argv[3]), "AnimeNames.json"))
+
+
+def plain(name):
+    """For comparing names: letters and digits only."""
+    folded = unicodedata.normalize("NFKD", name).casefold()
+    return "".join(c for c in folded if c.isalnum())
+
+
+def searchable(name):
+    """Latin or Arabic letters (what can be typed on the keyboards people use)."""
+    letters = [c for c in name if c.isalpha()]
+    if not 2 <= len(letters) <= 70:
+        return False
+    if re.search(r"(?i)season|\b(part|cour)\b|\b(s|tv)\s?\d|\(\d{4}\)", name):
+        return False  # «… Season 2»: the show's own names are enough
+    return (all(ord(c) < 0x80 for c in letters)
+            or all(0x600 <= ord(c) < 0x700 and c not in "پچژگکی" for c in letters))
+
+
+def write_names(ids, by_mal, path):
+    """{"names": [[...]], "tvdb://1": 0, "m:tmdb://2": 1, "imdb://tt3": 0}: id → its list."""
+    rows = {}
+    for row in ids:
+        anime = by_mal.get(row.get("mal_id"))
+        if not anime or row.get("type") in ("SPECIAL", "MUSIC", "CM", "PV"):
+            continue
+        tmdb = row.get("themoviedb_id")
+        tmdb = tmdb if isinstance(tmdb, dict) else {"tv": tmdb}
+        keys = [("tvdb://", row.get("tvdb_id")), ("tmdb://", tmdb.get("tv")),
+                ("m:tmdb://", tmdb.get("movie")), ("imdb://", row.get("imdb_id"))]
+        for prefix, values in keys:
+            # A film listed under its series' TVDB id has names of its own.
+            if row.get("type") == "MOVIE" and prefix in ("tvdb://", "tmdb://"):
+                continue
+            for value in values if isinstance(values, list) else [values]:
+                if value:
+                    rows.setdefault(prefix + str(value), []).append((row, anime))
+    lists, number, out = [], {}, {}
+    for key, found in sorted(rows.items()):
+        found.sort(key=lambda p: ((p[0].get("season") or {}).get("tvdb") or 99, p[0]["mal_id"]))
+        names, seen = [], set()
+        for _, anime in found:
+            # Short names («AOT») only when they're upper case or digits: noise otherwise.
+            for name in [anime["title"]] + sorted(anime.get("synonyms", []), key=len):
+                mark = plain(name)
+                if mark in seen or not searchable(name):
+                    continue
+                if len(mark) < 4 and sum(c.isupper() for c in name) < 2 and name.isascii():
+                    continue
+                seen.add(mark)
+                names.append(name)
+                if len(names) >= 16:
+                    break
+            if len(names) >= 16:
+                break
+        if not names:
+            continue
+        mark = json.dumps(names, ensure_ascii=False)
+        if mark not in number:
+            number[mark] = len(lists)
+            lists.append(names)
+        out[key] = number[mark]
+    with open(path, "w", encoding="utf-8") as file:
+        json.dump({"names": lists, "ids": out}, file, ensure_ascii=False, separators=(",", ":"))
+    print("names", len(lists), "ids", len(out))
 
 
 main()

@@ -348,7 +348,10 @@ enum SearchMatch {
                 if d > limit, qs.count >= 4 { d = SearchText.distance(qs, run, limit: limit, prefix: true) }
                 guard d <= limit else { continue }
                 let whole = start == 0 && end == words.count - 1
-                best = max(best, 400 - 25 * d + (whole ? 40 : 0) - 5 * start)
+                // The very sounds, from the name's beginning («هنتر», Hunter): before another
+                // name a letter away («عنتر», 470).
+                best = max(best, d == 0 && start == 0 && run.count == qs.count ? (whole ? 485 : 475)
+                                                       : 400 - 25 * d + (whole ? 40 : 0) - 5 * start)
             }
         }
         return best
@@ -363,6 +366,8 @@ struct SearchEntry: @unchecked Sendable {
     let section: String
     /// Title first, then Plex's original title.
     let titles: [SearchField]
+    /// Anime: its other titles (`AnimeNames`).
+    let names: [SearchField]
     let people: [SearchField]
     let genres: [String]
     let countries: [String]
@@ -377,6 +382,8 @@ struct SearchEntry: @unchecked Sendable {
         var titles = [SearchField(item.title)].compactMap { $0 }
         if let original = SearchField(item.originalTitle), original.text != titles.first?.text { titles.append(original) }
         self.titles = titles
+        let own = Set(titles.map(\.compact))
+        names = AnimeNames.shared.names(of: item).compactMap { SearchField($0) }.filter { !own.contains($0.compact) }
         people = (item.roles + item.directors).prefix(8).compactMap { person in
             if let field = known[person.tag] { return field }
             let field = SearchField(person.tag)
@@ -400,6 +407,9 @@ struct SearchEntry: @unchecked Sendable {
         for (i, title) in titles.enumerated() {
             best = max(best, SearchMatch.score(query, title) - (i == 0 ? 0 : 5))
             if best >= 1000 { return best }
+        }
+        for name in names {
+            best = max(best, SearchMatch.score(query, name) - 10)
         }
         for alias in aliases[titleKey] ?? [] {
             best = max(best, SearchMatch.score(query, alias) - 10)

@@ -377,6 +377,7 @@ struct SearchView: View {
     let client: PlexServerClient
 
     @Environment(\.contentFilter) private var filter
+    @Environment(ProfileStore.self) private var store
     @State private var query = ""
     @State private var results: [PlexItem] = []
     /// Query the current results are for (no «no results» before a search has run).
@@ -430,7 +431,8 @@ struct SearchView: View {
             let found = (try? await client.search(q)) ?? []
             let visible = await filter.resolve(found, client: client)
             guard !Task.isCancelled else { return }
-            results = visible
+            // 4K and 1080p copies of a title: once.
+            results = visible.mergingCopies(store)
             searched = q
             // Remembered once the term stays put a moment (not every partial word typed).
             guard !visible.isEmpty else { return }

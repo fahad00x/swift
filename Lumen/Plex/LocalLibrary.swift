@@ -301,6 +301,8 @@ actor LocalLibrary {
     /// `aliases`: other titles by `AnimeTitles.key(for:)`.
     func search(server: String, query: String, sections keys: Set<String>?,
                 aliases: [String: [SearchField]] = [:], limit: Int = 120) async -> [PlexItem]? {
+        // Just launched: the libraries are still being read from disk (not the server's search).
+        if serverID == server { await loadTask?.value }
         guard serverID == server, index.sections.values.contains(where: \.complete) else { return nil }
         let all = await searchEntries()
         guard serverID == server, !Task.isCancelled else { return [] }

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Other titles of the anime on the device, from AniList (https://anilist.co): the Japanese
+/// Other titles of the anime that aren't in the app's own list (`AnimeNames`), from AniList (https://anilist.co): the Japanese
 /// title in Latin letters («Shingeki no Kyojin»), the English one («Attack on Titan») and short
 /// names («AOT», «SNK»), so search finds an anime by any of them. AniList also gives the
 /// MyAnimeList id, kept with the titles.
@@ -60,6 +60,8 @@ actor AnimeTitles {
         let pending = items.filter { item in
             let key = Self.key(for: item)
             guard seen.insert(key).inserted else { return false }
+            // Its names are in the app already.
+            guard AnimeNames.shared.names(of: item).isEmpty else { return false }
             guard let entry = entries[key] else { return true }
             return entry.anilistID == nil && Date().timeIntervalSince(entry.checked) > Self.retryAfter
         }

@@ -136,7 +136,7 @@ struct SearchView: View {
             let found = (try? await client.search(q)) ?? []
             let visible = await filter.resolve(found, client: client)
             guard !Task.isCancelled else { return }
-            results = visible
+            results = visible.mergingCopies(ProfileStore.shared)
         }
     }
 
