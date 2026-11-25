@@ -85,13 +85,10 @@ private struct PlayerChrome: View {
     @FocusState private var focus: Focus?
 
     enum Focus: Hashable {
-        case button(PlayerSession.Panel)
         case row(String)
     }
 
-    private var panels: [PlayerSession.Panel] {
-        PlayerSession.Panel.allCases.filter { $0 != .episodes || session.item.isEpisode }
-    }
+    private var panels: [PlayerSession.Panel] { session.buttonPanels }
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -127,41 +124,14 @@ private struct PlayerChrome: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottomTrailing)))
             }
         }
-        .onChange(of: session.buttonsActive) { _, active in
-            focus = active ? .button(session.panel ?? panels.first ?? .subtitles) : nil
-            // The buttons were disabled until now: asked again once they can take it.
-            if active { restoreButtonFocus() }
-        }
-        .onChange(of: session.panel) { old, new in
-            if let new {
-                DispatchQueue.main.async { focus = .row(selectedRowID(new) ?? "") }
-            } else if old != nil, session.buttonsActive {
-                restoreButtonFocus()
-            }
-        }
-        // Swiped / pressed out of the panel onto the buttons: the panel closes.
-        .onChange(of: focus) { old, new in
-            if case .row = old, case .button(let button) = new, session.panel != nil {
-                session.closePanel(focusedOn: button)
-            }
-        }
-        .onAppear {
-            if session.buttonsActive {
-                focus = .button(panels.first ?? .subtitles)
-                restoreButtonFocus()
-            }
-        }
-
-    }
-
-    /// A panel closed: its button takes the focus. Asked again while the panel fades out,
-    /// since its rows can still hold the focus and leave it nowhere once they're gone.
-    private func restoreButtonFocus() {
-        for delay in [0, 0.1, 0.3, 0.6, 1] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                guard session.buttonsActive, session.panel == nil else { return }
-                if case .button = focus { return }
-                focus = .button(session.lastPanel ?? panels.first ?? .subtitles)
+        .onChange(of: session.panel) { _, new in
+            // A panel opened: its current choice takes the focus (asked again while it fades in).
+            guard let new else { focus = nil; return }
+            for delay in [0, 0.15, 0.4, 0.8] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    guard session.panel == new, focus == nil else { return }
+                    focus = .row(selectedRowID(new) ?? "")
+                }
             }
         }
     }
@@ -203,17 +173,10 @@ private struct PlayerChrome: View {
     private var buttons: some View {
         HStack(spacing: 24) {
             ForEach(panels) { panel in
-                Button { session.panel = panel } label: {
-                    Image(systemName: icon(panel))
-                }
-                .buttonStyle(GlassRoundButtonStyle(open: session.panel == panel))
-                .focused($focus, equals: .button(panel))
-                .disabled(!session.buttonsActive)
+                RoundGlassIcon(icon: icon(panel), open: session.panel == panel,
+                               focused: session.buttonsActive && session.panel == nil && session.selectedButton == panel)
             }
         }
-        .focusSection()
-        // Where the focus lands when the player screen asks for it again (a panel closed).
-        .defaultFocus($focus, .button(session.lastPanel ?? panels.first ?? .subtitles))
     }
 
     private func icon(_ panel: PlayerSession.Panel) -> String {
@@ -387,37 +350,31 @@ private struct PlayerChrome: View {
 
 /// Infuse's round glass button: dark smoked glass with a light top edge; focused, lighter
 /// glass with a bright rim and a slight lift. The glyph stays white either way.
-private struct GlassRoundButtonStyle: ButtonStyle {
-    var open: Bool
+private struct RoundGlassIcon: View {
+    let icon: String
+    let open: Bool
+    let focused: Bool
 
-    func makeBody(configuration: Configuration) -> some View { RoundBody(configuration: configuration, open: open) }
-
-    private struct RoundBody: View {
-        let configuration: ButtonStyleConfiguration
-        let open: Bool
-        @Environment(\.isFocused) private var isFocused
-
-        var body: some View {
-            configuration.label
-                .font(.system(size: 28, weight: .medium))
-                .foregroundStyle(.white.opacity(isFocused ? 1 : 0.92))
-                .frame(width: 63, height: 63)
-                .background {
-                    Circle().fill(.ultraThinMaterial)
-                    Circle().fill(isFocused ? Color.white.opacity(0.3) : Color.black.opacity(open ? 0.25 : 0.42))
-                    // The shine: a light rim, strongest at the top.
-                    Circle().strokeBorder(
-                        LinearGradient(colors: [.white.opacity(isFocused ? 0.75 : 0.32),
-                                                .white.opacity(isFocused ? 0.25 : 0.04),
-                                                .white.opacity(isFocused ? 0.45 : 0.12)],
-                                       startPoint: .top, endPoint: .bottom),
-                        lineWidth: isFocused ? 1.6 : 1)
-                }
-                .environment(\.colorScheme, .dark)
-                .scaleEffect(configuration.isPressed ? 0.95 : (isFocused ? 1.1 : 1))
-                .shadow(color: .black.opacity(isFocused ? 0.35 : 0.15), radius: isFocused ? 12 : 4, y: isFocused ? 6 : 2)
-                .animation(.easeOut(duration: 0.15), value: isFocused)
-        }
+    var body: some View {
+        Image(systemName: icon)
+            .font(.system(size: 28, weight: .medium))
+            .foregroundStyle(.white.opacity(focused ? 1 : 0.92))
+            .frame(width: 63, height: 63)
+            .background {
+                Circle().fill(.ultraThinMaterial)
+                Circle().fill(focused ? Color.white.opacity(0.3) : Color.black.opacity(open ? 0.25 : 0.42))
+                // The shine: a light rim, strongest at the top.
+                Circle().strokeBorder(
+                    LinearGradient(colors: [.white.opacity(focused ? 0.75 : 0.32),
+                                            .white.opacity(focused ? 0.25 : 0.04),
+                                            .white.opacity(focused ? 0.45 : 0.12)],
+                                   startPoint: .top, endPoint: .bottom),
+                    lineWidth: focused ? 1.6 : 1)
+            }
+            .environment(\.colorScheme, .dark)
+            .scaleEffect(focused ? 1.1 : 1)
+            .shadow(color: .black.opacity(focused ? 0.35 : 0.15), radius: focused ? 12 : 4, y: focused ? 6 : 2)
+            .animation(.easeOut(duration: 0.15), value: focused)
     }
 }
 

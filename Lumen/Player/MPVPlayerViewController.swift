@@ -125,7 +125,7 @@ final class MPVPlayerViewController: UIViewController {
     override var canBecomeFirstResponder: Bool { true }
 
     override var preferredFocusEnvironments: [UIFocusEnvironment] {
-        session.isPanelOpen ? [overlayHost] : [self]
+        session.panel != nil ? [overlayHost] : [self]
     }
 
     @objc private func didEnterBackground() {
@@ -170,12 +170,15 @@ final class MPVPlayerViewController: UIViewController {
 
     /// Down: from the skip button to the playhead (click pauses, not skips).
     private func downPressed() {
-        guard !session.isPanelOpen, session.errorMessage == nil, !isRepeat() else { return }
+        guard session.panel == nil, session.errorMessage == nil, !isRepeat() else { return }
+        if session.buttonsActive { hideButtons(); return }
         if session.skipAction != nil { session.skipDeferred = true }
         session.showControls()
     }
 
     private func showButtons() {
+        session.selectedButton = session.lastPanel.flatMap { session.buttonPanels.contains($0) ? $0 : nil }
+            ?? session.buttonPanels.first ?? .subtitles
         session.buttonsActive = true
         session.showControls(autoHide: false)
         refocus(after: 0.05)
@@ -229,12 +232,24 @@ final class MPVPlayerViewController: UIViewController {
             return
         }
 
+        // The buttons: the player moves between them itself (the panels use the system focus).
+        if session.buttonsActive, session.panel == nil {
+            switch type {
+            // Arabic layout: the next button is on the left.
+            case .leftArrow: session.moveButton(by: 1)
+            case .rightArrow: session.moveButton(by: -1)
+            case .select: session.panel = session.selectedButton
+            case .playPause: session.togglePause(from: .press)
+            case .downArrow: hideButtons()
+            default: break
+            }
+            return
+        }
+
         if session.isPanelOpen {
             switch type {
             case .playPause:
                 session.togglePause(from: .press)
-            case .downArrow where session.panel == nil:
-                hideButtons()
             default:
                 // Arrows move the focus, click picks (the buttons and panels handle them).
                 super.pressesBegan(presses, with: event)
@@ -280,10 +295,21 @@ final class MPVPlayerViewController: UIViewController {
         guard let press = presses.first, let type = Self.type(of: press) else { return true }
         if type == .menu { return false }
         if !Self.handledTypes.contains(type) { return true }
-        return session.isPanelOpen && [.upArrow, .downArrow, .leftArrow, .rightArrow, .select].contains(type)
+        return session.panel != nil && [.upArrow, .downArrow, .leftArrow, .rightArrow, .select].contains(type)
     }
 
     @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
+        // Between the buttons: a step for every so much of a swipe.
+        if session.buttonsActive {
+            let x = gesture.translation(in: view).x
+            if gesture.state == .began { lastTranslation = x }
+            let step = view.bounds.width / 5
+            while gesture.state == .changed, abs(x - lastTranslation) >= step {
+                session.moveButton(by: x < lastTranslation ? 1 : -1)
+                lastTranslation += x < lastTranslation ? -step : step
+            }
+            return
+        }
         guard session.duration > 0 else { return }
         let width = max(view.bounds.width, 1)
         switch gesture.state {
@@ -310,14 +336,14 @@ final class MPVPlayerViewController: UIViewController {
 
 extension MPVPlayerViewController: UIGestureRecognizerDelegate {
     func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
-        guard let pan = gesture as? UIPanGestureRecognizer else { return !session.isPanelOpen }
-        guard !session.isPanelOpen, session.errorMessage == nil else { return false }
+        guard let pan = gesture as? UIPanGestureRecognizer else { return session.panel == nil }
+        guard session.panel == nil, session.errorMessage == nil else { return false }
         let velocity = pan.velocity(in: view)
         return abs(velocity.x) > abs(velocity.y)
     }
 
-    /// With the buttons or a panel open, arrows and swipes move the focus.
-    func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldReceive press: UIPress) -> Bool { !session.isPanelOpen }
+    /// With a panel open, arrows and swipes move the focus.
+    func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldReceive press: UIPress) -> Bool { session.panel == nil }
 
     func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
         gesture is UISwipeGestureRecognizer || other is UISwipeGestureRecognizer

@@ -56,13 +56,19 @@ final class PlayerSession {
         didSet {
             if let panel { lastPanel = panel }
             // However it closed (a choice too), the focus needs a place.
-            if panel == nil, oldValue != nil { onRefocus?() }
+            if panel != oldValue { onRefocus?() }
         }
     }
-    /// The focus left the open panel for a button: the panel closes, the focus stays there.
-    func closePanel(focusedOn button: Panel) {
-        lastPanel = button
-        panel = nil
+    /// The buttons on screen, in order.
+    var buttonPanels: [Panel] { Panel.allCases.filter { $0 != .episodes || item.isEpisode } }
+    /// The button the remote is on while `buttonsActive` (not a system focus: on tvOS 27.3
+    /// beta it didn't reach the buttons).
+    var selectedButton: Panel = .subtitles
+
+    func moveButton(by step: Int) {
+        let list = buttonPanels
+        let index = list.firstIndex(of: selectedButton) ?? 0
+        selectedButton = list[min(max(0, index + step), list.count - 1)]
     }
     /// The button focus returns to when its panel closes.
     private(set) var lastPanel: Panel?
