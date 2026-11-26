@@ -14,6 +14,7 @@ struct LumenApp: App {
                 .environment(session.profiles)
                 .preferredColorScheme(.dark)
                 .tint(Color(red: 1.0, green: 0.68, blue: 0.16))
+                .task { DolbySpikeAuto.runIfAsked(session) } // SPIKE
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
