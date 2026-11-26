@@ -1,17 +1,50 @@
-"""Generates the tvOS Brand Assets (layered app icons + top shelf) for Lumen.
+"""Generates Lumen's app icons: the folded-light "L" mark.
 
-Usage: python3 scripts/make_icons.py Lumen/Assets.xcassets   (needs Pillow)
+tvOS  : layered App Icon imagestacks (Back / Middle / Front, for the parallax effect) + Top Shelf images
+iOS   : the 1024 App Store / home-screen icon
+
+Usage (needs Pillow):
+    python3 scripts/make_icons.py Lumen/Assets.xcassets [LumenMobile/Assets.xcassets]
+
+The mark: a ribbon L, lit from above (bright at the top, deepening toward the fold),
+folding into a floor ribbon that catches the light. All geometry is in a 1024 box.
 """
 import json, os, sys
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
-ROOT = sys.argv[1]  # path to Assets.xcassets
-FONT = "/usr/share/fonts/opentype/inter/InterDisplay-Bold.otf"
+TV_ROOT = sys.argv[1]
+IOS_ROOT = sys.argv[2] if len(sys.argv) > 2 else None
+FONTS = [
+    "/usr/share/fonts/opentype/inter/InterDisplay-Bold.otf",
+    os.path.expanduser("~/Library/Fonts/InterDisplay-Bold.otf"),
+    "/Library/Fonts/InterDisplay-Bold.otf",
+    "/System/Library/Fonts/SFNS.ttf",
+    "/System/Library/Fonts/Helvetica.ttc",
+]
 INFO = {"info": {"author": "xcode", "version": 1}}
-BRAND = os.path.join(ROOT, "App Icon & Top Shelf Image.brandassets")
+BRAND = os.path.join(TV_ROOT, "App Icon & Top Shelf Image.brandassets")
 
-AMBER = (255, 174, 41)
-DEEP = (12, 10, 22)
+BG = (8, 8, 10)
+WARM = (70, 36, 4)
+AMBER_TOP = (255, 196, 70)
+AMBER = (240, 150, 20)
+AMBER_LO = (150, 80, 4)
+FLOOR_A = (255, 184, 48)
+FLOOR_B = (255, 205, 90)
+SS = 4  # supersampling factor
+
+X0, X1, X2 = 318, 524, 770
+YT, YB, YH = 150, 868, 662
+VERT = [(X0, YT + 70), (X1, YT), (X1, YB), (X0, YB)]
+FLOOR = [(X0, YB), (X1, YH), (X2 + 70, YH), (X2, YB)]
+
+
+def font(size):
+    for f in FONTS:
+        if os.path.exists(f):
+            return ImageFont.truetype(f, size)
+    raise SystemExit("No bold font found; add one to FONTS")
+
 
 def write_json(path, data):
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -19,63 +52,108 @@ def write_json(path, data):
         json.dump(data, f, indent=2)
         f.write("\n")
 
-def back(w, h):
-    """Opaque background: deep navy with a warm amber glow from the lower left."""
-    img = Image.new("RGB", (w, h), DEEP)
-    glow = Image.new("L", (w, h), 0)
-    d = ImageDraw.Draw(glow)
-    r = int(max(w, h) * 0.75)
-    cx, cy = int(w * 0.18), int(h * 1.05)
-    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=255)
-    glow = glow.filter(ImageFilter.GaussianBlur(max(w, h) * 0.18))
-    warm = Image.new("RGB", (w, h), (120, 52, 20))
-    img = Image.composite(warm, img, glow)
-    glow2 = Image.new("L", (w, h), 0)
-    d = ImageDraw.Draw(glow2)
-    r2 = int(max(w, h) * 0.45)
-    cx2, cy2 = int(w * 0.95), int(h * -0.1)
-    d.ellipse([cx2 - r2, cy2 - r2, cx2 + r2, cy2 + r2], fill=150)
-    glow2 = glow2.filter(ImageFilter.GaussianBlur(max(w, h) * 0.15))
-    cool = Image.new("RGB", (w, h), (40, 46, 110))
-    return Image.composite(cool, img, glow2)
 
-def middle(w, h):
-    """Soft light rays behind the play mark (transparent)."""
-    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    s = min(w, h)
-    cx, cy = w / 2, h / 2
-    r = s * 0.42
-    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=AMBER + (90,))
-    return img.filter(ImageFilter.GaussianBlur(s * 0.09))
+def grad(size, stops, axis, a, b):
+    w, h = size
+    n = h if axis == "y" else w
+    line = []
+    for i in range(n):
+        t = min(1, max(0, (i - a) / max(1, b - a)))
+        for j in range(len(stops) - 1):
+            t0, c0 = stops[j]
+            t1, c1 = stops[j + 1]
+            if t <= t1 or j == len(stops) - 2:
+                u = 0 if t1 == t0 else min(1, max(0, (t - t0) / (t1 - t0)))
+                line.append(tuple(int(c0[k] + (c1[k] - c0[k]) * u) for k in range(3)))
+                break
+    strip = Image.new("RGB", (1, n) if axis == "y" else (n, 1))
+    strip.putdata(line)
+    return strip.resize((w, h))
 
-def play_mark(d, cx, cy, s, color):
-    """Rounded play triangle inside a ring."""
-    ring = s * 0.30
-    width = max(2, int(s * 0.035))
-    d.ellipse([cx - ring, cy - ring, cx + ring, cy + ring], outline=color, width=width)
-    t = s * 0.14
-    pts = [(cx - t * 0.7, cy - t), (cx - t * 0.7, cy + t), (cx + t * 1.05, cy)]
-    d.polygon(pts, fill=color)
 
-def front(w, h):
-    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    play_mark(d, w / 2, h / 2, min(w, h), (255, 255, 255, 255))
-    return img
+def poly(size, pts):
+    m = Image.new("L", size, 0)
+    ImageDraw.Draw(m).polygon(pts, fill=255)
+    return m
+
+
+def background(w, h):
+    img = Image.new("RGB", (w, h), BG)
+    s = max(w, h)
+    g = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(g).ellipse([w * .5 - s * .55, h * .95 - s * .35, w * .5 + s * .55, h * .95 + s * .35], fill=60)
+    g = g.filter(ImageFilter.GaussianBlur(s * .12))
+    return Image.composite(Image.new("RGB", (w, h), WARM), img, g)
+
+
+def mark_layers(W, H, ox, oy, S):
+    """Return (vertical, floor) RGBA layers of the mark placed in an S box at (ox, oy)."""
+    k = S / 1024.0
+    P = lambda pts: [(ox + x * k, oy + y * k) for x, y in pts]
+    size = (W, H)
+
+    # vertical ribbon, lit from the top
+    vmask = poly(size, P(VERT))
+    vcol = grad(size, [(0, AMBER_TOP), (0.35, AMBER), (1, AMBER_LO)], "y", int(oy + YT * k), int(oy + YB * k))
+    # shadow the floor ribbon casts where it folds over
+    sh = Image.new("L", size, 0)
+    d = ImageDraw.Draw(sh)
+    for i in range(40):
+        y = YH - 230 + i * 230 / 40
+        d.rectangle(P([(X0, y), (X1, y + 230 / 40 + 1)]), fill=int(150 * (i / 39) ** 2.4))
+    vcol = Image.composite(Image.new("RGB", size, (0, 0, 0)), vcol, sh)
+    vert = vcol.convert("RGBA")
+    vert.putalpha(vmask)
+
+    # floor ribbon, catches the light, with a soft crease at the fold
+    fmask = poly(size, P(FLOOR))
+    fcol = grad(size, [(0, FLOOR_A), (1, FLOOR_B)], "x", int(ox + X0 * k), int(ox + (X2 + 70) * k))
+    seam = Image.new("L", size, 0)
+    ImageDraw.Draw(seam).line(P([(X0, YB), (X1, YH)]), fill=110, width=max(1, int(10 * k)))
+    seam = seam.filter(ImageFilter.GaussianBlur(6 * k))
+    fcol = Image.composite(Image.new("RGB", size, (60, 30, 0)), fcol, seam)
+    floor = fcol.convert("RGBA")
+    floor.putalpha(fmask)
+    return vert, floor
+
+
+def render(w, h, place, layers=("back", "vert", "floor")):
+    """place(W, H) -> (ox, oy, S) in supersampled pixels."""
+    W, H = w * SS, h * SS
+    ox, oy, S = place(W, H)
+    vert, floor = mark_layers(W, H, ox, oy, S)
+    img = background(W, H).convert("RGBA") if "back" in layers else Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    if "vert" in layers:
+        img.alpha_composite(vert)
+    if "floor" in layers:
+        img.alpha_composite(floor)
+    img = img.resize((w, h), Image.LANCZOS)
+    return img.convert("RGB") if "back" in layers else img
+
+
+def tv_place(W, H):
+    S = int(H * 0.86)
+    return (W - S) // 2, (H - S) // 2 + int(H * 0.01), S
+
+
+def square_place(W, H):
+    return 0, 0, W
+
 
 def top_shelf(w, h):
-    img = back(w, h).convert("RGBA")
-    mid = middle(h, h)
-    img.alpha_composite(mid, (int(w * 0.12), 0))
+    W, H = w * 2, h * 2
+    S = int(H * 0.78)
+    x = int(W * 0.14)
+    img = background(W, H).convert("RGBA")
+    vert, floor = mark_layers(W, H, x, (H - S) // 2, S)
+    img.alpha_composite(vert)
+    img.alpha_composite(floor)
     d = ImageDraw.Draw(img)
-    play_mark(d, int(w * 0.12) + h / 2, h / 2, h * 0.9, (255, 255, 255, 255))
-    font = ImageFont.truetype(FONT, int(h * 0.30))
-    sub = ImageFont.truetype(FONT, int(h * 0.075))
-    x = int(w * 0.12) + h + int(h * 0.05)
-    d.text((x, h * 0.28), "Lumen", font=font, fill=(255, 255, 255, 255))
-    d.text((x + h * 0.02, h * 0.66), "PLEX  ·  4K  ·  HDR", font=sub, fill=AMBER + (255,))
-    return img.convert("RGB")
+    tx = x + S + int(H * 0.02)
+    d.text((tx, H * 0.27), "Lumen", font=font(int(H * 0.30)), fill=(255, 255, 255, 255))
+    d.text((tx + H * 0.015, H * 0.66), "PLEX  ·  4K  ·  HDR", font=font(int(H * 0.065)), fill=FLOOR_A + (255,))
+    return img.resize((w, h), Image.LANCZOS).convert("RGB")
+
 
 def imageset(path, images, scales):
     os.makedirs(path, exist_ok=True)
@@ -86,18 +164,21 @@ def imageset(path, images, scales):
         entries.append({"idiom": "tv", "scale": scale, "filename": name})
     write_json(os.path.join(path, "Contents.json"), {"images": entries, **INFO})
 
+
 def imagestack(name, sizes_by_scale):
     stack = os.path.join(BRAND, f"{name}.imagestack")
-    layers = [("Front", front), ("Middle", middle), ("Back", back)]
-    for layer, fn in layers:
+    layers = [("Front", ("floor",)), ("Middle", ("vert",)), ("Back", ("back",))]
+    for layer, parts in layers:
         lp = os.path.join(stack, f"{layer}.imagestacklayer")
         write_json(os.path.join(lp, "Contents.json"), INFO)
         imageset(os.path.join(lp, "Content.imageset"),
-                 [fn(w, h) for (_, (w, h)) in sizes_by_scale], [s for (s, _) in sizes_by_scale])
+                 [render(w, h, tv_place, parts) for (_, (w, h)) in sizes_by_scale],
+                 [s for (s, _) in sizes_by_scale])
     write_json(os.path.join(stack, "Contents.json"),
                {"layers": [{"filename": f"{l}.imagestacklayer"} for l, _ in layers], **INFO})
 
-write_json(os.path.join(ROOT, "Contents.json"), INFO)
+
+write_json(os.path.join(TV_ROOT, "Contents.json"), INFO)
 imagestack("App Icon", [("1x", (400, 240)), ("2x", (800, 480))])
 imagestack("App Icon - App Store", [("1x", (1280, 768))])
 imageset(os.path.join(BRAND, "Top Shelf Image.imageset"),
@@ -113,4 +194,13 @@ write_json(os.path.join(BRAND, "Contents.json"), {
     ],
     **INFO,
 })
+
+if IOS_ROOT:
+    icon_set = os.path.join(IOS_ROOT, "AppIcon.appiconset")
+    os.makedirs(icon_set, exist_ok=True)
+    render(1024, 1024, square_place).save(os.path.join(icon_set, "icon-1024.png"))
+    write_json(os.path.join(icon_set, "Contents.json"), {
+        "images": [{"filename": "icon-1024.png", "idiom": "universal", "platform": "ios", "size": "1024x1024"}],
+        **INFO,
+    })
 print("ok")
