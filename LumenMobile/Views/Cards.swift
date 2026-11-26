@@ -112,8 +112,29 @@ struct PosterCard: View {
     @Environment(ProfileStore.self) private var store
 
     var body: some View {
+        if let rank {
+            // The number beside the poster (right in Arabic, like Netflix), not over it:
+            // posters from the server have 1080p / rating badges printed in the bottom corners.
+            let number = RankNumber(rank: rank, posterWidth: width ?? 118)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .bottom, spacing: -number.overlap) {
+                    number
+                    artwork.frame(width: width)
+                }
+                captions.padding(.leading, number.width - number.overlap)
+            }
+            .frame(width: width.map { $0 + number.width - number.overlap })
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                artwork
+                captions
+            }
+            .frame(width: width)
+        }
+    }
+
+    @ViewBuilder private var captions: some View {
         VStack(alignment: .leading, spacing: 6) {
-            artwork
             Text(item.cardTitle)
                 .font(.caption.weight(.semibold))
                 .lineLimit(1)
@@ -124,7 +145,6 @@ struct PosterCard: View {
                     .lineLimit(1)
             }
         }
-        .frame(width: width)
     }
 
     private var artwork: some View {
@@ -136,16 +156,6 @@ struct PosterCard: View {
             RemoteImage(url: client.posterURL(item))
         }
         .aspectRatio(2 / 3, contentMode: .fit)
-        .overlay(alignment: .bottomLeading) {
-            if let rank {
-                Text(ArabicFormat.digits(rank))
-                    .font(.system(size: 54, weight: .heavy, design: .rounded))
-                    .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.7), radius: 6)
-                    .padding(.horizontal, 8)
-                    .offset(y: 10)
-            }
-        }
         .artworkStatus(item)
         .overlay {
             if let cornerText {
@@ -180,6 +190,37 @@ struct PosterCard: View {
         let genres = ArabicFormat.genres(item.genres.map(\.tag), limit: 2)
         if !genres.isEmpty { return ArabicFormat.list(genres) }
         return item.year.map { ArabicFormat.digits($0) }
+    }
+}
+
+/// Top 10 number beside a poster: large, dark with a light outline (Netflix), the poster
+/// slightly over its edge. Two digits get a wider box so «١٠» is not cut.
+private struct RankNumber: View {
+    let rank: Int
+    let posterWidth: CGFloat
+
+    var width: CGFloat { posterWidth * (rank >= 10 ? 0.85 : 0.55) }
+    var overlap: CGFloat { posterWidth * 0.14 }
+    private var size: CGFloat { posterWidth * 1.1 }
+
+    var body: some View {
+        let text = Text(ArabicFormat.digits(rank))
+            .font(.system(size: size, weight: .black, design: .rounded))
+        ZStack {
+            // Outline: the number offset in eight directions, the fill on top.
+            ForEach(0..<8, id: \.self) { i in
+                let angle = Double(i) * .pi / 4
+                text.foregroundStyle(Color(white: 0.6))
+                    .offset(x: cos(angle) * 2.5, y: sin(angle) * 2.5)
+            }
+            text.foregroundStyle(Color(white: 0.06))
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.5)
+        .fixedSize()
+        .frame(width: width, alignment: .trailing)
+        .offset(y: size * 0.16)
+        .accessibilityLabel("المركز \(ArabicFormat.digits(rank))")
     }
 }
 
