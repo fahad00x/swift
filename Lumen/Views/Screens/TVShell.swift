@@ -480,17 +480,35 @@ struct HomeView: View {
 
     private var isEmpty: Bool { banner.isEmpty && rows.isEmpty }
     @State private var myList: [PlexItem] = []
+    /// Rows the profile added (Settings → «صفوف الرئيسية»).
+    @State private var customRows: [Shelf] = []
 
-    /// The profile's rows: without what it removed from Continue Watching, and «قائمتي» right
-    /// after it when the profile wants it on Home.
-    private var homeRows: [Shelf] {
+    private var layout: [HomeRowConfig]? { store.activeProfile?.settings?.homeRows }
+
+    /// The app's rows: without what the profile removed from Continue Watching, «قائمتي» right
+    /// after it when the profile wants it on Home, and the rows it added.
+    private var baseRows: [Shelf] {
         var out = rows.shown(to: store, news: news, filter: filter)
         if store.activeProfile?.settings?.myListOnHome == true, !myList.isEmpty {
             out.insert(Shelf(id: "mylist", title: "قائمتي", kind: .poster, items: myList),
                        at: out.first?.id == "continue" ? 1 : 0)
         }
-        // Fixed / dynamic / removed rows, as the profile arranged them.
-        return HomeLayout.arrange(out, id: \.id, layout: store.activeProfile?.settings?.homeRows)
+        return out + customRows
+    }
+
+    /// Fixed / dynamic / removed rows, as the profile arranged them.
+    private var homeRows: [Shelf] { HomeLayout.arrange(baseRows, id: \.id, layout: layout) }
+
+    private var rowInfos: [HomeRowInfo] { baseRows.map { HomeRowInfo(id: $0.id, title: $0.title) } }
+
+    private func loadCustomRows() async {
+        let added = await CustomHomeRows.load(layout, client: client, filter: filter)
+        customRows = added.map { Shelf(id: $0.id, title: $0.title, kind: .poster, items: $0.items) }
+    }
+
+    /// Changes when the rows the profile added change (not when one only moves).
+    private var customSignature: String {
+        (layout ?? []).filter { $0.custom != nil && !$0.hidden }.map(\.id).sorted().joined(separator: ",") + "|" + filter.signature
     }
 
     private func loadMyList() async {
@@ -530,6 +548,9 @@ struct HomeView: View {
         }
         .onAppear { if !isEmpty { Task { await load(cached: false) } } }
         .task(id: "\(filter.signature)|\(store.activeProfile?.settings?.myListOnHome == true)") { await loadMyList() }
+        .task(id: customSignature) { await loadCustomRows() }
+        // «صفوف الرئيسية» lists what Home built.
+        .onChange(of: rowInfos, initial: true) { _, infos in HomeRowCatalog.shared.rows = infos }
         .onReceive(NotificationCenter.default.publisher(for: .myListDidChange)) { _ in Task { await loadMyList() } }
         // Opening the app lands on the banner's Play (like Apple's TV app), not on nothing.
         .onChange(of: banner.isEmpty, initial: true) { _, empty in
@@ -568,6 +589,7 @@ struct HomeView: View {
             banner = newBanner
         }
         if !newRows.isEmpty { rows = newRows }
+        await loadCustomRows()
     }
 }
 

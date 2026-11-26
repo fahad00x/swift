@@ -71,6 +71,7 @@ struct SettingsView: View {
     @State private var choosing: ChoiceList?
     @State private var versionTaps = HiddenTapCounter()
     @State private var showDiagnostics = false
+    @State private var showHomeRows = false
     @State private var confirmSignOut = false
     @State private var importing = false
     @State private var confirmUndo = false
@@ -107,6 +108,9 @@ struct SettingsView: View {
             .onChange(of: autoPlayNext) { _, on in store.updateSettings { $0.autoPlayNext = on } }
             .navigationDestination(isPresented: $showDiagnostics) {
                 HomeDiagnosticsView(client: client)
+            }
+            .navigationDestination(isPresented: $showHomeRows) {
+                HomeRowsEditor(client: client)
             }
         }
         .fullScreenCover(item: $editing) { profile in
@@ -209,6 +213,7 @@ struct SettingsView: View {
                                isOn: Binding(get: { store.rememberLastProfile }, set: { store.setRememberLastProfile($0) }))
             }
             SettingsCard("الرئيسية") {
+                SettingsRow("صفوف الرئيسية", detail: "الترتيب، ثابت أو ديناميكي، الإضافة والحذف", arrow: true) { showHomeRows = true }
                 SettingsSwitch("إظهار «قائمتي» في الرئيسية", detail: "بعد متابعة المشاهدة مباشرة", isOn: TVMyListView.onHome(store))
                 choice("ترتيب متابعة المشاهدة",
                        selection: Binding(get: { store.activeProfile?.settings?.continueNewFirst ?? false },
@@ -696,7 +701,7 @@ struct ChoiceList: Identifiable {
 }
 
 /// Options on a glass card over the page (like the filter's); choosing one closes it.
-private struct ChoicePanel: View {
+struct ChoicePanel: View {
     let list: ChoiceList
 
     @Environment(\.dismiss) private var dismiss

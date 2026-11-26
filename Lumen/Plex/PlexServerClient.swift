@@ -250,6 +250,23 @@ final class PlexServerClient: Sendable {
         return (try? await container(path, q).metadata) ?? []
     }
 
+    /// A library's titles of one genre (Plex's genre key), newest first: a row the profile added.
+    func items(section: String, type: String, genre: String, limit: Int = 30) async -> [PlexItem] {
+        let query = [("type", type == "show" ? "2" : "1"), ("genre", genre), ("sort", "addedAt:desc"),
+                     ("X-Plex-Container-Start", "0"), ("X-Plex-Container-Size", "\(limit)")]
+        return applied((try? await container("/library/sections/\(section)/all", query).metadata) ?? [])
+    }
+
+    /// A library's collections (to add one as a row).
+    func collections(section: String) async -> [PlexItem] {
+        (try? await container("/library/sections/\(section)/collections").metadata) ?? []
+    }
+
+    /// The titles of a collection.
+    func collectionItems(_ ratingKey: String) async -> [PlexItem] {
+        applied((try? await container("/library/collections/\(ratingKey)/children").metadata) ?? [])
+    }
+
     /// A library's categories (genres) with the key to filter by.
     func genreDirectories(section: String) async -> [PlexDirectory] {
         ((try? await container("/library/sections/\(section)/genre").directories) ?? []).filter { !$0.title.isEmpty }

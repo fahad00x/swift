@@ -14,6 +14,31 @@ struct HomeRowConfig: Codable, Hashable, Sendable, Identifiable {
     var title: String?
     var pinned: Bool = false
     var hidden: Bool = false
+    /// A row the profile added (id «custom-…»); nil: one of the app's rows.
+    var custom: CustomHomeRow?
+}
+
+/// A row the profile added to Home: what fills it.
+struct CustomHomeRow: Codable, Hashable, Sendable {
+    enum Kind: String, Codable, Sendable {
+        /// «أضيف مؤخراً في <library>».
+        case recent
+        /// One genre of a library (Plex's genre key).
+        case genre
+        /// A Plex / Kometa collection.
+        case collection
+    }
+    var kind: Kind
+    /// The library's key.
+    var section: String
+    var genre: String?
+    var collection: String?
+}
+
+/// A row as Settings lists it: its family and title.
+struct HomeRowInfo: Hashable, Sendable {
+    let id: String
+    let title: String
 }
 
 /// Applies a profile's arrangement to the rows the app built.
@@ -68,5 +93,81 @@ enum HomeLayout {
             }
         }
         return out
+    }
+
+    // MARK: Editing
+
+    /// Every row as the profile sees it, in order: shown rows (as arranged), then pinned rows
+    /// with nothing in them right now (at their place), then removed ones. `current`: the rows
+    /// the app built (before arranging). The base of every edit below.
+    static func entries(current: [HomeRowInfo], layout: [HomeRowConfig]?) -> [HomeRowConfig] {
+        let saved = layout ?? []
+        var byID: [String: HomeRowConfig] = [:]
+        for entry in saved where byID[entry.id] == nil { byID[entry.id] = entry }
+        var seen = Set<String>()
+        let rows = current.filter { seen.insert(family(of: $0.id)).inserted }
+        let shown = arrange(rows, id: \.id, layout: saved)
+        var out = shown.map { row -> HomeRowConfig in
+            var entry = byID[family(of: row.id)] ?? HomeRowConfig(id: family(of: row.id))
+            entry.title = row.title
+            return entry
+        }
+        let present = Set(out.map(\.id))
+        // Kept rows not on Home right now (empty, or a custom row not loaded yet).
+        let kept = saved.filter { !$0.hidden }
+        for (index, entry) in kept.enumerated() where !present.contains(entry.id) {
+            out.insert(entry, at: min(index, out.count))
+        }
+        out += saved.filter { $0.hidden && !present.contains($0.id) }
+        return out
+    }
+
+    /// Moves a row one place up (-1) or down (+1) among the shown ones; it then keeps that place.
+    static func moving(_ id: String, by offset: Int, current: [HomeRowInfo], layout: [HomeRowConfig]?) -> [HomeRowConfig] {
+        var list = entries(current: current, layout: layout)
+        let shown = list.indices.filter { !list[$0].hidden }
+        guard let at = shown.firstIndex(where: { list[$0].id == id }) else { return list }
+        let target = at + offset
+        guard shown.indices.contains(target) else { return list }
+        list.swapAt(shown[at], shown[target])
+        list[shown[target]].pinned = true
+        return list
+    }
+
+    static func settingPinned(_ id: String, _ pinned: Bool, current: [HomeRowInfo], layout: [HomeRowConfig]?) -> [HomeRowConfig] {
+        var list = entries(current: current, layout: layout)
+        if let at = list.firstIndex(where: { $0.id == id }) { list[at].pinned = pinned }
+        return list
+    }
+
+    /// Removes a row from Home (it stays listed, to bring back). A removed custom row is gone.
+    static func hiding(_ id: String, current: [HomeRowInfo], layout: [HomeRowConfig]?) -> [HomeRowConfig] {
+        var list = entries(current: current, layout: layout)
+        guard let at = list.firstIndex(where: { $0.id == id }) else { return list }
+        var entry = list.remove(at: at)
+        guard entry.custom == nil else { return list }
+        entry.hidden = true
+        entry.pinned = false
+        list.append(entry)
+        return list
+    }
+
+    /// A removed row back on Home, dynamic, after the shown ones.
+    static func restoring(_ id: String, current: [HomeRowInfo], layout: [HomeRowConfig]?) -> [HomeRowConfig] {
+        var list = entries(current: current, layout: layout)
+        guard let at = list.firstIndex(where: { $0.id == id }) else { return list }
+        var entry = list.remove(at: at)
+        entry.hidden = false
+        list.insert(entry, at: list.firstIndex(where: \.hidden) ?? list.count)
+        return list
+    }
+
+    /// A new row (fixed) at the end of the shown ones.
+    static func adding(_ row: HomeRowConfig, current: [HomeRowInfo], layout: [HomeRowConfig]?) -> [HomeRowConfig] {
+        var list = entries(current: current, layout: layout)
+        var entry = row
+        entry.pinned = true
+        list.insert(entry, at: list.firstIndex(where: \.hidden) ?? list.count)
+        return list
     }
 }
