@@ -390,8 +390,6 @@ struct SearchView: View {
     @State private var recent: [String] = RecentSearches.load()
 
     private var trimmed: String { query.trimmingCharacters(in: .whitespaces) }
-    private var shows: [PlexItem] { results.filter { $0.isShow || $0.isSeason || $0.isEpisode } }
-    private var movies: [PlexItem] { results.filter { !($0.isShow || $0.isSeason || $0.isEpisode) } }
 
     var body: some View {
         // Plain background: the focused poster's full-screen artwork would sit behind the
@@ -408,14 +406,11 @@ struct SearchView: View {
                         } else if results.isEmpty && searched == trimmed && !isSearching {
                             ContentUnavailableView.search(text: trimmed)
                         }
-                        // Shows, then movies, each under its own header.
-                        if !shows.isEmpty {
-                            header("مسلسلات")
-                            PosterGrid(items: shows, client: client, scrollProxy: proxy, rowID: "search-shows")
-                        }
-                        if !movies.isEmpty {
-                            header("أفلام")
-                            PosterGrid(items: movies, client: client, scrollProxy: proxy, rowID: "search-movies")
+                        // «مسلسلات» and «أفلام» under their own headers, the kind of the best match first.
+                        ForEach(SearchResults.sections(results), id: \.kind) { section in
+                            header(section.kind.title)
+                            PosterGrid(items: section.items, client: client, scrollProxy: proxy,
+                                       rowID: section.kind == .shows ? "search-shows" : "search-movies")
                         }
                     }
                     .padding(.top, 40)
@@ -436,7 +431,8 @@ struct SearchView: View {
             let visible = await filter.resolve(found, client: client)
             guard !Task.isCancelled else { return }
             // 4K and 1080p copies of a title: once.
-            results = visible.mergingCopies(store)
+            // Exact title matches first («mom»: Mom before Mommy).
+            results = SearchResults.exactFirst(visible.mergingCopies(store), query: q)
             searched = q
             // Remembered once the term stays put a moment (not every partial word typed).
             guard !visible.isEmpty else { return }

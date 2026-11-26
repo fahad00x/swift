@@ -130,6 +130,8 @@ struct SearchView: View {
     @State private var results: [PlexItem] = []
     @State private var isSearching = false
     @State private var recent: [String] = RecentSearches.load()
+    /// «الكل • أفلام • مسلسلات» above the results.
+    @State private var kind: SearchKind = .all
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
@@ -143,8 +145,7 @@ struct SearchView: View {
                     ContentUnavailableView.search(text: query)
                         .padding(.top, 60)
                 }
-                PosterGrid(items: results, client: client)
-                    .padding(.top, 8)
+                if !results.isEmpty { resultsView }
             }
             // Not once the field is cleared: the old request may still be on its way back.
             .overlay {
@@ -172,13 +173,44 @@ struct SearchView: View {
             let found = (try? await client.search(q)) ?? []
             let visible = await filter.resolve(found, client: client)
             guard !Task.isCancelled else { return }
-            results = visible.mergingCopies(ProfileStore.shared)
+            // Exact title matches first («mom»: Mom before Mommy).
+            results = SearchResults.exactFirst(visible.mergingCopies(ProfileStore.shared), query: q)
             // Remembered once the term stays put a moment (not every partial word typed), as on Apple TV.
             guard !visible.isEmpty else { return }
             try? await Task.sleep(for: .seconds(3))
             guard !Task.isCancelled else { return }
             recent = RecentSearches.add(q)
         }
+    }
+
+    /// The kind buttons, then «الكل» as a section per kind (best match's kind first), or one kind.
+    private var resultsView: some View {
+        let metrics = Metrics(sizeClass)
+        let sections = SearchResults.sections(results)
+        return VStack(alignment: .leading, spacing: 18) {
+            // Only worth it when both kinds came back.
+            if sections.count > 1 {
+                Picker("النوع", selection: $kind) {
+                    ForEach(SearchKind.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: metrics.isWide ? 360 : .infinity)
+                .padding(.horizontal, metrics.margin)
+            }
+            if kind == .all || sections.count < 2 {
+                ForEach(sections, id: \.kind) { section in
+                    if sections.count > 1 {
+                        Text(section.kind.title)
+                            .font(metrics.isWide ? .title2.weight(.bold) : .title3.weight(.bold))
+                            .padding(.horizontal, metrics.margin)
+                    }
+                    PosterGrid(items: section.items, client: client)
+                }
+            } else {
+                PosterGrid(items: kind.filter(results), client: client)
+            }
+        }
+        .padding(.top, 8)
     }
 
     /// The last searches that found something, newest first; one tap searches again.
