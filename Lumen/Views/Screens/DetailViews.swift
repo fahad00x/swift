@@ -630,9 +630,10 @@ struct DetailPage: View {
                systemImage: item.isWatched ? "eye.slash" : "checkmark.circle") {
             Task { await setWatched(item, !item.isWatched) }
         }
-        if playTarget != nil {
+        // Only when there is a place to restart from (started, not finished).
+        if let target = playTarget, target.progress != nil, !target.isWatched {
             Button("التشغيل من البداية", systemImage: "arrow.counterclockwise") {
-                play(playTarget, fromBeginning: true)
+                play(target, fromBeginning: true)
             }
         }
     }
@@ -735,8 +736,10 @@ struct DetailPage: View {
                                    systemImage: store.isOnMyList(item.ratingKey) ? "minus" : "plus") {
                                 store.toggleMyList(item.mediaInfo)
                             }
-                            Button("التشغيل من البداية", systemImage: "arrow.counterclockwise") {
-                                play(episode, fromBeginning: true)
+                            if episode.progress != nil, !episode.isWatched {
+                                Button("التشغيل من البداية", systemImage: "arrow.counterclockwise") {
+                                    play(episode, fromBeginning: true)
+                                }
                             }
                         }
                     }

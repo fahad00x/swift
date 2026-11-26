@@ -210,8 +210,9 @@ struct DetailView: View {
             Label(item.isWatched ? "تحديد كغير مُشاهَد" : "تحديد كمُشاهَد",
                   systemImage: item.isWatched ? "eye.slash" : "checkmark.circle")
         }
-        if playTarget != nil {
-            Button { play(playTarget, fromBeginning: true) } label: {
+        // Only when there is a place to restart from (started, not finished).
+        if let target = playTarget, target.progress != nil, !target.isWatched {
+            Button { play(target, fromBeginning: true) } label: {
                 Label("التشغيل من البداية", systemImage: "arrow.counterclockwise")
             }
         }
@@ -264,8 +265,10 @@ struct DetailView: View {
                             Label(episode.isWatched ? "تحديد كغير مُشاهَد" : "تحديد كمُشاهَد",
                                   systemImage: episode.isWatched ? "eye.slash" : "checkmark.circle")
                         }
-                        Button { play(episode, fromBeginning: true) } label: {
-                            Label("التشغيل من البداية", systemImage: "arrow.counterclockwise")
+                        if episode.progress != nil, !episode.isWatched {
+                            Button { play(episode, fromBeginning: true) } label: {
+                                Label("التشغيل من البداية", systemImage: "arrow.counterclockwise")
+                            }
                         }
                         if Downloads.shared.entry(episode.ratingKey) == nil {
                             Button {
