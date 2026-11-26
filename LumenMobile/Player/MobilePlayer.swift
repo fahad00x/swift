@@ -292,7 +292,8 @@ struct MobilePlayerControls: View {
                         Spacer(minLength: 12)
                         buttons
                     }
-                    timeline
+                    // Its own view: only it reads the playhead, which changes every frame.
+                    PlayerTimeline(session: session)
                 }
                 .padding(.horizontal, inset)
                 .padding(.bottom, wide ? 34 : 22)
@@ -368,33 +369,6 @@ struct MobilePlayerControls: View {
         case .audio: return "الصوت"
         case .quality: return "الجودة"
         }
-    }
-
-    // MARK: Progress
-
-    private var timeline: some View {
-        let total = max(session.duration, 1)
-        let current = session.scrubPosition ?? session.position
-        return VStack(spacing: 6) {
-            Slider(value: Binding(get: { min(current, total) },
-                                  set: { session.scrubPosition = $0 }),
-                   in: 0...total) { editing in
-                if editing {
-                    session.beginScrub()
-                } else if let target = session.scrubPosition {
-                    session.commitScrub(to: target)
-                }
-            }
-            HStack {
-                Text(Self.format(current))
-                Spacer()
-                Text("-" + Self.format(max(0, session.duration - current)))
-            }
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(.white.opacity(0.9))
-        }
-        .environment(\.layoutDirection, .leftToRight)
-        .tint(Theme.accent)
     }
 
     // MARK: Panels
@@ -724,5 +698,37 @@ private extension View {
             .background(Circle().fill(.black.opacity(0.4)))
             .contentShape(Circle())
             .shadow(color: .black.opacity(0.5), radius: 10)
+    }
+}
+
+/// The playhead slider and times. A view of its own so only it re-renders as `session.position`
+/// changes (every frame): when the controls read it, the buttons were rebuilt 24–60 times a
+/// second and quick taps on them got lost.
+private struct PlayerTimeline: View {
+    let session: PlayerSession
+
+    var body: some View {
+        let total = max(session.duration, 1)
+        let current = session.scrubPosition ?? session.position
+        VStack(spacing: 6) {
+            Slider(value: Binding(get: { min(current, total) },
+                                  set: { session.scrubPosition = $0 }),
+                   in: 0...total) { editing in
+                if editing {
+                    session.beginScrub()
+                } else if let target = session.scrubPosition {
+                    session.commitScrub(to: target)
+                }
+            }
+            HStack {
+                Text(MobilePlayerControls.format(current))
+                Spacer()
+                Text("-" + MobilePlayerControls.format(max(0, session.duration - current)))
+            }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.white.opacity(0.9))
+        }
+        .environment(\.layoutDirection, .leftToRight)
+        .tint(Theme.accent)
     }
 }

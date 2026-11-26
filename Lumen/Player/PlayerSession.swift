@@ -616,14 +616,21 @@ final class PlayerSession {
                 show(notice: "تم تخطي المقدمة")
                 return
             }
-            skipAction = .intro(endSeconds: end)
+            setSkipAction(.intro(endSeconds: end))
         case .recap?:
-            skipAction = .recap(endSeconds: current!.endSeconds)
+            setSkipAction(.recap(endSeconds: current!.endSeconds))
         case .credits?:
-            skipAction = .credits(hasNext: nextEpisode != nil)
+            setSkipAction(.credits(hasNext: nextEpisode != nil))
         case nil:
-            skipAction = nil
+            setSkipAction(nil)
         }
+    }
+
+    /// Runs on every playhead tick: assigning an observed property notifies its views even when
+    /// the value is the same, so the player's controls were rebuilt every frame (and quick taps
+    /// on them got lost). Only a real change is assigned.
+    private func setSkipAction(_ action: SkipAction?) {
+        if action != skipAction { skipAction = action }
     }
 
     /// Every 10 s while playing, and on pause: saves the position for the profile, then
