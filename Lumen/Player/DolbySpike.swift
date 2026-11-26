@@ -35,9 +35,10 @@ enum DolbySpikeFinder {
     private static func int(_ v: Any?) -> Int? { v as? Int ?? (v as? String).flatMap(Int.init) }
 
     /// Up to one movie per kind: DV 8 + EAC3 Atmos, DV 5, HDR10 + EAC3 Atmos.
-    static func find(_ client: PlexServerClient, log: @escaping @MainActor (String) -> Void) async -> [DolbySpikeCandidate] {
+    static func find(_ client: PlexServerClient, firstOnly: Bool = false,
+                     log: @escaping @MainActor (String) -> Void) async -> [DolbySpikeCandidate] {
         var found: [String: DolbySpikeCandidate] = [:]
-        let wanted = ["DV8+Atmos", "DV5", "Atmos"]
+        let wanted = firstOnly ? ["DV8+Atmos"] : ["DV8+Atmos", "DV5", "Atmos"]
         do {
             let sections = try await get(client, "/library/sections")["Directory"] as? [[String: Any]] ?? []
             var keys: [String] = []
@@ -55,6 +56,7 @@ enum DolbySpikeFinder {
                 let chunk = keys[start..<min(start + 10, keys.count)]
                 let meta = (try? await get(client, "/library/metadata/" + chunk.joined(separator: ","))["Metadata"] as? [[String: Any]]) ?? []
                 checked += chunk.count
+                await log("فحصت \(checked)…")
                 for m in meta {
                     guard let rk = str(m["ratingKey"]), let title = m["title"] as? String else { continue }
                     let media = (m["Media"] as? [[String: Any]])?.first ?? [:]
@@ -319,7 +321,7 @@ struct DolbySpikeView: View {
             log += DolbySpikeInspector.device()
             busy = true
             log.append("أدور على أفلام للتجربة…")
-            candidates = await DolbySpikeFinder.find(client) { log.append($0) }
+            candidates = await DolbySpikeFinder.find(client, firstOnly: true) { log.append($0) }
             if candidates.isEmpty { log.append("ما لقيت أفلام مناسبة") }
             busy = false
         }
@@ -368,5 +370,54 @@ struct DolbySpikeView: View {
         while let p = top?.presentedViewController { top = p }
         top?.present(vc, animated: true) { vc.player?.play() }
         log.append("تشغيل… شيّك على التلفزيون (شعار Dolby Vision) والريسيفر/السماعة (Atmos)")
+    }
+}
+
+// MARK: - Headless run (simulator): `-dolbySpikeAuto` → Documents/dolby_spike.log
+
+@MainActor
+enum DolbySpikeAuto {
+    static func runIfAsked(_ session: AppSession) {
+        guard ProcessInfo.processInfo.arguments.contains("-dolbySpikeAuto") else { return }
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let logURL = docs.appendingPathComponent("dolby_spike.log")
+        var lines: [String] = []
+        func log(_ s: String) {
+            lines.append(s)
+            try? Data(lines.joined(separator: "\n").utf8).write(to: logURL)
+        }
+        Task {
+            var client: PlexServerClient?
+            for _ in 0..<120 {
+                client = session.client
+                if client != nil { break }
+                try? await Task.sleep(for: .seconds(1))
+            }
+            guard let client else { return log("ERROR no signed-in server") }
+            DolbySpikeInspector.device().forEach(log)
+            let candidates = await DolbySpikeFinder.find(client, firstOnly: true) { log($0) }
+            for c in candidates {
+                guard let input = client.directURL(partKey: c.partKey)?.absoluteString else { continue }
+                for tag in ["hvc1", "dvh1"] {
+                    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("DolbySpike", isDirectory: true)
+                    try? FileManager.default.removeItem(at: dir)
+                    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                    let output = dir.appendingPathComponent("clip-\(tag).mp4")
+                    log("— \(c.kind) [\(c.dvProfile.map(String.init) ?? "-")] audio#\(c.audioIndex) \(c.audioLabel) — tag \(tag)")
+                    let remuxer = DolbySpikeRemuxer()
+                    let started = Date()
+                    let ok = await Task.detached {
+                        remuxer.run(input: input, output: output.path, start: 600, seconds: 20,
+                                    videoTag: tag, audioIndex: c.audioIndex) { _ in }
+                    }.value
+                    remuxer.lines.forEach(log)
+                    let size = ((try? FileManager.default.attributesOfItem(atPath: output.path)[.size]) as? Int64) ?? 0
+                    log("time \(Int(Date().timeIntervalSince(started)))s size \(size / 1_000_000)MB ok \(ok)")
+                    if ok { await DolbySpikeInspector.report(output).forEach(log) }
+                    if !ok { break }
+                }
+            }
+            log("DONE")
+        }
     }
 }
