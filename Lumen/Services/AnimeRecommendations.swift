@@ -24,7 +24,7 @@ actor AnimeRecommendations {
     private static let file: URL = {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("AnimeRecommendations.json")
+        return dir.appendingPathComponent("AnimeRecommendations-2.json")
     }()
 
     /// The recommended anime that are in `library`, best rated first.
@@ -86,53 +86,76 @@ actor AnimeRecommendations {
 
     // MARK: AniList
 
-    private struct Response: Decodable {
-        struct Body: Decodable {
-            struct Page: Decodable { let media: [AnimeTitles.Media] }
-            let Page: Page?
-            let Media: AnimeTitles.Media?
-        }
-        let data: Body?
-    }
-
     /// nil: no answer (offline, rate limited, error), try again next time. Empty: AniList has
     /// no such anime, or no recommendations for it.
-    private static func lookup(_ item: PlexItem, anilistID: Int?) async -> [[String]]? {
-        let fields = """
-        id idMal title { romaji english native } synonyms seasonYear startDate { year }
-        recommendations(perPage: 20, sort: RATING_DESC) { nodes { mediaRecommendation {
-          id idMal title { romaji english native } synonyms seasonYear startDate { year } } } }
+    private static func lookup(_ item: PlexItem, anilistID known: Int?) async -> [[String]]? {
+        var anilistID = known
+        if anilistID == nil {
+            // Not looked up before: find it by its names, English and Japanese (the library may
+            // call it «Bush Baby, Little Angel of the Grasslands», AniList «Daisougen no Chiisana
+            // Tenshi: Bush Baby»).
+            let aliases = AnimeNames.shared.names(of: item)
+            switch await find(item, aliases: aliases) {
+            case .noAnswer: return nil
+            case .notFound: return []
+            case .found(let id): anilistID = id
+            }
+        }
+        let query = """
+        query ($id: Int) { Media(id: $id, type: ANIME) { id title { romaji english native } synonyms
+          recommendations(perPage: 20, sort: RATING_DESC) { nodes { mediaRecommendation {
+            id title { romaji english native } synonyms } } } } }
         """
-        let query: String
-        let variables: [String: Any]
-        if let anilistID {
-            query = "query ($id: Int) { Media(id: $id, type: ANIME) { \(fields) } }"
-            variables = ["id": anilistID]
-        } else {
-            query = "query ($s: String) { Page(perPage: 5) { media(search: $s, type: ANIME) { \(fields) } } }"
-            variables = ["s": AnimeTitles.searchName(item)]
-        }
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        // The page waits for its related row: give up quickly.
-        request.timeoutInterval = 6
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.httpBody = try? JSONSerialization.data(withJSONObject: ["query": query, "variables": variables])
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
-              (response as? HTTPURLResponse)?.statusCode == 200,
-              let body = (try? JSONDecoder().decode(Response.self, from: data))?.data else { return nil }
-        let media: AnimeTitles.Media?
-        if anilistID != nil {
-            media = body.Media
-        } else {
-            media = AnimeTitles.bestMatch(for: item, in: body.Page?.media ?? [])
-        }
-        guard let media else { return [] }
+        guard let body: MediaBody = await post(query, ["id": anilistID!]) else { return nil }
+        guard let media = body.Media else { return [] }
         return (media.recommendations?.nodes ?? []).compactMap { node in
             guard let recommended = node.mediaRecommendation else { return nil }
             let names = recommended.names + [recommended.title.native].compactMap { $0 }
             return names.isEmpty ? nil : names
         }
+    }
+
+    private enum Found { case found(Int), notFound, noAnswer }
+
+    /// The anime's AniList id from up to three of its names, in one request.
+    private static func find(_ item: PlexItem, aliases: [String]) async -> Found {
+        var names: [String] = []
+        for name in [AnimeTitles.searchName(item), item.originalTitle].compactMap({ $0 }) + aliases
+        where !SearchText.isArabic(name) && !name.isEmpty
+            && !names.contains(where: { SearchText.normalize($0) == SearchText.normalize(name) }) {
+            names.append(name)
+            if names.count == 3 { break }
+        }
+        guard !names.isEmpty else { return .notFound }
+        var declarations: [String] = []
+        var parts: [String] = []
+        var variables: [String: Any] = [:]
+        for (i, name) in names.enumerated() {
+            declarations.append("$s\(i): String")
+            variables["s\(i)"] = name
+            parts.append("a\(i): Page(perPage: 5) { media(search: $s\(i), type: ANIME) { id idMal title { romaji english native } synonyms seasonYear startDate { year } } }")
+        }
+        let query = "query (\(declarations.joined(separator: ", "))) {\n\(parts.joined(separator: "\n"))\n}"
+        guard let body: SearchBody = await post(query, variables) else { return .noAnswer }
+        let candidates = (0..<names.count).flatMap { body["a\($0)"]??.media ?? [] }
+        guard let id = AnimeTitles.bestMatch(for: item, in: candidates, alsoKnownAs: aliases)?.id else { return .notFound }
+        return .found(id)
+    }
+
+    private typealias SearchBody = [String: AnimeTitles.Page?]
+    private struct MediaBody: Decodable { let Media: AnimeTitles.Media? }
+    private struct Wrapper<B: Decodable>: Decodable { let data: B? }
+
+    private static func post<Body: Decodable>(_ query: String, _ variables: [String: Any]) async -> Body? {
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        // Quality first: the page waits up to this for its related row (only the first time).
+        request.timeoutInterval = 10
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["query": query, "variables": variables])
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        return (try? JSONDecoder().decode(Wrapper<Body>.self, from: data))?.data
     }
 }

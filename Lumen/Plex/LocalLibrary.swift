@@ -366,6 +366,12 @@ actor LocalLibrary {
     func prepareSearch() async { _ = await searchEntries() }
 
     /// Anime movies and shows on the device (for their AniList titles).
+    /// Every movie and show on the device, all libraries (for series across libraries).
+    func allItems(server: String) -> [PlexItem] {
+        guard serverID == server else { return [] }
+        return index.sections.values.flatMap(\.items)
+    }
+
     /// The movies or shows of `item`'s own library (for related titles); nil when that library
     /// isn't on the device.
     func libraryItems(server: String, of item: PlexItem) -> [PlexItem]? {

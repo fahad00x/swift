@@ -324,22 +324,49 @@ final class PlexServerClient: Sendable {
     }
 
     /// "More like this" from the server's related hubs.
-    /// «أفلام مشابهة» / «ذات صلة» / «لأنك شاهدت…» (see `RelatedTitles`): Plex's groups ranked
-    /// (big collection lists dropped); anime first get AniList's recommendations; titles of the
-    /// same library sharing genres fill in when that's short (on the device, no request).
+    /// «أفلام مشابهة» / «ذات صلة» / «لأنك شاهدت…» (see `RelatedTitles`): the same series in every
+    /// library on the device; Plex's groups ranked (big collection lists dropped); anime first get
+    /// AniList's recommendations; titles of the same library sharing genres fill in (on the device).
+    /// Still nothing: the server's best rated titles of the same genres.
     func related(_ ratingKey: String) async -> [PlexItem] {
         let hubs = (try? await container("/library/metadata/\(ratingKey)/related").hubs) ?? []
         let plex = RelatedTitles.ranked(hubs, excluding: ratingKey)
-        guard let item = await local.item(server: machineIdentifier, key: ratingKey),
-              let library = await local.libraryItems(server: machineIdentifier, of: item) else {
-            return plex.strong + plex.weak
+        guard let item = await item(ratingKey) else { return plex.strong + plex.weak }
+        let all = await local.allItems(server: machineIdentifier)
+        let library = await local.libraryItems(server: machineIdentifier, of: item) ?? []
+        let index = await AnimeIndex.shared.value
+        // Also anime the app's own list or index knows (old ones often lack the genre or country).
+        let isAnime = AnimeClassifier.isAnime(item) || !AnimeNames.shared.names(of: item).isEmpty
+            || index.entry(item) != nil
+        let series = await SeriesIndex.shared.matches(for: item, in: all)
+        let aniList = isAnime ? await AnimeRecommendations.shared.matches(for: item, in: all) : []
+        let row = RelatedTitles.combine(item: item, isAnime: isAnime, series: series, plex: plex, aniList: aniList) {
+            RelatedTitles.byGenre(for: item, in: library, anime: isAnime ? index : nil)
         }
-        let isAnime = AnimeClassifier.isAnime(item)
-        let aniList = isAnime ? await AnimeRecommendations.shared.matches(for: item, in: library) : []
-        let index = isAnime ? await AnimeIndex.shared.value : nil
-        return RelatedTitles.combine(item: item, isAnime: isAnime, plex: plex, aniList: aniList) {
-            RelatedTitles.byGenre(for: item, in: library, anime: index)
+        return row.isEmpty ? await sameGenres(as: item) : row
+    }
+
+    /// The best rated titles of `item`'s library with its genres (both of its first two, else
+    /// any of them), from the server: only when nothing else was found.
+    private func sameGenres(as item: PlexItem) async -> [PlexItem] {
+        guard let section = item.librarySectionID, item.type == "movie" || item.type == "show" else { return [] }
+        let own = item.genres.map(\.tag).filter { !RelatedTitles.generic.contains($0.lowercased()) }
+        guard !own.isEmpty else { return [] }
+        let wanted = Set(own.map { $0.lowercased() })
+        let ids = await genreDirectories(section: section).filter { wanted.contains($0.title.lowercased()) }.map(\.key)
+        guard !ids.isEmpty else { return [] }
+        let base = [("type", item.type == "movie" ? "1" : "2"), ("sort", "audienceRating:desc"),
+                    ("X-Plex-Container-Start", "0"), ("X-Plex-Container-Size", "30")]
+        let path = "/library/sections/\(section)/all"
+        var found: [PlexItem] = []
+        if ids.count >= 2 {
+            found = (try? await container(path, base + ids.prefix(2).map { ("genre", $0) }).metadata) ?? []
         }
+        if found.count < 6 {
+            found += (try? await container(path, base + [("genre", ids.joined(separator: ","))]).metadata) ?? []
+        }
+        var seen: Set<String> = [item.ratingKey]
+        return found.filter { seen.insert($0.ratingKey).inserted }
     }
 
     /// Artwork choices of a movie / show (Plex "arts": the selected background and the

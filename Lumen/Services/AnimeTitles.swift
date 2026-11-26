@@ -116,7 +116,7 @@ actor AnimeTitles {
     // MARK: AniList
 
     private struct Response: Decodable { let data: [String: Page?]? }
-    private struct Page: Decodable { let media: [Media] }
+    struct Page: Decodable { let media: [Media] }
     struct Media: Decodable {
         struct Title: Decodable { let romaji: String?; let english: String?; let native: String? }
         struct FuzzyDate: Decodable { let year: Int? }
@@ -198,8 +198,9 @@ actor AnimeTitles {
 
     /// Only a confident match: a name equal (or one or two letters off) to the item's title or
     /// original title, and a year no more than one off when both are known.
-    static func bestMatch(for item: PlexItem, in candidates: [Media]) -> Media? {
-        let own = [item.title, item.originalTitle].compactMap { $0 }
+    /// `alsoKnownAs`: other names of the title (the app's anime list), matched like its own.
+    static func bestMatch(for item: PlexItem, in candidates: [Media], alsoKnownAs: [String] = []) -> Media? {
+        let own = ([item.title, item.originalTitle].compactMap { $0 } + alsoKnownAs)
             .map { SearchText.scalars(SearchText.normalize($0).replacingOccurrences(of: " ", with: "")) }
             .filter { !$0.isEmpty }
         guard !own.isEmpty else { return nil }
