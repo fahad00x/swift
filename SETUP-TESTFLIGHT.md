@@ -58,6 +58,7 @@
    - `Profile`: ‏profileID، name، symbol، colorHex، isKids، isOwner، pinHash، scopes، knownSections، genres، preferredAudioLanguage، preferredSubtitleLanguage، subtitlesOff، settings، createdAt، modifiedAt
    - `MediaState`: ‏profileID، profile، ratingKey، type، showKey، seasonKey، sectionKey، sortIndex، genres، offsetMs، durationMs، watched، lastViewedAt، audioStreamID، subtitleStreamID، modifiedAt
    - `WatchlistItem`: ‏profileID، profile، ratingKey، type، sectionKey، addedAt، modifiedAt
+   - `cloudkit.share` (لمشاركة المستخدم مع حساب iCloud ثاني): اضغط **+** واكتب الاسم `cloudkit.share` بس، وحقوله تنضاف لحالها
 4. بعدها من الصفحة الرئيسية للـ Container اضغط **Deploy Schema Changes…** ثم **Deploy** إلى Production.
 
 ### إضافة حقل `settings` (مرة وحدة، للنسخ من البناء ١٠ وطالع)
