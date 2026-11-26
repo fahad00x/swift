@@ -488,6 +488,215 @@ private struct CardMenu: ViewModifier {
     }
 }
 
+// MARK: - Continue Watching row (iPhone / iPad)
+
+/// «متابعة المشاهدة» like Netflix: posters with a play mark (a tap plays the episode straight
+/// away), its progress, and under each ⓘ (the show's page) and ⋮ (a menu).
+struct ContinueRow: View {
+    let title: String
+    let items: [PlexItem]
+    let client: PlexServerClient
+
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.presentDetail) private var presentDetail
+    @State private var info: PlexItem?
+    @State private var menu: PlexItem?
+
+    var body: some View {
+        let metrics = Metrics(sizeClass)
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(metrics.isWide ? .title2.weight(.bold) : .title3.weight(.bold))
+                .padding(.horizontal, metrics.margin)
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(alignment: .top, spacing: metrics.isWide ? 14 : 10) {
+                    ForEach(items) { item in
+                        ContinueCard(item: item, client: client, width: metrics.isWide ? 170 : 124,
+                                     showInfo: { open(item) }, showMenu: { menu = item })
+                            .modifier(CardMenu(item: item, client: client, continueRow: true))
+                    }
+                }
+                .padding(.horizontal, metrics.margin)
+            }
+        }
+        .navigationDestination(item: $info) { DetailView(client: client, entry: $0) }
+        .sheet(item: $menu) { item in
+            ContinueMenu(item: item, client: client, showInfo: {
+                menu = nil
+                open(item)
+            })
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+    }
+
+    /// The show's page: the card on an iPad in landscape, else pushed.
+    private func open(_ item: PlexItem) {
+        if let presentDetail { presentDetail(item) } else { info = item }
+    }
+}
+
+private struct ContinueCard: View {
+    let item: PlexItem
+    let client: PlexServerClient
+    let width: CGFloat
+    let showInfo: () -> Void
+    let showMenu: () -> Void
+
+    @Environment(ShowNews.self) private var news: ShowNews?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Button {
+                Task { await PlaybackManager.shared.play(item, client: client) }
+            } label: {
+                ZStack {
+                    Color(white: 0.13)
+                    Image(systemName: "tv").font(.title).foregroundStyle(.white.opacity(0.2))
+                    RemoteImage(url: client.posterURL(item))
+                    Image(systemName: "play.fill")
+                        .font(.title3)
+                        .foregroundStyle(.white)
+                        .frame(width: 50, height: 50)
+                        .background(Circle().fill(.black.opacity(0.45)))
+                        .overlay(Circle().stroke(.white.opacity(0.9), lineWidth: 1.5))
+                }
+                .aspectRatio(2 / 3, contentMode: .fit)
+                .overlay(alignment: .bottom) {
+                    if let info = news?.of(item), info.title != nil { NewsMark(info: info, showBar: false) }
+                }
+                .clipped()
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("تشغيل \(item.cardTitle)")
+
+            progressBar
+            HStack(spacing: 0) {
+                Button(action: showInfo) {
+                    Image(systemName: "info.circle").frame(maxWidth: .infinity, minHeight: 40)
+                }
+                .accessibilityLabel("الحلقات والمعلومات")
+                Button(action: showMenu) {
+                    Image(systemName: "ellipsis").rotationEffect(.degrees(90)).frame(maxWidth: .infinity, minHeight: 40)
+                }
+                .accessibilityLabel("المزيد")
+            }
+            .font(.title3)
+            .foregroundStyle(.white)
+            .buttonStyle(.plain)
+        }
+        .frame(width: width)
+        .background(Color(white: 0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    /// Where it stopped; empty for an episode not started (a new one).
+    private var progressBar: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Rectangle().fill(Color.white.opacity(0.25))
+                Rectangle().fill(ArtworkStatusOverlay.orange).frame(width: geo.size.width * (item.progress ?? 0))
+            }
+        }
+        .frame(height: 3)
+        .padding(.horizontal, 8)
+        .padding(.top, 6)
+        .environment(\.layoutDirection, .leftToRight)
+    }
+}
+
+/// ⋮ on a Continue Watching card: the show's page, download, rating and removing it.
+private struct ContinueMenu: View {
+    let item: PlexItem
+    let client: PlexServerClient
+    let showInfo: () -> Void
+
+    @Environment(ProfileStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    @State private var choosingQuality = false
+    @State private var asking = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text(item.cardTitle).font(.title3.weight(.bold)).lineLimit(1)
+                Spacer()
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(width: 32, height: 32)
+                        .background(Circle().fill(Color.white.opacity(0.15)))
+                }
+                .accessibilityLabel("إغلاق")
+            }
+            .padding(.bottom, 8)
+
+            row("الحلقات والمعلومات", "info.circle", action: showInfo)
+            if Downloads.shared.entry(item.ratingKey) == nil {
+                row(item.isEpisode ? "تنزيل الحلقة" : "تنزيل", "arrow.down.to.line") { choosingQuality = true }
+            } else {
+                row("حذف التنزيل", "trash") {
+                    Downloads.shared.delete(item.ratingKey)
+                    dismiss()
+                }
+            }
+            row("نوع لا يناسبني", "hand.thumbsdown") { rate(2) }
+            row("أعجبني", "hand.thumbsup") { rate(8) }
+            row("من النوع الذي أحبه!", "hands.clap") { rate(10) }
+            row("إزالة من الصف", "xmark") { asking = true }
+            Spacer(minLength: 0)
+        }
+        .padding(20)
+        .foregroundStyle(.white)
+        .presentationBackground(Color(white: 0.17))
+        .downloadQualityDialog(isPresented: $choosingQuality, item: item) { quality in
+            Task { await Downloads.shared.download(item, client: client, quality: quality) }
+            dismiss()
+        }
+        .alert("إزالة «\(ArabicFormat.isolated(item.cardTitle))» من متابعة المشاهدة؟", isPresented: $asking) {
+            Button("إزالة فقط") { remove(deletingHistory: false) }
+            Button("إزالة وحذف السجل", role: .destructive) { remove(deletingHistory: true) }
+            Button("إلغاء", role: .cancel) {}
+        } message: {
+            Text("«إزالة فقط» تُبقي ما شاهدته، ويرجع إذا شاهدت منه شيئًا. «حذف السجل» يرجّعه كأنك ما شاهدته.")
+        }
+    }
+
+    private func row(_ title: String, _ icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Image(systemName: icon).font(.title3).frame(width: 28)
+                Text(title).font(.body)
+                Spacer()
+            }
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// The show's rating on the Plex server (the episode's show; a movie itself).
+    private func rate(_ rating: Int) {
+        let key = item.isEpisode ? (item.grandparentRatingKey ?? item.ratingKey) : item.ratingKey
+        Task { await client.rate(key, rating: rating) }
+        dismiss()
+    }
+
+    private func remove(deletingHistory: Bool) {
+        ContinueActions.remove(ContinueActions.key(item), deletingHistory: deletingHistory, store: store)
+        dismiss()
+    }
+}
+
+extension PlexServerClient {
+    /// The user's rating out of 10 (Plex: 2 = thumbs down, 8 = up, 10 = love).
+    func rate(_ ratingKey: String, rating: Int) async {
+        guard let url = url("/:/rate", [("key", ratingKey), ("identifier", "com.plexapp.plugins.library"),
+                                         ("rating", "\(rating)")]) else { return }
+        _ = try? await PlexHTTP.data(for: PlexHTTP.request(url, method: "PUT", token: token))
+    }
+}
+
 // MARK: - Long-press menu
 
 private struct ItemContextMenu: ViewModifier {

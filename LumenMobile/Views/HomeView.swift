@@ -26,8 +26,7 @@ struct HomeView: View {
                     ForEach(homeRows) { row in
                         switch row.id {
                         case "continue":
-                            ShelfRow(title: row.title, items: row.items, client: client,
-                                     style: .landscape, logos: feed.continueLogos)
+                            ContinueRow(title: row.title, items: row.items, client: client)
                                 .environment(\.showsNewsMarks, true)
                         case "mylist":
                             ShelfRow(title: row.title, items: row.items, client: client)
