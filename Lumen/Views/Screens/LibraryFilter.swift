@@ -33,6 +33,14 @@ struct LibraryFilterGrid: View {
     /// Posters drawn so far (the rest on scroll).
     @State private var shown = Self.page
     private static let page = 60
+    /// «حفظ كصف»: what the alert says (the row's title, or that it's already there).
+    @State private var savedRow: SavedRow?
+
+    private struct SavedRow: Identifiable {
+        let title: String
+        let isNew: Bool
+        var id: String { title }
+    }
 
     /// Movies have no episodes or seasons.
     private var fields: [Field] {
@@ -64,6 +72,10 @@ struct LibraryFilterGrid: View {
                             model.criteria = FilterCriteria()
                         } label: { Text("مسح الكل") }
                             .buttonStyle(FilterTextStyle(accent: true))
+                        Button { saveAsRow() } label: {
+                            Label("حفظ كصف في الرئيسية", systemImage: "rectangle.stack.badge.plus")
+                        }
+                        .buttonStyle(FilterTextStyle(accent: false))
                     }
                     Spacer(minLength: 40)
                     Button { open = .order } label: {
@@ -114,6 +126,13 @@ struct LibraryFilterGrid: View {
             // (Not under a details page: it would take the focus from it.)
             if empty, open == nil, (shell?.pushedPages ?? 0) == 0 { focused = fields.first }
         }
+        .alert(item: $savedRow) { row in
+            Alert(title: Text(row.isNew ? "انضاف للرئيسية" : "الصف موجود في الرئيسية"),
+                  message: Text(row.isNew
+                                ? "«\(row.title)»: آخر الرئيسية، ومحتواه يتغيّر كل يوم. ترتّبه من الإعدادات ← صفوف الرئيسية."
+                                : "«\(row.title)»"),
+                  dismissButton: .default(Text("حسناً")))
+        }
         .fullScreenCover(item: $open) { field in
             FilterPanel(field: field, model: model, movies: scope.section.type == "movie")
         }
@@ -129,6 +148,25 @@ struct LibraryFilterGrid: View {
         }
         .buttonStyle(FilterPillStyle(selected: value(field) != nil))
         .focused($focused, equals: field)
+    }
+
+    /// The choices as a row of Home, named after them: «كوميديا، التقييم ٧ وأعلى في الأفلام».
+    private func saveAsRow() {
+        let criteria = model.criteria
+        let existing = store.activeProfile?.settings?.homeRows?.first {
+            $0.custom?.kind == .filter && $0.custom?.scope == scope.id && $0.custom?.criteria == criteria
+        }
+        if let existing {
+            savedRow = SavedRow(title: existing.title ?? "", isNew: false)
+            return
+        }
+        let parts = fields.compactMap(value).joined(separator: "، ")
+        let title = "\(parts) في \(scope.rowName)"
+        let row = HomeRowConfig(id: "custom-\(UUID().uuidString)", title: title,
+                                custom: CustomHomeRow(kind: .filter, section: scope.section.key,
+                                                      scope: scope.id, criteria: criteria))
+        store.updateSettings { $0.homeRows = HomeLayout.adding(row, current: HomeRowCatalog.shared.rows, layout: $0.homeRows) }
+        savedRow = SavedRow(title: title, isNew: true)
     }
 
     /// What's chosen in a filter, in short; nil when nothing is.

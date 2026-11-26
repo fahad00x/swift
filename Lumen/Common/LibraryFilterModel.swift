@@ -6,7 +6,7 @@ import SwiftUI
 // its listing only carries two per title, so they're asked from the server (and remembered).
 
 /// What the profile chose; nothing chosen = the whole library.
-struct FilterCriteria: Equatable {
+struct FilterCriteria: Codable, Hashable, Sendable {
     /// Arabic genre names (several server tags can share one).
     var genres: Set<String> = []
     /// Several genres: a title needs all of them, or any of them.
@@ -53,7 +53,7 @@ struct FilterCriteria: Equatable {
 }
 
 /// Where the profile is with a title (always exactly one).
-enum FilterWatched: CaseIterable {
+enum FilterWatched: String, CaseIterable, Codable, Sendable {
     case notStarted, started
     /// Everything out so far, of a show still getting episodes: not finished, nothing to watch
     /// yet. Back to `started` when the next episode comes, `finished` once none comes anymore.
@@ -300,6 +300,9 @@ final class LibraryFilterModel {
     }
 
     func retry() { apply() }
+
+    /// Once the results of the current choices are in.
+    func settled() async { await work?.value }
 
     /// The genre's id: Plex gives it alone ("123") or inside a filter path ("…/all?genre=123").
     private static func genreID(_ key: String) -> String {

@@ -502,7 +502,9 @@ struct HomeView: View {
     private var rowInfos: [HomeRowInfo] { baseRows.map { HomeRowInfo(id: $0.id, title: $0.title) } }
 
     private func loadCustomRows() async {
-        let added = await CustomHomeRows.load(layout, client: client, filter: filter)
+        // A saved filter's row doesn't repeat what Home's own rows show.
+        let shown = Set(rows.flatMap { $0.items.map(\.ratingKey) })
+        let added = await CustomHomeRows.load(layout, client: client, filter: filter, store: store, exclude: shown)
         customRows = added.map { Shelf(id: $0.id, title: $0.title, kind: .poster, items: $0.items) }
     }
 

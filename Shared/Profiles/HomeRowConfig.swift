@@ -27,12 +27,17 @@ struct CustomHomeRow: Codable, Hashable, Sendable {
         case genre
         /// A Plex / Kometa collection.
         case collection
+        /// What «فلترة» matched (saved from the library's filter tab); a new batch every day.
+        case filter
     }
     var kind: Kind
     /// The library's key.
     var section: String
     var genre: String?
     var collection: String?
+    /// `.filter`: the library tab it was saved from (`LibraryScope.id`) and the choices.
+    var scope: String?
+    var criteria: FilterCriteria?
 }
 
 /// A row as Settings lists it: its family and title.
