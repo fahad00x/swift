@@ -148,6 +148,9 @@ targets:
         ITSAppUsesNonExemptEncryption: false
         LSApplicationCategoryType: public.app-category.entertainment
         NSLocalNetworkUsageDescription: يحتاج Lumen للوصول إلى الشبكة المحلية للاتصال بخادم Plex في منزلك.
+        # TMDB key for content advisories, as on Apple TV: empty in the repo, CI writes it into
+        # the generated (git-ignored) Info.plist.
+        TMDBAPIKey: ""
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
           NSAllowsLocalNetworking: true

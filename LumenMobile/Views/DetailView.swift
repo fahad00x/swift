@@ -15,6 +15,8 @@ struct DetailView: View {
     @State private var episodesBySeason: [String: [PlexItem]] = [:]
     @State private var related: [PlexItem] = []
     @State private var extras: [PlexItem] = []
+    /// What the title contains (TMDB), nil until known or without a TMDB key.
+    @State private var advisory: [ContentFlag]?
     @State private var summaryExpanded = false
     @State private var audioSelection = -1
     @State private var subtitleSelection = -1
@@ -126,6 +128,17 @@ struct DetailView: View {
                 Text(infoLine(item))
                     .font(metrics.isWide ? .subheadline : .caption)
                     .foregroundStyle(.white.opacity(0.85))
+                // What the age rating means, then what this title contains (as on Apple TV).
+                if let meaning = RatingGuide.explain(item.normalizedContentRating) {
+                    Text(meaning)
+                        .font(metrics.isWide ? .footnote : .caption2)
+                        .foregroundStyle(.white.opacity(0.65))
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                }
+                if let advisory, !advisory.isEmpty {
+                    ContentFlagChips(flags: advisory, large: metrics.isWide)
+                }
                 if !badges.isEmpty {
                     HStack(spacing: 6) { ForEach(badges, id: \.self) { Badge(text: $0) } }
                 }
@@ -342,10 +355,24 @@ struct DetailView: View {
             infoLine("الصوت", ArabicFormat.list(target.audioStreams.prefix(4).map(\.label)))
             infoLine("الترجمات", ArabicFormat.list(target.subtitleStreams.prefix(6).map(\.label)))
             infoLine("الملف", ArabicFormat.joined(file))
+            if let rating = (item ?? target).normalizedContentRating {
+                infoLine("التصنيف", ratingText(rating))
+            }
+            if let advisory, !advisory.isEmpty {
+                infoLine("المحتوى", advisory.map(\.title).joined(separator: "، "))
+            }
             if target.isEpisode {
                 infoLine("التخطي", target.introSkipSourceText.replacingOccurrences(of: "تخطي المقدمة: ", with: "المقدمة: "))
             }
         }
+    }
+
+    /// «R: للكبار (+١٧)…»; a bare age («+18») is already in its meaning.
+    private func ratingText(_ rating: String) -> String {
+        guard let meaning = RatingGuide.explain(rating) else { return rating }
+        if rating.allSatisfy({ $0.isNumber || $0 == "+" }) { return meaning }
+        // FSI…PDI keeps «TV-14» a left-to-right island so the colon lands after it in RTL.
+        return "\u{2068}\(rating)\u{2069}: \(meaning)"
     }
 
     private func infoLine(_ title: String, _ value: String) -> some View {
@@ -367,6 +394,9 @@ struct DetailView: View {
             ? ShowEpisodes.load(client: client, showKey: key, preferred: entry.isEpisode ? entry : nil) : nil
         guard let detailed = try? await detailTask else { return }
         item = detailed
+        if advisory == nil {
+            Task { advisory = await ContentAdvisory.shared.flags(for: detailed) }
+        }
         if detailed.isShow {
             guard let show = await showTask else { return }
             seasons = show.seasons
@@ -503,5 +533,42 @@ private struct EpisodeRow: View {
             Spacer(minLength: 0)
         }
         .contentShape(Rectangle())
+    }
+}
+
+/// «عري • مشاهد دموية • ألفاظ» as small chips, the icon tinted by how sensitive it is (as on Apple TV).
+private struct ContentFlagChips: View {
+    let flags: [ContentFlag]
+    let large: Bool
+
+    var body: some View {
+        // One centred row under the title, wrapping only when it doesn't fit.
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 6) { chips }
+            FlowLayout(spacing: 6) { chips }.fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("المحتوى: " + flags.map(\.title).joined(separator: "، "))
+    }
+
+    private var chips: some View {
+        ForEach(flags.prefix(6), id: \.self) { flag in
+            HStack(spacing: 4) {
+                Image(systemName: flag.symbol).foregroundStyle(tint(flag))
+                Text(flag.title).foregroundStyle(.white.opacity(0.9))
+            }
+            .font((large ? Font.caption : .caption2).weight(.semibold))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(Color.white.opacity(0.14)))
+        }
+    }
+
+    private func tint(_ flag: ContentFlag) -> Color {
+        switch flag {
+        case .nudity, .sex: return Color(red: 1, green: 0.42, blue: 0.42)
+        case .gore, .violence, .suicide: return Color(red: 1, green: 0.62, blue: 0.3)
+        default: return Color(red: 1, green: 0.82, blue: 0.35)
+        }
     }
 }

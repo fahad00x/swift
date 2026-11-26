@@ -126,7 +126,10 @@ jobs:
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
         run: |
           if [ -n "$TMDB_API_KEY" ]; then
-            /usr/libexec/PlistBuddy -c "Set :TMDBAPIKey $TMDB_API_KEY" Lumen/Info.plist
+            # Apple TV and iPhone/iPad apps.
+            for plist in Lumen/Info.plist LumenMobile/Info.plist; do
+              [ -f "$plist" ] && /usr/libexec/PlistBuddy -c "Set :TMDBAPIKey $TMDB_API_KEY" "$plist"
+            done
             echo "TMDB key added (content advisories on)."
           else
             echo "::notice::No TMDB_API_KEY secret: the app shows only the age rating's meaning."
@@ -327,4 +330,6 @@ jobs:
         run: |
           rm -rf "$RUNNER_TEMP/asc"
           # Don't leave the TMDB key in the (self-hosted) runner's checkout.
-          [ -f Lumen/Info.plist ] && /usr/libexec/PlistBuddy -c "Set :TMDBAPIKey ''" Lumen/Info.plist || true
+          for plist in Lumen/Info.plist LumenMobile/Info.plist; do
+            [ -f "$plist" ] && /usr/libexec/PlistBuddy -c "Set :TMDBAPIKey ''" "$plist" || true
+          done
