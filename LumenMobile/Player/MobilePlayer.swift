@@ -266,26 +266,6 @@ struct MobilePlayerControls: View {
 
                 Spacer()
 
-                // Each button sits on a dark circle, so it stays visible over a bright scene
-                // (the gradient leaves the middle of the picture clear).
-                HStack(spacing: wide ? 56 : 36) {
-                    Button { session.seek(by: -skip) } label: {
-                        Image(systemName: "gobackward.\(Int(skip))").font(.system(size: wide ? 34 : 28))
-                            .centerControl(diameter: wide ? 76 : 64)
-                    }
-                    Button { session.togglePause() } label: {
-                        Image(systemName: session.isPaused ? "play.fill" : "pause.fill").font(.system(size: wide ? 46 : 38))
-                            .centerControl(diameter: wide ? 104 : 88)
-                    }
-                    Button { session.seek(by: skip) } label: {
-                        Image(systemName: "goforward.\(Int(skip))").font(.system(size: wide ? 34 : 28))
-                            .centerControl(diameter: wide ? 76 : 64)
-                    }
-                }
-                .environment(\.layoutDirection, .leftToRight)
-
-                Spacer()
-
                 VStack(spacing: 14) {
                     HStack(alignment: .bottom, spacing: 20) {
                         info
@@ -298,6 +278,25 @@ struct MobilePlayerControls: View {
                 .padding(.horizontal, inset)
                 .padding(.bottom, wide ? 34 : 22)
             }
+
+            // In the middle of the screen, not between the top and bottom bars (the bottom one is
+            // taller). Each button sits on a dark circle, so it stays visible over a bright scene
+            // (the gradient leaves the middle of the picture clear).
+            HStack(spacing: wide ? 56 : 36) {
+                Button { session.seek(by: -skip) } label: {
+                    Image(systemName: "gobackward.\(Int(skip))").font(.system(size: wide ? 34 : 28))
+                        .centerControl(diameter: wide ? 76 : 64)
+                }
+                Button { session.togglePause() } label: {
+                    Image(systemName: session.isPaused ? "play.fill" : "pause.fill").font(.system(size: wide ? 46 : 38))
+                        .centerControl(diameter: wide ? 104 : 88)
+                }
+                Button { session.seek(by: skip) } label: {
+                    Image(systemName: "goforward.\(Int(skip))").font(.system(size: wide ? 34 : 28))
+                        .centerControl(diameter: wide ? 76 : 64)
+                }
+            }
+            .environment(\.layoutDirection, .leftToRight)
         }
     }
 
