@@ -262,6 +262,15 @@ struct SettingsView: View {
                 if store.canUndoImport {
                     row("التراجع عن آخر استيراد", detail: "يرجّع السجل كما كان قبله", arrow: false) { confirmUndo = true }
                 }
+                // Ratings are the profile's own; the server's are the account's, shared by every
+                // profile, so only the account's own profile can send them there.
+                if store.activeProfile?.isOwner == true {
+                    Toggle(isOn: Binding(
+                        get: { store.activeProfile?.settings?.ratingsToPlex ?? false },
+                        set: { on in store.updateSettings { $0.ratingsToPlex = on } })) {
+                        labelled("إرسال التقييمات إلى Plex", "تقييماتك تظهر في Plex أيضًا")
+                    }
+                }
             }
             Section {
                 LabeledContent("المزامنة", value: store.cloudStatus.description)

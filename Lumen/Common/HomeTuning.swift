@@ -7,6 +7,10 @@ enum HomeTuning {
 
     /// Progress (ms) before an unfinished item counts towards the profile's taste.
     static let tasteMinOffsetMs = 60_000
+    /// «نوع لا يناسبني»: taken off each of the title's genres (at least; more for a recent one).
+    static let dislikedGenrePenalty = 0.5
+    /// A liked / loved title the profile hasn't watched: per genre, before its rating factor.
+    static let ratedUnwatchedWeight = 0.5
     /// Recency: weight = 1 / (1 + days / recencyDays).
     static let recencyDays = 30.0
     /// Show engagement: min(cap, 1 + ln(1 + watched episodes) / divisor).

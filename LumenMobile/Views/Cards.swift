@@ -640,9 +640,7 @@ private struct ContinueMenu: View {
                     dismiss()
                 }
             }
-            row("نوع لا يناسبني", "hand.thumbsdown") { rate(2) }
-            row("أعجبني", "hand.thumbsup") { rate(8) }
-            row("من النوع الذي أحبه!", "hands.clap") { rate(10) }
+            ForEach(TitleRating.allCases, id: \.self) { ratingRow($0) }
             row("إزالة من الصف", "xmark") { asking = true }
             Spacer(minLength: 0)
         }
@@ -675,25 +673,30 @@ private struct ContinueMenu: View {
         .buttonStyle(.plain)
     }
 
-    /// The show's rating on the Plex server (the episode's show; a movie itself).
-    private func rate(_ rating: Int) {
-        let key = item.isEpisode ? (item.grandparentRatingKey ?? item.ratingKey) : item.ratingKey
-        Task { await client.rate(key, rating: rating) }
-        dismiss()
+    /// The chosen one is filled and in the accent colour; tapping it again clears it.
+    private func ratingRow(_ rating: TitleRating) -> some View {
+        let chosen = TitleRatings.rating(of: item, store: store) == rating
+        return Button {
+            TitleRatings.toggle(rating, for: item, client: client, store: store)
+            dismiss()
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: rating.symbol(filled: chosen)).font(.title3).frame(width: 28)
+                    .foregroundStyle(chosen ? Theme.accent : .white)
+                Text(rating.title).font(.body)
+                Spacer()
+                if chosen { Image(systemName: "checkmark").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.accent) }
+            }
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(chosen ? .isSelected : [])
     }
 
     private func remove(deletingHistory: Bool) {
         ContinueActions.remove(ContinueActions.key(item), deletingHistory: deletingHistory, store: store)
         dismiss()
-    }
-}
-
-extension PlexServerClient {
-    /// The user's rating out of 10 (Plex: 2 = thumbs down, 8 = up, 10 = love).
-    func rate(_ ratingKey: String, rating: Int) async {
-        guard let url = url("/:/rate", [("key", ratingKey), ("identifier", "com.plexapp.plugins.library"),
-                                         ("rating", "\(rating)")]) else { return }
-        _ = try? await PlexHTTP.data(for: PlexHTTP.request(url, method: "PUT", token: token))
     }
 }
 

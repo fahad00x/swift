@@ -373,6 +373,35 @@ final class ProfileStore {
         }
     }
 
+    // MARK: - Ratings
+
+    /// The active profile's rating of a show or movie (its key: a show's, not an episode's).
+    func rating(of key: String) -> TitleRating? {
+        _ = revision
+        return activeProfile?.settings?.ratings?[key]
+    }
+
+    /// Every rating of the active profile.
+    var ratings: [String: TitleRating] {
+        _ = revision
+        return activeProfile?.settings?.ratings ?? [:]
+    }
+
+    /// nil clears it. «نوع لا يناسبني» also takes it out of Continue Watching.
+    func setRating(_ rating: TitleRating?, for key: String) {
+        let now = Date()
+        updateSettings { settings in
+            var ratings = settings.ratings ?? [:]
+            ratings[key] = rating
+            settings.ratings = ratings.isEmpty ? nil : ratings
+            if rating == .dislike {
+                var hidden = settings.continueHidden ?? [:]
+                hidden[key] = now
+                settings.continueHidden = hidden
+            }
+        }
+    }
+
     /// A show's (every episode's) or a movie's progress and watched marks: as if never watched.
     /// Chosen tracks stay.
     func clearHistory(of key: String) {

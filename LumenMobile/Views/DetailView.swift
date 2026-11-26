@@ -185,6 +185,8 @@ struct DetailView: View {
             }
             .accessibilityLabel("قائمتي")
 
+            ratingMenu(item)
+
             // A movie, or the episode Play starts.
             if let target = item.isShow ? playTarget : item, target.isPlayable {
                 DownloadButton(item: target, client: client)
@@ -192,6 +194,27 @@ struct DetailView: View {
 
             Menu { moreMenu(item) } label: { circleIcon("ellipsis") }
         }
+    }
+
+    /// «قيّم»: the three thumbs; the chosen one shows on the button, a second tap clears it.
+    private func ratingMenu(_ item: PlexItem) -> some View {
+        let chosen = TitleRatings.rating(of: item, store: store)
+        return Menu {
+            ForEach(TitleRating.allCases, id: \.self) { rating in
+                Button {
+                    TitleRatings.toggle(rating, for: item, client: client, store: store)
+                } label: {
+                    Label(rating.title, systemImage: rating.symbol(filled: chosen == rating))
+                }
+            }
+        } label: {
+            Image(systemName: (chosen ?? .like).symbol(filled: chosen != nil))
+                .font(.headline)
+                .frame(width: 46, height: 46)
+                .background(Circle().fill(.white.opacity(0.18)))
+                .foregroundStyle(chosen == nil ? Color.white : Theme.accent)
+        }
+        .accessibilityLabel(chosen.map { "التقييم: \($0.title)" } ?? "قيّم")
     }
 
     private func circleIcon(_ name: String) -> some View {

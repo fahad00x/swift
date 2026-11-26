@@ -282,6 +282,8 @@ enum TVFeed {
         let latest = store.activeStates
             .filter { $0.watched || $0.offsetMs > 600_000 }
             .filter { section == nil || $0.sectionKey == nil || $0.sectionKey == section?.key }
+            // Never from one the profile rated «نوع لا يناسبني».
+            .filter { store.rating(of: $0.showKey ?? $0.ratingKey) != .dislike }
             .sorted { $0.lastViewedAt > $1.lastViewedAt }
             .first
         guard let latest else { return nil }

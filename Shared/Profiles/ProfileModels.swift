@@ -79,10 +79,55 @@ struct ProfileSettings: Codable, Hashable, Sendable {
     var homeRows: [HomeRowConfig]?
     /// A library's «مقترح» rows as the profile arranged them, by library tab (`LibraryScope.id`).
     var libraryRows: [String: [HomeRowConfig]]?
+    /// Show / movie → the profile's rating («نوع لا يناسبني / أعجبني / من النوع الذي أحبه!»).
+    var ratings: [String: TitleRating]?
+    /// Ratings go to the Plex server too (the account's own profile only).
+    var ratingsToPlex: Bool?
 
     /// Device keys these mirror (the players read them from UserDefaults).
     static let autoSkipIntroKey = "playback.autoSkipIntro"
     static let autoPlayNextKey = "playback.autoPlayNext"
+}
+
+/// A profile's rating of a show or movie, like Netflix's three thumbs.
+enum TitleRating: String, Codable, Hashable, Sendable, CaseIterable {
+    case dislike, like, love
+
+    var title: String {
+        switch self {
+        case .dislike: "نوع لا يناسبني"
+        case .like: "أعجبني"
+        case .love: "من النوع الذي أحبه!"
+        }
+    }
+
+    /// SF Symbol; `filled` when it is the chosen one.
+    func symbol(filled: Bool) -> String {
+        let base = switch self {
+        case .dislike: "hand.thumbsdown"
+        case .like: "hand.thumbsup"
+        case .love: "hands.clap"
+        }
+        return filled ? base + ".fill" : base
+    }
+
+    /// Plex's user rating out of 10.
+    var plexValue: Int {
+        switch self {
+        case .dislike: 2
+        case .like: 8
+        case .love: 10
+        }
+    }
+
+    /// How much more (or less) the title counts in the profile's taste.
+    var tasteFactor: Double {
+        switch self {
+        case .dislike: 0
+        case .like: 1.3
+        case .love: 2
+        }
+    }
 }
 
 /// Playback progress, watched mark and chosen tracks of one item for one profile.

@@ -67,7 +67,7 @@ struct DetailPage: View {
     @FocusState private var seasonFocus: String?
     @FocusState private var lowerFocus: String?
 
-    enum HeroButton: Hashable { case browse, play, watchlist, episodes, more, down, backToTop }
+    enum HeroButton: Hashable { case browse, play, watchlist, rating, episodes, more, down, backToTop }
 
     /// Side inset of rows on the full-screen episodes view.
     static let sideInset: CGFloat = CardKind.inset
@@ -277,7 +277,7 @@ struct DetailPage: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 guard !scrolled else { return }
                 switch heroFocus {
-                case .play?, .watchlist?, .episodes?, .more?, .browse?: return
+                case .play?, .watchlist?, .rating?, .episodes?, .more?, .browse?: return
                 default: break
                 }
                 if delay == 0.7 { rowsToken += 1 }
@@ -475,6 +475,24 @@ struct DetailPage: View {
             .nativeCircleButton()
             .focused($heroFocus, equals: .watchlist)
 
+            // «قيّم» (the profile's own): the chosen one shows on the button, a second choice clears it.
+            let chosen = TitleRatings.rating(of: item, store: store)
+            Menu {
+                ForEach(TitleRating.allCases, id: \.self) { rating in
+                    Button {
+                        TitleRatings.toggle(rating, for: item, client: client, store: store)
+                    } label: {
+                        Label(rating.title, systemImage: rating.symbol(filled: chosen == rating))
+                    }
+                }
+            } label: {
+                Image(systemName: (chosen ?? .like).symbol(filled: chosen != nil))
+            }
+            .menuStyle(.button)
+            .nativeCircleButton()
+            .focused($heroFocus, equals: .rating)
+            .accessibilityLabel(chosen.map { "التقييم: \($0.title)" } ?? "قيّم")
+
             Button {
                 setScrolled(true)
                 focusEpisodes()
@@ -498,7 +516,7 @@ struct DetailPage: View {
         switch new {
         case .browse?:
             setBrowsing(true)
-        case .play?, .watchlist?, .episodes?, .more?:
+        case .play?, .watchlist?, .rating?, .episodes?, .more?:
             setBrowsing(false)
         case .down?:
             setScrolled(true)

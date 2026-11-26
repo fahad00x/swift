@@ -99,11 +99,15 @@ enum UserFeed {
     /// `taste(store:)` after asking the server for the genres of the most recent titles that
     /// have none (cached per session and on disk).
     static func taste(store: ProfileStore, client: PlexServerClient) async -> TasteProfile {
+        let seen = Set(store.activeStates.map { $0.showKey ?? $0.ratingKey })
         let missing = taste(store: store).titles
             .filter { $0.genres.isEmpty && learnedGenres[$0.key] == nil }
             .sorted { $0.lastViewedAt > $1.lastViewedAt }
             .prefix(HomeTuning.tasteMetadataLookups)
             .map(\.key)
+            // Rated without being watched (or disliked, so not among the titles): their genres too.
+            + store.ratings.keys.filter { learnedGenres[$0] == nil && !seen.contains($0) }.sorted()
+                .prefix(HomeTuning.tasteMetadataLookups)
         if !missing.isEmpty {
             let found: [(String, [String])] = await withTaskGroup(of: (String, [String]).self) { group in
                 for key in missing {
@@ -147,6 +151,7 @@ enum UserFeed {
         }
 
         let now = Date()
+        let ratings = store.ratings
         var titles: [TasteProfile.Title] = []
         var weights: [String: Double] = [:]
         for (key, group) in groups {
@@ -168,11 +173,28 @@ enum UserFeed {
                     ? HomeTuning.finishedMovieEngagement
                     : (abandoned ? HomeTuning.abandonedEngagement : 1)
             }
+            // The profile's rating: «أحبه» counts double, «أعجبني» a third more; «لا يناسبني»
+            // takes the title out (no «لأنك شاهدت…» from it) and its genres count against.
+            let rating = ratings[key]
+            if rating == .dislike {
+                let penalty = max(recency * engagement, HomeTuning.dislikedGenrePenalty)
+                for genre in genres { weights[genre, default: 0] -= penalty }
+                continue
+            }
             let title = TasteProfile.Title(key: key, type: group.type, genres: genres.sorted(),
                                            lastViewedAt: group.lastViewedAt, watchedCount: group.watched,
-                                           abandoned: abandoned, recency: recency, engagement: engagement)
+                                           abandoned: abandoned, recency: recency,
+                                           engagement: engagement * (rating?.tasteFactor ?? 1))
             titles.append(title)
             for genre in genres { weights[genre, default: 0] += title.weight }
+        }
+        // Rated without being watched (from a title's page): their genres only.
+        for (key, rating) in ratings where groups[key] == nil {
+            for genre in learnedGenres[key] ?? [] {
+                weights[genre, default: 0] += rating == .dislike
+                    ? -HomeTuning.dislikedGenrePenalty
+                    : HomeTuning.ratedUnwatchedWeight * rating.tasteFactor
+            }
         }
         titles.sort { $0.weight != $1.weight ? $0.weight > $1.weight : $0.key < $1.key }
         return TasteProfile(titles: titles, weights: weights)
