@@ -9,6 +9,8 @@ struct HomeView: View {
     @State private var isLoading = true
     @State private var isRefreshing = false
     @State private var shownSignature: String?
+    /// Rows the profile added (Settings → «صفوف الرئيسية»).
+    @State private var customRows: [HomeFeed.Row] = []
     @Environment(ShowNews.self) private var news: ShowNews?
     @Environment(\.horizontalSizeClass) private var sizeClass
 
@@ -19,20 +21,22 @@ struct HomeView: View {
                     if !feed.featured.isEmpty {
                         HeroPager(items: feed.featured, client: client)
                     }
-                    let continuing = ContinueActions.shown(feed.continueWatching, store: store, news: news, filter: filter)
-                    if !continuing.isEmpty {
-                        ShelfRow(title: "متابعة المشاهدة", items: continuing, client: client,
-                                 style: .landscape, logos: feed.continueLogos)
-                            .environment(\.showsNewsMarks, true)
+                    // Fixed / dynamic / removed rows and the rows the profile added, as it
+                    // arranged them (the same arrangement on every device).
+                    ForEach(homeRows) { row in
+                        switch row.id {
+                        case "continue":
+                            ShelfRow(title: row.title, items: row.items, client: client,
+                                     style: .landscape, logos: feed.continueLogos)
+                                .environment(\.showsNewsMarks, true)
+                        case "mylist":
+                            ShelfRow(title: row.title, items: row.items, client: client)
+                                .environment(\.showsNewsMarks, true)
+                        default:
+                            ShelfRow(title: row.title, items: row.items, client: client, ranked: row.ranked)
+                        }
                     }
-                    if !feed.myList.isEmpty {
-                        ShelfRow(title: "قائمتي", items: feed.myList, client: client)
-                            .environment(\.showsNewsMarks, true)
-                    }
-                    ForEach(feed.rows) { row in
-                        ShelfRow(title: row.title, items: row.items, client: client, ranked: row.ranked)
-                    }
-                    if !isLoading && feed.isEmpty && continuing.isEmpty {
+                    if !isLoading && feed.isEmpty && homeRows.isEmpty {
                         ContentUnavailableView("لا يوجد محتوى", systemImage: "film.stack",
                                                description: Text(filter.scopes.isEmpty
                                                                  ? "لا توجد مكتبات مفتوحة لهذا المستخدم. افتحها من الإعدادات ← إعدادات المستخدم."
@@ -83,6 +87,39 @@ struct HomeView: View {
         .onReceive(NotificationCenter.default.publisher(for: .myListDidChange)) { _ in
             Task { feed.myList = await UserFeed.myList(store: store, client: client, filter: filter) }
         }
+        .task(id: customSignature) { await loadCustomRows() }
+        // «صفوف الرئيسية» lists what Home built.
+        .onChange(of: rowInfos, initial: true) { _, infos in HomeRowCatalog.shared.rows = infos }
+    }
+
+    // MARK: Rows
+
+    private var layout: [HomeRowConfig]? { store.activeProfile?.settings?.homeRows }
+
+    /// Home's rows as the app built them: Continue Watching, «قائمتي», the feed's rows, then
+    /// the rows the profile added.
+    private var baseRows: [HomeFeed.Row] {
+        var out: [HomeFeed.Row] = []
+        let continuing = ContinueActions.shown(feed.continueWatching, store: store, news: news, filter: filter)
+        if !continuing.isEmpty { out.append(HomeFeed.Row(id: "continue", title: "متابعة المشاهدة", items: continuing)) }
+        if !feed.myList.isEmpty { out.append(HomeFeed.Row(id: "mylist", title: "قائمتي", items: feed.myList)) }
+        return out + feed.rows + customRows
+    }
+
+    private var homeRows: [HomeFeed.Row] { HomeLayout.arrange(baseRows, id: \.id, layout: layout) }
+
+    private var rowInfos: [HomeRowInfo] { baseRows.map { HomeRowInfo(id: $0.id, title: $0.title) } }
+
+    /// Changes when the rows the profile added change (not when one only moves).
+    private var customSignature: String {
+        (layout ?? []).filter { $0.custom != nil && !$0.hidden }.map(\.id).sorted().joined(separator: ",") + "|" + filter.signature
+    }
+
+    private func loadCustomRows() async {
+        // A saved filter's row doesn't repeat what Home's own rows show.
+        let shown = Set((feed.continueWatching + feed.myList + feed.rows.flatMap(\.items)).map(\.ratingKey))
+        let added = await CustomHomeRows.load(layout, client: client, filter: filter, store: store, exclude: shown)
+        customRows = added.map { HomeFeed.Row(id: $0.id, title: $0.title, items: $0.items) }
     }
 
     /// Current profile; tap to go back to «مين يشاهد؟».
@@ -107,6 +144,7 @@ struct HomeView: View {
             if new.featured == feed.featured { updated.featured = feed.featured }
             feed = updated
         }
+        await loadCustomRows()
     }
 }
 

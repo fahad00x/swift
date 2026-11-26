@@ -49,7 +49,7 @@ struct SettingsView: View {
     }
 
     /// What a page opens (by value, so the pages inside can open theirs).
-    private enum Pushed: Hashable { case page(Page), browseLibraries, profileLibraries, importHistory, diagnostics }
+    private enum Pushed: Hashable { case page(Page), browseLibraries, profileLibraries, importHistory, diagnostics, homeRows }
 
     @Environment(AppSession.self) private var session
     @Environment(ProfileStore.self) private var store
@@ -180,6 +180,8 @@ struct SettingsView: View {
             LibrariesPage(client: client, sections: sections, scopes: activeScopes)
         case .diagnostics:
             HomeDiagnosticsView(client: client)
+        case .homeRows:
+            HomeRowsPage(client: client)
         case .importHistory:
             if let profile = store.activeProfile {
                 PlexImportPage(client: client, sections: filter.sections, profile: profile)
@@ -230,6 +232,7 @@ struct SettingsView: View {
                 }
             }
             Section("الرئيسية") {
+                row("صفوف الرئيسية", detail: "الترتيب، ثابت أو ديناميكي، الإضافة والحذف") { path.append(Pushed.homeRows) }
                 Picker("ترتيب متابعة المشاهدة", selection: Binding(
                     get: { store.activeProfile?.settings?.continueNewFirst ?? false },
                     set: { on in store.updateSettings { $0.continueNewFirst = on } })) {
