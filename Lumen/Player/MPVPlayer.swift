@@ -369,6 +369,9 @@ final class MPVPlayer {
         setString("sub-margin-y", layout.lifted ? "210" : "60")
     }
 
+    /// mpv's own volume, ± percent (it keeps it within 0…volume-max).
+    func changeVolume(by percent: Int) { command("add", "volume", "\(percent)") }
+
     func selectAudio(_ id: Int) { setString("aid", "\(id)") }
     func selectSubtitle(_ id: Int?) { setString("sid", id.map(String.init) ?? "no") }
 

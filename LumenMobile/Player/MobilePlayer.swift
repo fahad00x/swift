@@ -88,6 +88,8 @@ final class MobilePlayerViewController: UIViewController {
             view.window?.windowScene?.requestGeometryUpdate(.iOS(interfaceOrientations: .landscape)) { _ in }
         }
         UIApplication.shared.isIdleTimerDisabled = true
+        // Keyboard shortcuts (PlayerKeyCommands.swift).
+        becomeFirstResponder()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
