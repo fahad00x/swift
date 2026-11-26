@@ -38,6 +38,18 @@ actor AnimeTitles {
     /// The same title on every server: Plex's own guid when there is one.
     static func key(for item: PlexItem) -> String { item.guid ?? item.ratingKey }
 
+    /// The AniList id found for an anime (only those whose names weren't in the app already).
+    func anilistID(for item: PlexItem) -> Int? {
+        load()
+        return entries[Self.key(for: item)]?.anilistID
+    }
+
+    /// AniList's other titles of each anime looked up, by `key(for:)`.
+    func aliasesByKey() -> [String: [String]] {
+        load()
+        return entries.compactMapValues { $0.titles.isEmpty ? nil : $0.titles }
+    }
+
     /// Titles by `key(for:)`, ready for `SmartSearch`.
     func aliases() -> [String: [SearchField]] {
         load()
@@ -105,7 +117,7 @@ actor AnimeTitles {
 
     private struct Response: Decodable { let data: [String: Page?]? }
     private struct Page: Decodable { let media: [Media] }
-    private struct Media: Decodable {
+    struct Media: Decodable {
         struct Title: Decodable { let romaji: String?; let english: String?; let native: String? }
         struct FuzzyDate: Decodable { let year: Int? }
         let id: Int
@@ -114,6 +126,13 @@ actor AnimeTitles {
         let synonyms: [String]?
         let seasonYear: Int?
         let startDate: FuzzyDate?
+        /// Only asked for by `AnimeRecommendations`.
+        let recommendations: Recommendations?
+
+        struct Recommendations: Decodable {
+            struct Node: Decodable { let mediaRecommendation: Media? }
+            let nodes: [Node]
+        }
 
         var year: Int? { seasonYear ?? startDate?.year }
         var names: [String] {
@@ -172,14 +191,14 @@ actor AnimeTitles {
     }
 
     /// The name to search AniList with (an Arabic title won't be found there).
-    private static func searchName(_ item: PlexItem) -> String {
+    static func searchName(_ item: PlexItem) -> String {
         if SearchText.isArabic(item.title), let original = item.originalTitle { return original }
         return item.title
     }
 
     /// Only a confident match: a name equal (or one or two letters off) to the item's title or
     /// original title, and a year no more than one off when both are known.
-    private static func bestMatch(for item: PlexItem, in candidates: [Media]) -> Media? {
+    static func bestMatch(for item: PlexItem, in candidates: [Media]) -> Media? {
         let own = [item.title, item.originalTitle].compactMap { $0 }
             .map { SearchText.scalars(SearchText.normalize($0).replacingOccurrences(of: " ", with: "")) }
             .filter { !$0.isEmpty }

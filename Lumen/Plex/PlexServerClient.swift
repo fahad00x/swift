@@ -324,11 +324,21 @@ final class PlexServerClient: Sendable {
     }
 
     /// "More like this" from the server's related hubs.
+    /// «أفلام مشابهة» / «ذات صلة» / «لأنك شاهدت…» (see `RelatedTitles`): Plex's groups ranked
+    /// (big collection lists dropped); anime first get AniList's recommendations; titles of the
+    /// same library sharing genres fill in when that's short (on the device, no request).
     func related(_ ratingKey: String) async -> [PlexItem] {
-        guard let hubs = try? await container("/library/metadata/\(ratingKey)/related").hubs else { return [] }
-        var seen = Set<String>([ratingKey])
-        return hubs.flatMap(\.items).filter {
-            ($0.type == "movie" || $0.type == "show") && seen.insert($0.ratingKey).inserted
+        let hubs = (try? await container("/library/metadata/\(ratingKey)/related").hubs) ?? []
+        let plex = RelatedTitles.ranked(hubs, excluding: ratingKey)
+        guard let item = await local.item(server: machineIdentifier, key: ratingKey),
+              let library = await local.libraryItems(server: machineIdentifier, of: item) else {
+            return plex.strong + plex.weak
+        }
+        let isAnime = AnimeClassifier.isAnime(item)
+        let aniList = isAnime ? await AnimeRecommendations.shared.matches(for: item, in: library) : []
+        let index = isAnime ? await AnimeIndex.shared.value : nil
+        return RelatedTitles.combine(item: item, isAnime: isAnime, plex: plex, aniList: aniList) {
+            RelatedTitles.byGenre(for: item, in: library, anime: index)
         }
     }
 
