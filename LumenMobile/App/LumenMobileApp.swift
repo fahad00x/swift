@@ -155,7 +155,7 @@ struct MainTabView: View {
             let rest = filter.scopes.filter { scope in !pinned.contains { $0.id == scope.id } }
             TabView(selection: $selection) {
                 Tab("الرئيسية", systemImage: "house.fill", value: TabID.home) { HomeView(client: client) }
-                Tab("قائمتي", systemImage: "plus.rectangle.fill.on.rectangle.fill", value: TabID.myList) { MyListView(client: client) }
+                Tab("قائمتي", systemImage: "bookmark", value: TabID.myList) { MyListView(client: client) }
                 Tab("بحث", systemImage: "magnifyingglass", value: TabID.search) { SearchView(client: client) }
                 Tab("التنزيلات", systemImage: "arrow.down.circle.fill", value: TabID.downloads) { DownloadsView(client: client) }
                 Tab("الإعدادات", systemImage: "gearshape.fill", value: TabID.settings) {
@@ -184,7 +184,7 @@ struct MainTabView: View {
                 HomeView(client: client)
                     .tabItem { Label("الرئيسية", systemImage: "house.fill") }
                 MyListView(client: client)
-                    .tabItem { Label("قائمتي", systemImage: "plus.rectangle.fill.on.rectangle.fill") }
+                    .tabItem { Label("قائمتي", systemImage: "bookmark") }
                 SearchView(client: client)
                     .tabItem { Label("بحث", systemImage: "magnifyingglass") }
                 DownloadsView(client: client)

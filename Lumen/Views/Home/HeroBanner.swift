@@ -207,7 +207,7 @@ struct HeroBanner: View {
             .focused(focus, equals: .play)
 
             Button { store.toggleMyList(current.display.mediaInfo) } label: {
-                Image(systemName: store.isOnMyList(current.display.ratingKey) ? "checkmark" : "plus")
+                Image(systemName: store.isOnMyList(current.display.ratingKey) ? "checkmark" : "bookmark")
             }
             .nativeCircleButton()
             .focused(focus, equals: .add)

@@ -298,7 +298,7 @@ private struct TVSidebar: View {
 
             row(.search, "بحث", "magnifyingglass")
             row(.home, "الرئيسية", "house.fill")
-            row(.myList, "قائمتي", "bookmark.fill")
+            row(.myList, "قائمتي", "bookmark")
             ForEach(pinned) { scope in
                 row(.library(scope.id), scope.title, Self.filledIcon(scope.icon))
             }

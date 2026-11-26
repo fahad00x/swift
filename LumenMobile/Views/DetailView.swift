@@ -163,7 +163,7 @@ struct DetailView: View {
             .disabled(playTarget == nil)
 
             Button { store.toggleMyList(item.mediaInfo) } label: {
-                circleIcon(store.isOnMyList(item.ratingKey) ? "checkmark" : "plus")
+                circleIcon(store.isOnMyList(item.ratingKey) ? "checkmark" : "bookmark")
             }
             .accessibilityLabel("قائمتي")
 

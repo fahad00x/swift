@@ -470,7 +470,7 @@ struct DetailPage: View {
 
             // «قائمتي» of the current profile.
             Button(action: toggleWatchlist) {
-                Image(systemName: store.isOnMyList(item.ratingKey) ? "checkmark" : "plus")
+                Image(systemName: store.isOnMyList(item.ratingKey) ? "checkmark" : "bookmark")
             }
             .nativeCircleButton()
             .focused($heroFocus, equals: .watchlist)
@@ -733,7 +733,7 @@ struct DetailPage: View {
                         .contextMenu {
                             episodeMarks(episode)
                             Button(store.isOnMyList(item.ratingKey) ? "إزالة من قائمتي" : "إضافة إلى قائمتي",
-                                   systemImage: store.isOnMyList(item.ratingKey) ? "minus" : "plus") {
+                                   systemImage: store.isOnMyList(item.ratingKey) ? "minus" : "bookmark") {
                                 store.toggleMyList(item.mediaInfo)
                             }
                             if episode.progress != nil, !episode.isWatched {

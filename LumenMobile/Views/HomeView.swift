@@ -228,7 +228,7 @@ private struct HeroSlide: View {
                             .foregroundStyle(.black)
                     }
                     Button { store.toggleMyList(item.display.mediaInfo) } label: {
-                        Image(systemName: store.isOnMyList(item.display.ratingKey) ? "checkmark" : "plus")
+                        Image(systemName: store.isOnMyList(item.display.ratingKey) ? "checkmark" : "bookmark")
                             .font(.headline)
                             .frame(width: 46, height: 46)
                             .background(Circle().fill(.white.opacity(0.2)))
