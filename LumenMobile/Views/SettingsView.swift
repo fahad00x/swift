@@ -56,7 +56,7 @@ struct SettingsView: View {
     @Environment(SidebarPrefs.self) private var sidebarPrefs: SidebarPrefs?
     @AppStorage(PlaybackSettings.forceTranscodeKey) private var forceTranscode = false
     @AppStorage(PlaybackSettings.engineKey) private var engine: PlaybackEngine = .mpv
-    @AppStorage(PlaybackSettings.autoSkipIntroKey) private var autoSkipIntro = false
+    @AppStorage(PlaybackSettings.autoSkipIntroKey) private var autoSkipIntro = true
     @AppStorage(PlaybackSettings.autoPlayNextKey) private var autoPlayNext = true
     @AppStorage(PlaybackSettings.maxBitrateKey) private var maxBitrate = PlaybackSettings.defaultBitrate
     @AppStorage(PlaybackSettings.fastProfileKey) private var fastProfile = false
@@ -327,7 +327,7 @@ struct SettingsView: View {
                  : "يشغّل MP4/MOV مباشرة، وباقي الصيغ يحوّلها خادم Plex. أزرار مشغّل Lumen لا تظهر معه.")
         }
         Section {
-            Toggle("تخطي المقدمة تلقائيًا", isOn: $autoSkipIntro)
+            Toggle("التخطي التلقائي", isOn: $autoSkipIntro)
             Toggle("تشغيل الحلقة التالية تلقائيًا", isOn: $autoPlayNext)
         } header: {
             Text("الحلقات")

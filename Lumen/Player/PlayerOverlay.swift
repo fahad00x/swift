@@ -20,7 +20,7 @@ struct PlayerOverlay: View {
                     PlayerChrome(session: session)
                         .transition(.opacity)
                 }
-                if let skip = session.skipAction, !session.isPanelOpen {
+                if let skip = session.visibleSkip, !session.isPanelOpen {
                     skipButton(skip)
                 }
             }
@@ -29,7 +29,7 @@ struct PlayerOverlay: View {
         .animation(.easeInOut(duration: 0.25), value: session.controlsVisible)
         .animation(.easeInOut(duration: 0.2), value: session.isPanelOpen)
         .animation(.easeInOut(duration: 0.2), value: session.panel)
-        .animation(.easeInOut(duration: 0.25), value: session.skipAction)
+        .animation(.easeInOut(duration: 0.25), value: session.visibleSkip)
         .ignoresSafeArea()
     }
 
@@ -52,6 +52,10 @@ struct PlayerOverlay: View {
                 .padding(.horizontal, 36)
                 .padding(.vertical, 18)
                 .background(Capsule().fill(session.skipDeferred ? Color.black.opacity(0.55) : .white))
+                // Fills up while it waits to skip by itself.
+                .overlay(SkipCountdownFill(session: session,
+                                           color: session.skipDeferred ? .white.opacity(0.2) : .black.opacity(0.18))
+                    .clipShape(Capsule()))
                 .shadow(color: .black.opacity(0.5), radius: 20, y: 8)
             }
             .environment(\.layoutDirection, .leftToRight)

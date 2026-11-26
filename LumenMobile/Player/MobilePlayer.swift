@@ -192,18 +192,23 @@ struct MobilePlayerControls: View {
                     .allowsHitTesting(false)
             }
 
-            if let skipAction = session.skipAction, session.errorMessage == nil, session.panel == nil {
+            if let skipAction = session.visibleSkip, session.errorMessage == nil, session.panel == nil {
                 Button { session.performSkip() } label: {
                     Label(skipAction.title, systemImage: skipAction.icon)
                         .font(.headline)
                         .padding(.horizontal, 18)
                         .padding(.vertical, 10)
                         .background(Capsule().fill(.white))
+                        // Fills up while it waits to skip by itself.
+                        .overlay(SkipCountdownFill(session: session).clipShape(Capsule()))
                         .foregroundStyle(.black)
+                        .environment(\.layoutDirection, .rightToLeft)
                 }
+                // On the right (as on the Apple TV), not at the reading end of the row.
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                 .padding(.trailing, inset)
                 .padding(.bottom, session.controlsVisible ? (wide ? 190 : 160) : 30)
+                .environment(\.layoutDirection, .leftToRight)
             }
 
             if let panel = session.panel {
@@ -217,7 +222,7 @@ struct MobilePlayerControls: View {
         }
         .foregroundStyle(.white)
         .animation(.easeInOut(duration: 0.2), value: session.controlsVisible)
-        .animation(.easeInOut(duration: 0.2), value: session.skipAction)
+        .animation(.easeInOut(duration: 0.2), value: session.visibleSkip)
         .animation(.easeInOut(duration: 0.2), value: session.notice)
         .animation(.easeOut(duration: 0.18), value: session.panel)
         .ignoresSafeArea()

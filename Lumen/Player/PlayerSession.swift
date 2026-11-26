@@ -99,6 +99,22 @@ final class PlayerSession {
     private(set) var skipAction: SkipAction? {
         didSet { if skipAction != oldValue { skipDeferred = false } }
     }
+    /// The skip button as it shows: the first time in a part (intro, recap, credits) it skips
+    /// by itself after `autoSkipDelay` s of playing (if «التخطي التلقائي» is on); a seek by hand
+    /// cancels that. It goes after `skipVisibleFor` s. Seeking (back) into the part shows it
+    /// again, with no auto-skip.
+    var visibleSkip: SkipAction? { skipVisible ? skipAction : nil }
+    private(set) var skipVisible = false
+    /// Playhead (s) where the auto-skip happens; nil when it won't.
+    private(set) var skipAutoAt: Double?
+    /// Playhead (s) when the button showed.
+    private(set) var skipShownAt: Double = 0
+    static let autoSkipDelay: Double = 4
+    static let skipVisibleFor: Double = 7
+    @ObservationIgnored private var skipPartID: String?
+    @ObservationIgnored private var skipSeenParts: Set<String> = []
+    @ObservationIgnored private var skipRearm = false
+    @ObservationIgnored private var isSkipping = false
     /// Down from the skip button: it stays on screen but the click is the video's again.
     var skipDeferred = false
     /// Intro / recap / credits: Plex markers, else chapter names (from Plex, then from the file via mpv).
@@ -159,7 +175,6 @@ final class PlayerSession {
     private let store = ProfileStore.shared
     private var sessionID = UUID().uuidString
     private var lastReport = Date.distantPast
-    private var autoSkippedIntroFor: String?
     private var hideTask: Task<Void, Never>?
     private var isSwitching = false
     private var finished = false
@@ -293,6 +308,7 @@ final class PlayerSession {
         // Unknown duration: clamping would jump back to the start.
         guard duration > 0 else { return }
         let target = min(max(0, position + seconds), max(0, duration - 1))
+        seekedByHand()
         position = target
         player.seek(to: target)
         nowPlaying.update()
@@ -300,6 +316,7 @@ final class PlayerSession {
     }
 
     func seek(to seconds: Double) {
+        if !isSkipping { seekedByHand() }
         position = seconds
         player.seek(to: seconds)
         nowPlaying.update()
@@ -331,15 +348,27 @@ final class PlayerSession {
 
     func cancelScrub() { scrubPosition = nil; scheduleHide() }
 
+    /// A seek by hand: no auto-skip now, and the button shows again (for `skipVisibleFor` s)
+    /// wherever it lands in a part.
+    private func seekedByHand() {
+        if skipAutoAt != nil { skipAutoAt = nil }
+        skipRearm = true
+    }
+
     func performSkip() {
         guard let action = skipAction else { return }
+        if skipAutoAt != nil { skipAutoAt = nil }
         switch action {
         case .recap(let end), .intro(let end):
+            isSkipping = true
             seek(to: end)
+            isSkipping = false
         case .credits(let hasNext):
             if hasNext { Task { await playNext() } } else { onRequestClose?() }
         }
         skipAction = nil
+        // Until the playhead is past the part (or a seek by hand lands in it again).
+        setSkipVisible(false)
     }
 
     /// Chosen from the track panel: applied now and remembered for this profile
@@ -445,6 +474,10 @@ final class PlayerSession {
         duration = Double(detailed.duration ?? 0) / 1000
         isBuffering = true
         skipAction = nil
+        skipPartID = nil
+        skipRearm = false
+        setSkipVisible(false)
+        if skipAutoAt != nil { skipAutoAt = nil }
         nextEpisode = nil
         audioTracks = []
         subtitleTracks = []
@@ -603,27 +636,58 @@ final class PlayerSession {
             case .credits: return ms >= segment.startMs && ms < max(segment.endMs, segment.startMs + 1000)
             }
         }
-        switch current?.kind {
-        case .intro?:
-            let end = current!.endSeconds
-            let reachedStart = ms >= current!.startMs
-            // Once per episode, so seeking back into the intro lets you watch it.
-            // Auto-skip waits for the exact start, so nothing before the intro is cut.
-            if reachedStart, UserDefaults.standard.bool(forKey: PlaybackSettings.autoSkipIntroKey),
-               autoSkippedIntroFor != item.ratingKey {
-                autoSkippedIntroFor = item.ratingKey
-                seek(to: end)
-                show(notice: "تم تخطي المقدمة")
-                return
-            }
-            setSkipAction(.intro(endSeconds: end))
-        case .recap?:
-            setSkipAction(.recap(endSeconds: current!.endSeconds))
-        case .credits?:
-            setSkipAction(.credits(hasNext: nextEpisode != nil))
-        case nil:
+        guard let current else {
             setSkipAction(nil)
+            skipPartID = nil
+            skipRearm = false
+            setSkipVisible(false)
+            if skipAutoAt != nil { skipAutoAt = nil }
+            return
         }
+        let action: SkipAction
+        switch current.kind {
+        case .intro: action = .intro(endSeconds: current.endSeconds)
+        case .recap: action = .recap(endSeconds: current.endSeconds)
+        case .credits: action = .credits(hasNext: nextEpisode != nil)
+        }
+        setSkipAction(action)
+
+        // Came into the part, or a seek by hand landed in it: the button shows.
+        let partID = "\(item.ratingKey)-\(current.kind)-\(current.startMs)"
+        if partID != skipPartID || skipRearm {
+            let first = partID != skipPartID && !skipSeenParts.contains(partID) && !skipRearm
+            skipPartID = partID
+            skipRearm = false
+            skipSeenParts.insert(partID)
+            skipShownAt = position
+            // The first time only (seeking back into it means you want to watch it). It counts
+            // from the part's exact start, so nothing before it is cut (chapter buttons show
+            // a little early).
+            let auto = first && (UserDefaults.standard.object(forKey: PlaybackSettings.autoSkipIntroKey) as? Bool ?? true)
+            let autoAt = auto ? max(position, current.startSeconds) + Self.autoSkipDelay : nil
+            if autoAt != skipAutoAt { skipAutoAt = autoAt }
+            setSkipVisible(true)
+            return
+        }
+
+        if let autoAt = skipAutoAt, position >= autoAt, !isPaused {
+            let text: String? = switch action {
+            case .intro: "تم تخطي المقدمة"
+            case .recap: "تم تخطي الملخّص"
+            case .credits: nil
+            }
+            performSkip()
+            if let text { show(notice: text) }
+            return
+        }
+        // Waiting to skip: on screen until then, whatever the time.
+        if skipVisible, skipAutoAt == nil, position - skipShownAt >= Self.skipVisibleFor {
+            setSkipVisible(false)
+        }
+    }
+
+    private func setSkipVisible(_ on: Bool) {
+        if on != skipVisible { skipVisible = on }
     }
 
     /// Runs on every playhead tick: assigning an observed property notifies its views even when

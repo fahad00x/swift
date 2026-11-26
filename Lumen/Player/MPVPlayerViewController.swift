@@ -160,7 +160,7 @@ final class MPVPlayerViewController: UIViewController {
     /// Up: back to the skip button if it was left, else the buttons.
     private func upPressed() {
         guard !session.isPanelOpen, session.errorMessage == nil, !isRepeat() else { return }
-        if session.skipAction != nil, session.skipDeferred {
+        if session.visibleSkip != nil, session.skipDeferred {
             session.skipDeferred = false
             session.showControls()
         } else {
@@ -172,7 +172,7 @@ final class MPVPlayerViewController: UIViewController {
     private func downPressed() {
         guard session.panel == nil, session.errorMessage == nil, !isRepeat() else { return }
         if session.buttonsActive { hideButtons(); return }
-        if session.skipAction != nil { session.skipDeferred = true }
+        if session.visibleSkip != nil { session.skipDeferred = true }
         session.showControls()
     }
 
@@ -264,7 +264,7 @@ final class MPVPlayerViewController: UIViewController {
 
         switch type {
         case .select:
-            if session.skipAction != nil, !session.skipDeferred { session.performSkip() } else { session.togglePause(from: .press) }
+            if session.visibleSkip != nil, !session.skipDeferred { session.performSkip() } else { session.togglePause(from: .press) }
         case .playPause:
             session.togglePause(from: .press)
         case .leftArrow:

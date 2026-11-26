@@ -56,7 +56,7 @@ struct SettingsView: View {
     @AppStorage(PlaybackSettings.forceTranscodeKey) private var forceTranscode = false
     @AppStorage(PlaybackSettings.engineKey) private var engine: PlaybackEngine = .mpv
     @AppStorage(PlaybackSettings.fastProfileKey) private var fastProfile = false
-    @AppStorage(PlaybackSettings.autoSkipIntroKey) private var autoSkipIntro = false
+    @AppStorage(PlaybackSettings.autoSkipIntroKey) private var autoSkipIntro = true
     @AppStorage(PlaybackSettings.autoPlayNextKey) private var autoPlayNext = true
     @AppStorage(PlaybackSettings.maxBitrateKey) private var maxBitrate = PlaybackSettings.defaultBitrate
     @AppStorage(PlaybackSettings.skipSecondsKey) private var skipSeconds = PlaybackSettings.defaultSkip
@@ -256,7 +256,7 @@ struct SettingsView: View {
             }
         }
         SettingsCard("الحلقات", footer: "يكتشف خادم Plex المقدمة والختام (Plex Pass: فعّل Intro/Credits detection في إعدادات المكتبة).") {
-            SettingsSwitch("تخطي المقدمة تلقائيًا", isOn: $autoSkipIntro)
+            SettingsSwitch("التخطي التلقائي", isOn: $autoSkipIntro)
             SettingsSwitch("تشغيل الحلقة التالية تلقائيًا", isOn: $autoPlayNext)
         }
         SettingsCard("متقدم") {
