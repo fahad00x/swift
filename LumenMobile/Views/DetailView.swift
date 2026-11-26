@@ -24,6 +24,10 @@ struct DetailView: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var downloadingSeason: PlexItem?
     @State private var downloadingEpisode: PlexItem?
+    /// A show's page: «الحلقات», «المزيد من العناوين المشابهة» or «الممثلين والطاقم».
+    @State private var showTab: ShowTab = .episodes
+
+    private enum ShowTab { case episodes, related, cast }
 
     private var metrics: Metrics { Metrics(sizeClass) }
 
@@ -62,12 +66,13 @@ struct DetailView: View {
                     }
 
                     if item.isShow {
-                        episodesSection
+                        episodesSection(item)
                     } else if !related.isEmpty {
                         ShelfRow(title: "أفلام مشابهة", items: related, client: client)
                     }
                     if !extras.isEmpty { extrasRow }
-                    if !item.roles.isEmpty { castRow(item.roles) }
+                    // A show's cast is in its «الممثلين والطاقم» tab.
+                    if !item.isShow, !item.roles.isEmpty { castRow(item.roles) }
                     if let target = playTarget ?? (item.isShow ? nil : item), !target.media.isEmpty {
                         fileInfo(target).padding(.horizontal, metrics.margin)
                     }
@@ -227,62 +232,148 @@ struct DetailView: View {
 
     // MARK: Episodes
 
-    private var episodesSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("الحلقات").font(.title3.weight(.bold))
-                Spacer()
-                if seasons.count > 1 {
-                    Menu {
-                        Picker("الموسم", selection: Binding(get: { selectedSeasonKey ?? "" },
-                                                            set: { selectedSeasonKey = $0 })) {
-                            ForEach(seasons) { Text(seasonTitle($0)).tag($0.ratingKey) }
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text(seasons.first { $0.ratingKey == selectedSeasonKey }.map(seasonTitle) ?? "الموسم")
-                            Image(systemName: "chevron.down").font(.caption)
-                        }
-                        .font(.callout.weight(.semibold))
+    /// «الحلقات | المزيد من العناوين المشابهة | الممثلين والطاقم» tabs. Episodes: the season button
+    /// and one episode per row: picture with a play mark and progress, number and title, summary,
+    /// length, and a download button on the other side.
+    private func episodesSection(_ item: PlexItem) -> some View {
+        let hasCast = !item.roles.isEmpty || !item.directors.isEmpty
+        return VStack(alignment: .leading, spacing: 0) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .bottom, spacing: 28) {
+                    sectionTab("الحلقات", selected: showTab == .episodes) { showTab = .episodes }
+                    if !related.isEmpty {
+                        sectionTab("المزيد من العناوين المشابهة", selected: showTab == .related) { showTab = .related }
+                    }
+                    if hasCast {
+                        sectionTab("الممثلين والطاقم", selected: showTab == .cast) { showTab = .cast }
                     }
                 }
             }
-            .padding(.horizontal, metrics.margin)
+            .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+            Divider().overlay(Color.white.opacity(0.12))
 
-            let episodes = selectedSeasonKey.flatMap { episodesBySeason[$0] } ?? []
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 24, alignment: .top),
-                                     count: metrics.isWide ? 2 : 1),
-                      alignment: .leading, spacing: metrics.isWide ? 22 : 16) {
-                ForEach(episodes) { episode in
-                    Button { play(episode) } label: {
-                        EpisodeRow(episode: episode, client: client, wide: metrics.isWide)
-                    }
-                    .buttonStyle(.plain)
-                    .contextMenu {
-                        Button {
-                            Task { await WatchedActions.setWatched(episode, !episode.isWatched, client: client, store: store) }
-                        } label: {
-                            Label(episode.isWatched ? "تحديد كغير مُشاهَد" : "تحديد كمُشاهَد",
-                                  systemImage: episode.isWatched ? "eye.slash" : "checkmark.circle")
-                        }
-                        if episode.progress != nil, !episode.isWatched {
-                            Button { play(episode, fromBeginning: true) } label: {
-                                Label("التشغيل من البداية", systemImage: "arrow.counterclockwise")
-                            }
-                        }
-                        if Downloads.shared.entry(episode.ratingKey) == nil {
-                            Button {
-                                downloadingEpisode = episode
-                            } label: { Label("تحميل الحلقة", systemImage: "arrow.down.circle") }
-                        } else {
-                            Button(role: .destructive) { Downloads.shared.delete(episode.ratingKey) } label: {
-                                Label("حذف التنزيل", systemImage: "trash")
-                            }
+            if showTab == .related, !related.isEmpty {
+                PosterGrid(items: related, client: client).padding(.top, 16)
+            } else if showTab == .cast, hasCast {
+                castGrid(item).padding(.top, 16)
+            } else {
+                if seasons.count > 1 {
+                    seasonButton.padding(.vertical, 16)
+                } else {
+                    Color.clear.frame(height: 8)
+                }
+                let episodes = selectedSeasonKey.flatMap { episodesBySeason[$0] } ?? []
+                LazyVStack(spacing: 0) {
+                    ForEach(episodes) { episode in
+                        episodeRow(episode)
+                        if episode.id != episodes.last?.id {
+                            Divider().overlay(Color.white.opacity(0.12))
                         }
                     }
                 }
             }
-            .padding(.horizontal, metrics.margin)
+        }
+        .frame(maxWidth: metrics.isWide ? 820 : .infinity)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, metrics.margin)
+    }
+
+    private func sectionTab(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 10) {
+                Capsule().fill(selected ? Theme.accent : .clear).frame(height: 4)
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(selected ? Color.white : Color.white.opacity(0.55))
+            }
+            .fixedSize()
+            .padding(.bottom, 12)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var seasonButton: some View {
+        Menu {
+            Picker("الموسم", selection: Binding(get: { selectedSeasonKey ?? "" }, set: { selectedSeasonKey = $0 })) {
+                ForEach(seasons) { Text(seasonTitle($0)).tag($0.ratingKey) }
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Text(seasons.first { $0.ratingKey == selectedSeasonKey }.map(seasonTitle) ?? "الموسم")
+                Image(systemName: "chevron.down").font(.caption.weight(.semibold))
+            }
+            .font(.callout.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.14)))
+        }
+    }
+
+    private func episodeRow(_ episode: PlexItem) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            Button { play(episode) } label: {
+                EpisodeRow(episode: episode, client: client, wide: metrics.isWide)
+            }
+            .buttonStyle(.plain)
+            .contextMenu { episodeMenu(episode) }
+            downloadButton(episode)
+        }
+        .padding(.vertical, 14)
+    }
+
+    /// Download it, or how it's going / done (tap to remove a finished one).
+    @ViewBuilder
+    private func downloadButton(_ episode: PlexItem) -> some View {
+        let entry = Downloads.shared.entry(episode.ratingKey)
+        Button {
+            if entry == nil { downloadingEpisode = episode }
+        } label: {
+            Group {
+                switch entry?.state {
+                case .none:
+                    Image(systemName: "arrow.down.to.line")
+                case .done:
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent)
+                case .failed:
+                    Image(systemName: "exclamationmark.circle").foregroundStyle(.yellow)
+                case .waiting, .downloading:
+                    ProgressView(value: entry?.fraction ?? 0)
+                        .progressViewStyle(.circular)
+                        .tint(Theme.accent)
+                        .scaleEffect(0.8)
+                }
+            }
+            .font(.title3)
+            .foregroundStyle(.white)
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(entry == nil ? "تحميل الحلقة" : "التنزيل")
+    }
+
+    @ViewBuilder
+    private func episodeMenu(_ episode: PlexItem) -> some View {
+        Button {
+            Task { await WatchedActions.setWatched(episode, !episode.isWatched, client: client, store: store) }
+        } label: {
+            Label(episode.isWatched ? "تحديد كغير مُشاهَد" : "تحديد كمُشاهَد",
+                  systemImage: episode.isWatched ? "eye.slash" : "checkmark.circle")
+        }
+        if episode.progress != nil, !episode.isWatched {
+            Button { play(episode, fromBeginning: true) } label: {
+                Label("التشغيل من البداية", systemImage: "arrow.counterclockwise")
+            }
+        }
+        if Downloads.shared.entry(episode.ratingKey) == nil {
+            Button {
+                downloadingEpisode = episode
+            } label: { Label("تحميل الحلقة", systemImage: "arrow.down.circle") }
+        } else {
+            Button(role: .destructive) { Downloads.shared.delete(episode.ratingKey) } label: {
+                Label("حذف التنزيل", systemImage: "trash")
+            }
         }
     }
 
@@ -311,6 +402,42 @@ struct DetailView: View {
                 .padding(.horizontal, metrics.margin)
             }
         }
+    }
+
+    /// «الممثلين والطاقم»: every actor with their character, then the directors.
+    private func castGrid(_ item: PlexItem) -> some View {
+        let columns = [GridItem(.adaptive(minimum: 96), spacing: 14, alignment: .top)]
+        return VStack(alignment: .leading, spacing: 18) {
+            if !item.roles.isEmpty {
+                Text("الممثلين").font(.headline)
+                LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
+                    ForEach(item.roles) { person($0, detail: $0.role) }
+                }
+            }
+            if !item.directors.isEmpty {
+                Text("الإخراج").font(.headline)
+                LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
+                    ForEach(item.directors) { person($0, detail: nil) }
+                }
+            }
+        }
+    }
+
+    private func person(_ tag: PlexTag, detail: String?) -> some View {
+        VStack(spacing: 6) {
+            ZStack {
+                Circle().fill(Color.white.opacity(0.1))
+                Text(String(tag.tag.prefix(1))).foregroundStyle(.white.opacity(0.6))
+                RemoteImage(url: client.imageURL(tag.thumb, width: 200, height: 200))
+            }
+            .frame(width: 80, height: 80)
+            .clipShape(Circle())
+            Text(tag.tag).font(.caption.weight(.semibold)).lineLimit(2).multilineTextAlignment(.center)
+            if let detail, !detail.isEmpty {
+                Text(detail).font(.caption2).foregroundStyle(.secondary).lineLimit(2).multilineTextAlignment(.center)
+            }
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private func castRow(_ roles: [PlexTag]) -> some View {
@@ -411,6 +538,8 @@ struct DetailView: View {
             }
             // Full details of the episode Play starts (tracks, quality badges, file info).
             if let t = show.playTarget, let full = try? await client.metadata(t.ratingKey) { playTarget = full }
+            // «المزيد من العناوين المشابهة» next to the episodes.
+            related = await filter.resolve(await client.related(key), client: client)
         } else {
             playTarget = detailed
             related = await filter.resolve(await client.related(key), client: client)
@@ -503,34 +632,45 @@ private struct EpisodeRow: View {
     let client: PlexServerClient
     var wide = false
 
+    /// «٣. اسم الحلقة»; «الحلقة ٣» when the server has no name for it («3», «Episode 3»).
+    private var title: String {
+        let number = episode.index ?? 0
+        let name = episode.title.trimmingCharacters(in: .whitespaces)
+        let plain = name.isEmpty || Int(name) == number
+            || name.range(of: "^(episode|ep\\.?|e|الحلقة)\\s*\\d+$", options: [.regularExpression, .caseInsensitive]) != nil
+        return plain ? "الحلقة \(ArabicFormat.digits(number))" : "\(ArabicFormat.digits(number)). \(ArabicFormat.isolated(name))"
+    }
+
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            ZStack(alignment: .bottom) {
+        HStack(alignment: .top, spacing: 14) {
+            ZStack {
                 Color(white: 0.14)
                 RemoteImage(url: client.imageURL(episode.thumb ?? episode.art, width: 420, height: 236))
+                Image(systemName: "play.fill")
+                    .font(.system(size: wide ? 18 : 14))
+                    .foregroundStyle(.white)
+                    .frame(width: wide ? 44 : 34, height: wide ? 44 : 34)
+                    .background(Circle().fill(.black.opacity(0.45)))
+                    .overlay(Circle().strokeBorder(.white.opacity(0.9), lineWidth: 1.5))
             }
-            .frame(width: wide ? 224 : 150, height: wide ? 126 : 84)
+            .frame(width: wide ? 176 : 140, height: wide ? 99 : 79)
             .artworkStatus(episode, triangleFraction: 0.12, barHeight: 3)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text("\(ArabicFormat.digits(episode.index ?? 0)). \(ArabicFormat.isolated(episode.title))")
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(2)
-                let details = ArabicFormat.joined([ArabicFormat.date(plex: episode.originallyAvailableAt),
-                                                   episode.duration.map(ArabicFormat.duration(ms:))].compactMap { $0 })
-                HStack(spacing: 6) {
-                    if let state = Downloads.shared.entry(episode.ratingKey)?.state {
-                        Image(systemName: state == .done ? "arrow.down.circle.fill" : "arrow.down.circle")
-                            .font(.caption2)
-                            .foregroundStyle(state == .failed ? Color.yellow : Theme.accent)
-                    }
-                    if !details.isEmpty {
-                        Text(details).font(.caption2).foregroundStyle(.secondary)
-                    }
-                }
                 if let summary = episode.summary, !summary.isEmpty {
-                    Text(summary).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    Text(summary)
+                        .font(.footnote)
+                        .foregroundStyle(.white.opacity(0.7))
+                        .lineLimit(wide ? 3 : 2)
+                }
+                if let duration = episode.duration {
+                    Text(ArabicFormat.duration(ms: duration))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
             Spacer(minLength: 0)

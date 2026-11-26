@@ -245,16 +245,23 @@ struct BrowseStack<Content: View>: View {
     }
 
     @State private var ownPath = NavigationPath()
+    /// A title's page as a card (iPad in landscape).
+    @State private var card: PlexItem?
 
     var body: some View {
-        NavigationStack(path: path ?? $ownPath) {
-            content()
-                .navigationDestination(for: PlexItem.self) { item in
-                    DetailView(client: client, entry: item)
-                }
-                .navigationDestination(for: LibraryScope.self) { scope in
-                    LibraryGridView(client: client, scope: scope)
-                }
+        GeometryReader { geo in
+            let cards = UIDevice.current.userInterfaceIdiom == .pad && geo.size.width > geo.size.height
+            NavigationStack(path: path ?? $ownPath) {
+                content()
+                    .navigationDestination(for: PlexItem.self) { item in
+                        DetailView(client: client, entry: item)
+                    }
+                    .navigationDestination(for: LibraryScope.self) { scope in
+                        LibraryGridView(client: client, scope: scope)
+                    }
+            }
+            .environment(\.presentDetail, cards ? { card = $0 } : nil)
         }
+        .fullScreenCover(item: $card) { DetailCard(client: client, item: $0) }
     }
 }

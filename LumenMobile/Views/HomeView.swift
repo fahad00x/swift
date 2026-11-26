@@ -234,7 +234,7 @@ private struct HeroSlide: View {
                             .background(Circle().fill(.white.opacity(0.2)))
                             .foregroundStyle(.white)
                     }
-                    NavigationLink(value: item.display) {
+                    DetailLink(item: item.display) {
                         Image(systemName: "info")
                             .font(.headline)
                             .frame(width: 46, height: 46)

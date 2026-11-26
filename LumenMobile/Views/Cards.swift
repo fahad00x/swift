@@ -319,7 +319,7 @@ struct ShelfRow: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(alignment: .top, spacing: metrics.isWide ? 18 : 12) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                        NavigationLink(value: item) {
+                        DetailLink(item: item) {
                             switch style {
                             case .poster:
                                 PosterCard(item: item, client: client, width: metrics.posterWidth,
@@ -351,7 +351,7 @@ struct PosterGrid: View {
         let metrics = Metrics(sizeClass)
         LazyVGrid(columns: [metrics.gridColumn], alignment: .center, spacing: metrics.isWide ? 26 : 18) {
             ForEach(items) { item in
-                NavigationLink(value: item) {
+                DetailLink(item: item) {
                     PosterCard(item: item, client: client)
                 }
                 .buttonStyle(.plain)
