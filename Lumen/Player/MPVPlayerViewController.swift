@@ -102,6 +102,7 @@ final class MPVPlayerViewController: UIViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         becomeFirstResponder()
+        UIApplication.shared.isIdleTimerDisabled = !session.player.isPaused
         // "Match Content": switch the TV to the video's frame rate and dynamic range (4K HDR / Dolby Vision → HDR10).
         if let manager = view.window?.avDisplayManager, manager.isDisplayCriteriaMatchingEnabled {
             manager.preferredDisplayCriteria = displayCriteria
@@ -111,6 +112,7 @@ final class MPVPlayerViewController: UIViewController {
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         view.window?.avDisplayManager.preferredDisplayCriteria = nil
+        UIApplication.shared.isIdleTimerDisabled = false
     }
 
     override func viewDidDisappear(_ animated: Bool) {

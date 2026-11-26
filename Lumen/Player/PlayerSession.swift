@@ -2,6 +2,7 @@ import AVFoundation
 import Foundation
 import Observation
 import os
+import UIKit
 
 /// State + logic for one MPV playback, shared by the view controller (input) and the SwiftUI overlay.
 @MainActor
@@ -555,6 +556,9 @@ final class PlayerSession {
                 }
             case "pause":
                 isPaused = (value as? Bool) ?? false
+                // mpv isn't AVPlayer, so the system can't tell a video is playing — keep the
+                // screensaver away ourselves while playing, and let it back in once paused.
+                UIApplication.shared.isIdleTimerDisabled = !isPaused
                 nowPlaying.update()
                 if isPaused { showControls(autoHide: false) } else { scheduleHide() }
                 Task { await report(force: true) }
