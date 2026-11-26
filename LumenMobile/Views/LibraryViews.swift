@@ -16,9 +16,16 @@ struct LibraryGridView: View {
     @State private var filtering = false
     /// Kept with the page, so the choices stay when switching back and forth.
     @State private var filterModel = LibraryFilterModel()
+    /// Sorted by name: where each letter starts, for the bar on the side.
+    @State private var letters: LetterIndex?
+    /// Server position the grid starts at (after jumping to a letter).
+    @State private var startOffset = 0
     @Environment(\.horizontalSizeClass) private var sizeClass
 
+    private var showsLetters: Bool { !filtering && sort == .title && (letters?.entries.count ?? 0) > 1 }
+
     var body: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             Picker("العرض", selection: $filtering) {
                 Text("تصفّح").tag(false)
@@ -28,13 +35,27 @@ struct LibraryGridView: View {
             .frame(maxWidth: 360)
             .padding(.horizontal, Metrics(sizeClass).margin)
             .padding(.top, 4)
+            .id("top")
 
             if filtering {
                 LibraryFilterSection(client: client, scope: scope, model: filterModel)
                     .padding(.vertical, 8)
             } else {
                 browse
+                    // Room for the letter bar.
+                    .padding(.trailing, showsLetters ? 14 : 0)
             }
+        }
+        // «#، A–Z، ا–ي» on the side, like Contacts; tap or slide to jump.
+        .overlay(alignment: .trailing) {
+            if showsLetters, let letters {
+                LetterBar(index: letters, current: currentLetter) { entry in
+                    Task { await jump(to: entry) }
+                    proxy.scrollTo("top", anchor: .top)
+                }
+                .padding(.vertical, 8)
+            }
+        }
         }
         .navigationTitle(scope.title)
         .toolbar {
@@ -51,6 +72,7 @@ struct LibraryGridView: View {
             }
         }
         .task(id: sort) { await reload() }
+        .task(id: sort) { letters = sort == .title ? await client.letters(section: scope.section) : nil }
         .onReceive(NotificationCenter.default.publisher(for: .plexPlaybackDidEnd)) { _ in
             Task { await reload() }
         }
@@ -79,8 +101,30 @@ struct LibraryGridView: View {
             .padding(.vertical, 8)
     }
 
+    /// The letter the grid starts at (none at the start of the library).
+    private var currentLetter: String? {
+        guard startOffset > 0 else { return nil }
+        return letters?.entries.last { $0.offset <= startOffset }?.letter
+    }
+
+    /// The grid from the first title under that letter onward.
+    private func jump(to entry: LetterIndex.Entry) async {
+        guard entry.offset != startOffset || items.isEmpty else { return }
+        startOffset = entry.offset
+        items = []
+        exhausted = false
+        isLoading = true
+        let page = await LibraryPager.page(client: client, scope: scope, filter: filter, sort: sort,
+                                           from: entry.offset, shown: 0)
+        isLoading = false
+        // Another letter chosen meanwhile.
+        guard startOffset == entry.offset, let page else { return }
+        show(page, replacing: true)
+    }
+
     /// Cached first page right away, then the server's; more pages from the server on scroll.
     private func reload() async {
+        startOffset = 0
         exhausted = false
         let cached = await PlexResponseCache.$policy.withValue(.cacheOnly) {
             await LibraryPager.page(client: client, scope: scope, filter: filter, sort: sort, from: 0, shown: 0)
@@ -273,5 +317,62 @@ struct SearchView: View {
                 .buttonStyle(.bordered)
                 .buttonBorderShape(.capsule)
         }
+    }
+}
+
+/// Contacts-style index on the side: tap or slide over it; letters that don't fit are dots.
+private struct LetterBar: View {
+    let index: LetterIndex
+    let current: String?
+    let onSelect: (LetterIndex.Entry) -> Void
+
+    @State private var touched: String?
+
+    var body: some View {
+        GeometryReader { geo in
+            let entries = index.entries
+            let rowHeight = geo.size.height / CGFloat(max(entries.count, 1))
+            // Every letter when there is room, else every other one with a dot between.
+            let step = rowHeight >= 13 ? 1 : 2
+            VStack(spacing: 0) {
+                ForEach(Array(entries.enumerated()), id: \.element.id) { position, entry in
+                    if position % step == 0 {
+                        Text(entry.letter)
+                            .font(.system(size: min(12, rowHeight * CGFloat(step) * 0.75), weight: .semibold))
+                            .foregroundStyle(entry.letter == (touched ?? current) ? Theme.accent : .secondary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        Circle().fill(.secondary).frame(width: 3, height: 3)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                }
+            }
+            .frame(maxHeight: min(geo.size.height, CGFloat(entries.count) * 18))
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { value in select(at: value.location.y, in: geo.size.height, entries: entries) }
+                .onEnded { _ in touched = nil })
+            .sensoryFeedback(.selection, trigger: touched)
+        }
+        .frame(width: 22)
+        .accessibilityElement()
+        .accessibilityLabel("فهرس الحروف")
+        .accessibilityAdjustableAction { direction in
+            let entries = index.entries
+            let at = entries.firstIndex { $0.letter == current } ?? -1
+            let next = direction == .increment ? at + 1 : at - 1
+            if entries.indices.contains(next) { onSelect(entries[next]) }
+        }
+    }
+
+    private func select(at y: CGFloat, in height: CGFloat, entries: [LetterIndex.Entry]) {
+        let barHeight = min(height, CGFloat(entries.count) * 18)
+        let top = (height - barHeight) / 2
+        let position = Int(((y - top) / barHeight * CGFloat(entries.count)).rounded(.down))
+        let entry = entries[min(max(position, 0), entries.count - 1)]
+        guard entry.letter != touched else { return }
+        touched = entry.letter
+        onSelect(entry)
     }
 }

@@ -176,6 +176,24 @@ final class PlexServerClient: Sendable {
         return (c.metadata, c.totalSize ?? c.size ?? c.metadata.count)
     }
 
+    /// Where each letter starts when the section is sorted by name (`LibrarySort.title`): from
+    /// the device copy when `items` reads it, else Plex's `firstCharacter` counts.
+    func letters(section: PlexDirectory) async -> LetterIndex? {
+        if let stored = await local.letters(server: machineIdentifier, section: section.key) { return stored }
+        struct Response: Decodable {
+            struct Container: Decodable {
+                struct Letter: Decodable { let key: String?; let title: String?; let size: Int? }
+                let Directory: [Letter]?
+            }
+            let MediaContainer: Container
+        }
+        guard let url = url("/library/sections/\(section.key)/firstCharacter"),
+              let data = try? await PlexHTTP.data(for: PlexHTTP.request(url, token: token)),
+              let letters = try? JSONDecoder().decode(Response.self, from: data).MediaContainer.Directory
+        else { return nil }
+        return LetterIndex(counts: letters.map { (key: $0.title ?? $0.key ?? "#", size: $0.size ?? 0) })
+    }
+
     func metadata(_ ratingKey: String) async throws -> PlexItem {
         let c: MediaContainer
         do {

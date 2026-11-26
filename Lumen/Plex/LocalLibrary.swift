@@ -267,6 +267,12 @@ actor LocalLibrary {
         return (Array(sorted[lower..<upper]), sorted.count)
     }
 
+    /// Where each letter starts in `items(…, sort: .title, …)`.
+    func letters(server: String, section: String) -> LetterIndex? {
+        guard serverID == server, let stored = index.sections[section], stored.complete || !stored.items.isEmpty else { return nil }
+        return LetterIndex(titles: Self.sorted(stored.items.uniqued(), by: .title, index: index).map(\.title))
+    }
+
     func recentlyAdded(server: String, section: String, limit: Int) -> [PlexItem]? {
         guard serverID == server, let stored = index.sections[section], stored.complete else { return nil }
         return Array(Self.sorted(stored.items.uniqued(), by: .recentlyAdded, index: index).prefix(limit))
