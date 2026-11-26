@@ -115,13 +115,57 @@ enum DownloadQuality {
 
 // MARK: - Page
 
-/// «التنزيلات»: what's on the device, what's downloading, and the space it takes.
+/// A show's downloaded episodes, shown as one row on «التنزيلات».
+struct DownloadedShow: Hashable, Identifiable {
+    let key: String
+    let title: String
+    var id: String { key }
+
+    static func of(_ entry: DownloadEntry) -> DownloadedShow? {
+        guard entry.item.isEpisode else { return nil }
+        let title = entry.item.grandparentTitle ?? entry.item.title
+        return DownloadedShow(key: entry.item.grandparentRatingKey ?? title, title: title)
+    }
+
+    /// Its episodes, by season and episode number.
+    func episodes(in list: [DownloadEntry]) -> [DownloadEntry] {
+        list.filter { Self.of($0) == self }.sorted {
+            ($0.item.parentIndex ?? 0, $0.item.index ?? 0) < ($1.item.parentIndex ?? 0, $1.item.index ?? 0)
+        }
+    }
+}
+
+/// «التنزيلات»: what's on the device, what's downloading, and the space it takes. A show is one
+/// row («٣ حلقات • 921 MB») that opens its episodes; movies have a row each.
 struct DownloadsView: View {
     let client: PlexServerClient
 
     @State private var downloads = Downloads.shared
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var deleting: DownloadEntry?
+    @State private var deletingShow: DownloadedShow?
+
+    private enum Row: Identifiable {
+        case movie(DownloadEntry)
+        case show(DownloadedShow, [DownloadEntry])
+        var id: String {
+            switch self {
+            case .movie(let entry): return entry.id
+            case .show(let show, _): return "show-" + show.key
+            }
+        }
+    }
+
+    /// Newest first, a show where its newest episode is.
+    private var rows: [Row] {
+        let list = downloads.list
+        var seen = Set<DownloadedShow>()
+        return list.compactMap { entry in
+            guard let show = DownloadedShow.of(entry) else { return .movie(entry) }
+            guard seen.insert(show).inserted else { return nil }
+            return .show(show, show.episodes(in: list))
+        }
+    }
 
     var body: some View {
         BrowseStack(client: client) {
@@ -132,11 +176,27 @@ struct DownloadsView: View {
                         .listRowBackground(Color.clear)
                 } else {
                     Section {
-                        ForEach(downloads.list) { row($0) }
-                            .onDelete { offsets in
-                                let list = downloads.list
-                                offsets.map { list[$0].ratingKey }.forEach(downloads.delete)
+                        let rows = rows
+                        ForEach(rows) { row in
+                            switch row {
+                            case .movie(let entry):
+                                DownloadRow(entry: entry, client: client, deleting: $deleting)
+                            case .show(let show, let episodes):
+                                NavigationLink(value: show) { ShowDownloadRow(show: show, episodes: episodes) }
+                                    .contextMenu {
+                                        Button("حذف الحلقات", systemImage: "trash", role: .destructive) { deletingShow = show }
+                                    }
                             }
+                        }
+                        .onDelete { offsets in
+                            for row in offsets.map({ rows[$0] }) {
+                                switch row {
+                                case .movie(let entry): downloads.delete(entry.ratingKey)
+                                // Many files at once: asked first.
+                                case .show(let show, _): deletingShow = show
+                                }
+                            }
+                        }
                     } footer: {
                         Text(spaceText)
                     }
@@ -144,11 +204,21 @@ struct DownloadsView: View {
             }
             .readableColumn(Metrics(sizeClass))
             .navigationTitle("التنزيلات")
+            .navigationDestination(for: DownloadedShow.self) { show in
+                DownloadedEpisodesView(show: show, client: client)
+            }
         }
-        .alert("حذف «\(deleting.map { ArabicFormat.isolated($0.item.cardTitle) } ?? "")» من الجهاز؟",
-               isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
-            Button("حذف", role: .destructive) { if let key = deleting?.ratingKey { downloads.delete(key) } }
+        .deleteAlert($deleting)
+        .alert("حذف حلقات «\(deletingShow.map { ArabicFormat.isolated($0.title) } ?? "")» من الجهاز؟",
+               isPresented: Binding(get: { deletingShow != nil }, set: { if !$0 { deletingShow = nil } })) {
+            Button("حذف", role: .destructive) {
+                guard let show = deletingShow else { return }
+                show.episodes(in: downloads.list).forEach { downloads.delete($0.ratingKey) }
+            }
             Button("إلغاء", role: .cancel) {}
+        } message: {
+            let count = deletingShow.map { $0.episodes(in: downloads.list).count } ?? 0
+            Text(ArabicFormat.episodeCount(count))
         }
     }
 
@@ -157,8 +227,95 @@ struct DownloadsView: View {
         let free = Downloads.freeBytes.map { ArabicFormat.fileSize($0) }
         return "التنزيلات تاخذ \(used)" + (free.map { "، والمتبقي على الجهاز \($0)" } ?? "")
     }
+}
 
-    private func row(_ entry: DownloadEntry) -> some View {
+/// A show's downloaded episodes; swipe to delete one.
+private struct DownloadedEpisodesView: View {
+    let show: DownloadedShow
+    let client: PlexServerClient
+
+    @State private var downloads = Downloads.shared
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.dismiss) private var dismiss
+    @State private var deleting: DownloadEntry?
+
+    var body: some View {
+        let episodes = show.episodes(in: downloads.list)
+        List {
+            ForEach(episodes) { DownloadRow(entry: $0, client: client, deleting: $deleting, inShow: true) }
+                .onDelete { offsets in offsets.map { episodes[$0].ratingKey }.forEach(downloads.delete) }
+        }
+        .readableColumn(Metrics(sizeClass))
+        .navigationTitle(show.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .deleteAlert($deleting)
+        // The last one deleted: back to the list.
+        .onChange(of: episodes.isEmpty) { _, empty in if empty { dismiss() } }
+    }
+}
+
+/// The show: its poster, «٣ حلقات • 921 MB», and how many are still downloading.
+private struct ShowDownloadRow: View {
+    let show: DownloadedShow
+    let episodes: [DownloadEntry]
+
+    @State private var downloads = Downloads.shared
+    @Environment(ProfileStore.self) private var store
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Group {
+                if let image = episodes.lazy.compactMap({ downloads.image($0.ratingKey) }).first {
+                    Image(uiImage: image).resizable().scaledToFill()
+                } else {
+                    Color(white: 0.15).overlay(Image(systemName: "tv").foregroundStyle(.secondary))
+                }
+            }
+            .frame(width: 60, height: 90)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(show.title).font(.headline).lineLimit(1)
+                Text(details).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                if let note {
+                    Text(note).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// «٣ حلقات • 921 MB».
+    private var details: String {
+        let bytes = episodes.reduce(Int64(0)) { $0 + ($1.state == .done ? $1.total : $1.written) }
+        return ArabicFormat.episodeCount(episodes.count) + ArabicFormat.separator + ArabicFormat.fileSize(bytes)
+    }
+
+    /// «يتحمّل ٢» while some are downloading, else «شاهدت ١ من ٣».
+    private var note: String? {
+        let loading = episodes.filter { $0.state == .downloading || $0.state == .waiting }.count
+        if loading > 0 { return "يتحمّل " + ArabicFormat.digits(loading) }
+        let watched = episodes.filter { store.state(for: $0.ratingKey)?.watched == true }.count
+        guard watched > 0 else { return nil }
+        return watched == episodes.count ? "شاهدتها كلها ✓"
+            : "شاهدت \(ArabicFormat.digits(watched)) من \(ArabicFormat.digits(episodes.count))"
+    }
+}
+
+/// A movie or an episode: tap to play, with how far it was watched (or ✓).
+private struct DownloadRow: View {
+    let entry: DownloadEntry
+    let client: PlexServerClient
+    @Binding var deleting: DownloadEntry?
+    /// On its show's page: the episode as the title.
+    var inShow = false
+
+    @State private var downloads = Downloads.shared
+    @Environment(ProfileStore.self) private var store
+
+    var body: some View {
+        let state = store.state(for: entry.ratingKey)
+        let watched = state?.watched == true
         Button {
             guard entry.state == .done else { return }
             Task { await PlaybackManager.shared.play(entry.item, client: client) }
@@ -172,15 +329,28 @@ struct DownloadsView: View {
                     }
                 }
                 .frame(width: entry.item.isEpisode ? 120 : 60, height: entry.item.isEpisode ? 68 : 90)
+                .overlay(alignment: .bottom) {
+                    // How far it was watched, on the picture like the cards.
+                    if !watched, let state, state.offsetMs > 0, state.durationMs > 0 {
+                        WatchedBar(fraction: Double(state.offsetMs) / Double(state.durationMs))
+                    }
+                }
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(entry.item.isEpisode ? (entry.item.grandparentTitle ?? entry.item.title) : entry.item.title)
-                        .font(.headline).lineLimit(1)
-                    if entry.item.isEpisode {
-                        Text(entry.item.cardSubtitle ?? entry.item.title).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text(title).font(.headline).lineLimit(1)
+                        if watched {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.subheadline)
+                                .foregroundStyle(Theme.accent)
+                                .accessibilityLabel("شوهد")
+                        }
                     }
-                    status(entry)
+                    if let subtitle {
+                        Text(subtitle).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    status
                 }
                 Spacer(minLength: 0)
                 if entry.state == .done {
@@ -198,8 +368,19 @@ struct DownloadsView: View {
         }
     }
 
+    private var title: String {
+        guard entry.item.isEpisode else { return entry.item.title }
+        return inShow ? (ArabicFormat.episodeCode(season: entry.item.parentIndex, episode: entry.item.index) ?? entry.item.title)
+                      : (entry.item.grandparentTitle ?? entry.item.title)
+    }
+
+    private var subtitle: String? {
+        guard entry.item.isEpisode else { return nil }
+        return inShow ? entry.item.title : (entry.item.cardSubtitle ?? entry.item.title)
+    }
+
     @ViewBuilder
-    private func status(_ entry: DownloadEntry) -> some View {
+    private var status: some View {
         let size = { (n: Int64) in ArabicFormat.fileSize(n) }
         switch entry.state {
         case .done:
@@ -218,6 +399,33 @@ struct DownloadsView: View {
                 Text(entry.error ?? "توقف التحميل").font(.caption).foregroundStyle(.yellow)
                 Button("إكمال") { downloads.resume(entry.ratingKey) }.font(.caption.weight(.semibold))
             }
+        }
+    }
+}
+
+/// Thin watched-so-far bar along the bottom of a picture.
+private struct WatchedBar: View {
+    let fraction: Double
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Rectangle().fill(Color.black.opacity(0.5))
+                Rectangle().fill(Theme.accent).frame(width: geo.size.width * min(1, max(0, fraction)))
+            }
+        }
+        .frame(height: 4)
+        .environment(\.layoutDirection, .leftToRight)
+    }
+}
+
+private extension View {
+    /// «حذف «…» من الجهاز؟» for one movie or episode.
+    func deleteAlert(_ entry: Binding<DownloadEntry?>) -> some View {
+        alert("حذف «\(entry.wrappedValue.map { ArabicFormat.isolated($0.item.cardTitle) } ?? "")» من الجهاز؟",
+              isPresented: Binding(get: { entry.wrappedValue != nil }, set: { if !$0 { entry.wrappedValue = nil } })) {
+            Button("حذف", role: .destructive) { if let key = entry.wrappedValue?.ratingKey { Downloads.shared.delete(key) } }
+            Button("إلغاء", role: .cancel) {}
         }
     }
 }

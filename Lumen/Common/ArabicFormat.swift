@@ -26,6 +26,16 @@ enum ArabicFormat {
         String(s.map { c in c.wholeNumberValue.map { arabicDigits[$0] } ?? c })
     }
 
+    /// «حلقة واحدة», «حلقتين», «٣ حلقات», «١١ حلقة» (Arabic plural rules).
+    static func episodeCount(_ n: Int) -> String {
+        switch n {
+        case 1: return "حلقة واحدة"
+        case 2: return "حلقتين"
+        case 3...10: return digits(n) + " حلقات"
+        default: return count(n) + " حلقة"
+        }
+    }
+
     // MARK: File sizes and bitrates
 
     /// «5.93 GB», «921 MB»: sizes stay in English (digits and unit, decimal units like the
