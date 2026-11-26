@@ -155,9 +155,9 @@ struct MainTabView: View {
             let rest = filter.scopes.filter { scope in !pinned.contains { $0.id == scope.id } }
             TabView(selection: $selection) {
                 Tab("الرئيسية", systemImage: "house.fill", value: TabID.home) { HomeView(client: client) }
-                Tab("قائمتي", systemImage: "plus.rectangle.on.rectangle", value: TabID.myList) { MyListView(client: client) }
+                Tab("قائمتي", systemImage: "plus.rectangle.fill.on.rectangle.fill", value: TabID.myList) { MyListView(client: client) }
                 Tab("بحث", systemImage: "magnifyingglass", value: TabID.search) { SearchView(client: client) }
-                Tab("التنزيلات", systemImage: "arrow.down.circle", value: TabID.downloads) { DownloadsView(client: client) }
+                Tab("التنزيلات", systemImage: "arrow.down.circle.fill", value: TabID.downloads) { DownloadsView(client: client) }
                 Tab("الإعدادات", systemImage: "gearshape.fill", value: TabID.settings) {
                     SettingsView(client: client, sections: sections)
                 }
@@ -169,7 +169,7 @@ struct MainTabView: View {
                             }
                         }
                         if !rest.isEmpty {
-                            Tab("المزيد", systemImage: "ellipsis.circle", value: TabID.more) {
+                            Tab("المزيد", systemImage: "ellipsis.circle.fill", value: TabID.more) {
                                 MoreLibrariesView(client: client, scopes: rest)
                             }
                         }
@@ -184,11 +184,11 @@ struct MainTabView: View {
                 HomeView(client: client)
                     .tabItem { Label("الرئيسية", systemImage: "house.fill") }
                 MyListView(client: client)
-                    .tabItem { Label("قائمتي", systemImage: "plus.rectangle.on.rectangle") }
+                    .tabItem { Label("قائمتي", systemImage: "plus.rectangle.fill.on.rectangle.fill") }
                 SearchView(client: client)
                     .tabItem { Label("بحث", systemImage: "magnifyingglass") }
                 DownloadsView(client: client)
-                    .tabItem { Label("التنزيلات", systemImage: "arrow.down.circle") }
+                    .tabItem { Label("التنزيلات", systemImage: "arrow.down.circle.fill") }
                 SettingsView(client: client, sections: sections)
                     .tabItem { Label("الإعدادات", systemImage: "gearshape.fill") }
             }

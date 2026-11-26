@@ -62,7 +62,7 @@ struct LibraryGridView: View {
     private var browse: some View {
             VStack(spacing: 16) {
                 if let total, total > 0 {
-                    Text("\(ArabicFormat.digits(total)) عنصر")
+                    Text("\(ArabicFormat.count(total)) عنصر")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -129,12 +129,14 @@ struct SearchView: View {
     @State private var query = ""
     @State private var results: [PlexItem] = []
     @State private var isSearching = false
+    @State private var recent: [String] = RecentSearches.load()
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
         BrowseStack(client: client) {
             ScrollView {
                 if query.trimmingCharacters(in: .whitespaces).isEmpty {
+                    recentSearches
                     kinds
                 }
                 if results.isEmpty && query.count >= 2 && !isSearching {
@@ -144,10 +146,20 @@ struct SearchView: View {
                 PosterGrid(items: results, client: client)
                     .padding(.top, 8)
             }
-            .overlay { if isSearching && results.isEmpty { ProgressView() } }
+            // Not once the field is cleared: the old request may still be on its way back.
+            .overlay {
+                if isSearching && results.isEmpty && query.trimmingCharacters(in: .whitespaces).count >= 2 {
+                    ProgressView()
+                }
+            }
             .navigationTitle("بحث")
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always),
                         prompt: "اسم، نوع، أو «مسلسل كوميدي»")
+            // «بحث» on the keyboard: remembered right away (if it found something).
+            .onSubmit(of: .search) {
+                let q = query.trimmingCharacters(in: .whitespaces)
+                if q.count >= 2, !results.isEmpty { recent = RecentSearches.add(q) }
+            }
         }
         .task(id: query) {
             let q = query.trimmingCharacters(in: .whitespaces)
@@ -161,6 +173,45 @@ struct SearchView: View {
             let visible = await filter.resolve(found, client: client)
             guard !Task.isCancelled else { return }
             results = visible.mergingCopies(ProfileStore.shared)
+            // Remembered once the term stays put a moment (not every partial word typed), as on Apple TV.
+            guard !visible.isEmpty else { return }
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            recent = RecentSearches.add(q)
+        }
+    }
+
+    /// The last searches that found something, newest first; one tap searches again.
+    @ViewBuilder
+    private var recentSearches: some View {
+        if !recent.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("عمليات البحث الأخيرة")
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("مسح") {
+                        RecentSearches.clear()
+                        withAnimation { recent = [] }
+                    }
+                    .font(.subheadline)
+                }
+                FlowLayout(spacing: 10) {
+                    ForEach(recent, id: \.self) { term in
+                        Button { query = term } label: {
+                            Label(term, systemImage: "clock.arrow.circlepath")
+                                .lineLimit(1)
+                        }
+                        .buttonStyle(.bordered)
+                        .buttonBorderShape(.capsule)
+                        .tint(.secondary)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, Metrics(sizeClass).margin)
+            .padding(.top)
         }
     }
 

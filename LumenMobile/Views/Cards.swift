@@ -229,8 +229,13 @@ struct LandscapeCard: View {
         let remaining = item.duration.map { max(0, $0 - (item.viewOffset ?? 0)) }
         let time = remaining.map(ArabicFormat.duration(ms:))
         if item.isEpisode {
-            let code = ArabicFormat.shortEpisodeCode(season: item.parentIndex, episode: item.index)
-            return ArabicFormat.joined([code, time].compactMap { $0 })
+            // Spelled out («الموسم ٣ • الحلقة ٢ • باقي ٦د»), as on Apple TV: «م٣ • ح٢» read as a code.
+            let code = ArabicFormat.episodeCode(season: item.parentIndex, episode: item.index)
+            let left = time.map { item.progress != nil ? "باقي \($0)" : $0 }
+            // Plain join: both parts are Arabic. `ArabicFormat.joined` isolates each part, which
+            // leaves the line no strong letter of its own, so it was laid out left-to-right
+            // (the time first when read).
+            return [code, left].compactMap { $0 }.joined(separator: ArabicFormat.separator)
         }
         guard let time else { return "" }
         return item.progress != nil ? "باقي \(time)" : time

@@ -169,7 +169,7 @@ private struct HeroSlide: View {
             ], startPoint: .top, endPoint: .bottom)
 
             VStack(spacing: 12) {
-                Text(item.eyebrow)
+                Text(eyebrow)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.white.opacity(0.85))
                 TitleLogo(item: item.display, client: client, maxHeight: metrics.logoHeight)
@@ -224,6 +224,14 @@ private struct HeroSlide: View {
     }
 
     private var target: PlexItem? { item.playable ?? showEpisode ?? (item.display.isShow ? nil : item.display) }
+
+    /// «لم تكمله» alone when the button already says «استئناف الموسم ٣ • الحلقة ٢».
+    private var eyebrow: String {
+        guard playTitle != "تشغيل", playTitle != "استئناف",
+              let code = item.playable?.episodeCode else { return item.eyebrow }
+        let suffix = ArabicFormat.separator + code
+        return item.eyebrow.hasSuffix(suffix) ? String(item.eyebrow.dropLast(suffix.count)) : item.eyebrow
+    }
 
     private var playTitle: String {
         let verb = (target?.progress != nil && target?.isWatched == false) ? "استئناف" : "تشغيل"

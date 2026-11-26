@@ -103,6 +103,14 @@ final class ProfileStore {
             activeProfileID = last
             refreshSnapshot()
         }
+        // One profile, no PIN, and «تذكّر آخر مستخدم» never set either way: «مين يشاهد؟» would
+        // only ask to tap the same circle every launch, so open it directly.
+        if activeProfileID == nil, profiles.count == 1, let only = profiles.first, !only.hasPIN,
+           UserDefaults.standard.object(forKey: Keys.remember) == nil {
+            activeProfileID = only.id
+            UserDefaults.standard.set(only.id, forKey: Keys.lastProfile)
+            refreshSnapshot()
+        }
         return created
     }
 

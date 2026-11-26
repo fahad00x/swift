@@ -11,11 +11,21 @@ struct LibraryScope: Identifiable, Hashable {
 
     var id: String { ScopeID(kind, section.key).raw }
 
+    /// Filled, so tab bars and sidebars stay one style. Guessed from the library's name
+    /// (4K, anime, Arabic, Asian…) so libraries of the same type don't all share one symbol.
     var icon: String {
-        switch kind {
-        case .anime: return "sparkles"
-        case .all, .noAnime: return section.type == "show" ? "tv" : "film"
+        if kind == .anime { return "sparkles" }
+        let name = (section.title + " " + title).lowercased()
+        func has(_ words: String...) -> Bool { words.contains { name.contains($0) } }
+        if has("4k", "uhd") { return "4k.tv.fill" }
+        if kind == .all, has("أنمي", "انمي", "anime") { return "sparkles" }
+        if has("وثائقي", "documentar") { return "books.vertical.fill" }
+        if has("أطفال", "اطفال", "kids", "children") { return "figure.2.and.child.holdinghands" }
+        if has("عربي", "arab") { return "globe.europe.africa.fill" }
+        if has("آسيوي", "اسيوي", "كوري", "ياباني", "صيني", "asian", "korean", "japanese", "chinese") {
+            return "globe.asia.australia.fill"
         }
+        return section.type == "show" ? "tv.fill" : "film.fill"
     }
 
     static func defaultTitles(kind: ScopeID.Kind, section: PlexDirectory) -> (title: String, rowName: String) {

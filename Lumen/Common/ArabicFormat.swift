@@ -11,6 +11,17 @@ enum ArabicFormat {
 
     static func digits(_ n: Int) -> String { digits(String(n)) }
 
+    /// A count with thousands separators: "١٦٬٩٢٤". Not for years or episode numbers.
+    static func count(_ n: Int) -> String {
+        let plain = String(abs(n))
+        var grouped = ""
+        for (i, c) in plain.enumerated() {
+            if i > 0, (plain.count - i) % 3 == 0 { grouped.append("٬") }
+            grouped.append(c)
+        }
+        return (n < 0 ? "-" : "") + digits(grouped)
+    }
+
     static func digits(_ s: String) -> String {
         String(s.map { c in c.wholeNumberValue.map { arabicDigits[$0] } ?? c })
     }
