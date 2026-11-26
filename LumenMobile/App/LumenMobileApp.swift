@@ -109,12 +109,25 @@ struct MainTabView: View {
     @State private var newSections: [PlexDirectory] = []
     /// «حلقة جديدة» / «موسم جديد» of the shows the profile follows.
     @State private var news = ShowNews()
+    /// The libraries pinned to the sidebar (same choice as the Apple TV, synced with the profile).
+    @State private var sidebar: SidebarPrefs
+    @State private var selection: TabID = .home
+
+    init(client: PlexServerClient, sections: [PlexDirectory], profile: UserProfile) {
+        self.client = client
+        self.sections = sections
+        self.profile = profile
+        _sidebar = State(initialValue: SidebarPrefs(profileID: profile.id))
+    }
+
+    enum TabID: Hashable { case home, myList, search, downloads, settings, library(String), more }
 
     var body: some View {
         let filter = ContentFilter(profile: profile, sections: sections)
-        tabs
+        tabs(filter)
         .environment(\.contentFilter, filter)
         .environment(news)
+        .environment(sidebar)
         .task {
             AppSessionClient.current = client
             checkForNewLibraries()
@@ -133,16 +146,37 @@ struct MainTabView: View {
         }
     }
 
-    /// Tab bar on the iPhone; on the iPad (iPadOS 18+) the tab bar can also open as a sidebar.
+    /// Tab bar on the iPhone; on the iPad (iPadOS 18+) it also opens as a sidebar, with the
+    /// pinned libraries under «المكتبات» and the rest under «المزيد», like the Apple TV.
     @ViewBuilder
-    private var tabs: some View {
+    private func tabs(_ filter: ContentFilter) -> some View {
         if #available(iOS 18.0, *) {
-            TabView {
-                Tab("الرئيسية", systemImage: "house.fill") { HomeView(client: client) }
-                Tab("قائمتي", systemImage: "plus.rectangle.on.rectangle") { MyListView(client: client) }
-                Tab("بحث", systemImage: "magnifyingglass") { SearchView(client: client) }
-                Tab("التنزيلات", systemImage: "arrow.down.circle") { DownloadsView(client: client) }
-                Tab("الإعدادات", systemImage: "gearshape.fill") { SettingsView(client: client, sections: sections) }
+            let pinned = sidebar.pinned(from: filter.scopes)
+            let rest = filter.scopes.filter { scope in !pinned.contains { $0.id == scope.id } }
+            TabView(selection: $selection) {
+                Tab("الرئيسية", systemImage: "house.fill", value: TabID.home) { HomeView(client: client) }
+                Tab("قائمتي", systemImage: "plus.rectangle.on.rectangle", value: TabID.myList) { MyListView(client: client) }
+                Tab("بحث", systemImage: "magnifyingglass", value: TabID.search) { SearchView(client: client) }
+                Tab("التنزيلات", systemImage: "arrow.down.circle", value: TabID.downloads) { DownloadsView(client: client) }
+                Tab("الإعدادات", systemImage: "gearshape.fill", value: TabID.settings) {
+                    SettingsView(client: client, sections: sections)
+                }
+                if !filter.scopes.isEmpty {
+                    TabSection("المكتبات") {
+                        ForEach(pinned) { scope in
+                            Tab(scope.title, systemImage: scope.icon, value: TabID.library(scope.id)) {
+                                BrowseStack(client: client) { LibraryGridView(client: client, scope: scope) }
+                            }
+                        }
+                        if !rest.isEmpty {
+                            Tab("المزيد", systemImage: "ellipsis.circle", value: TabID.more) {
+                                MoreLibrariesView(client: client, scopes: rest)
+                            }
+                        }
+                    }
+                    // The iPhone's tab bar keeps its five; libraries are in Settings there.
+                    .defaultVisibility(.hidden, for: .tabBar)
+                }
             }
             .tabViewStyle(.sidebarAdaptable)
         } else {
@@ -176,6 +210,23 @@ struct MainTabView: View {
         let keys = newSections.map(\.key)
         newSections = []
         store.acknowledgeSections(keys, enable: enable)
+    }
+}
+
+/// «المزيد»: the libraries not pinned to the sidebar.
+struct MoreLibrariesView: View {
+    let client: PlexServerClient
+    let scopes: [LibraryScope]
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    var body: some View {
+        BrowseStack(client: client) {
+            List(scopes) { scope in
+                NavigationLink(value: scope) { Label(scope.title, systemImage: scope.icon) }
+            }
+            .readableColumn(Metrics(sizeClass))
+            .navigationTitle("المزيد")
+        }
     }
 }
 

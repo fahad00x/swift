@@ -11,6 +11,7 @@ struct DownloadButton: View {
     @State private var downloads = Downloads.shared
     @State private var confirmDelete = false
     @State private var starting = false
+    @State private var choosing = false
 
     var body: some View {
         let entry = downloads.entry(item.ratingKey)
@@ -32,8 +33,7 @@ struct DownloadButton: View {
             case nil:
                 Button {
                     guard !starting else { return }
-                    starting = true
-                    Task { await downloads.download(item, client: client); starting = false }
+                    choosing = true
                 } label: {
                     circle {
                         if starting { ProgressView().controlSize(.small) } else { Image(systemName: "arrow.down") }
@@ -42,6 +42,10 @@ struct DownloadButton: View {
             }
         }
         .accessibilityLabel("تحميل")
+        .downloadQualityDialog(isPresented: $choosing, item: item) { quality in
+            starting = true
+            Task { await downloads.download(item, client: client, quality: quality); starting = false }
+        }
         .alert("حذف «\(ArabicFormat.isolated(item.cardTitle))» من الجهاز؟", isPresented: $confirmDelete) {
             Button("حذف", role: .destructive) { downloads.delete(item.ratingKey) }
             Button("إلغاء", role: .cancel) {}
@@ -72,6 +76,40 @@ struct ProgressRing: View {
         }
         .frame(width: 22, height: 22)
         .animation(.linear(duration: 0.3), value: fraction)
+    }
+}
+
+// MARK: - Quality
+
+extension View {
+    /// «جودة التحميل»: the original, or a smaller copy Plex converts (with its size, about).
+    /// A show or season: sizes per episode.
+    func downloadQualityDialog(isPresented: Binding<Bool>, item: PlexItem,
+                               perEpisode: Bool = false, choose: @escaping (PlaybackQuality) -> Void) -> some View {
+        confirmationDialog("جودة التحميل", isPresented: isPresented, titleVisibility: .visible) {
+            ForEach(DownloadQuality.choices(for: item), id: \.self) { quality in
+                Button(DownloadQuality.label(quality, item: item, perEpisode: perEpisode)) { choose(quality) }
+            }
+            Button("إلغاء", role: .cancel) {}
+        } message: {
+            Text(perEpisode ? "الحجم تقريبي لكل حلقة." : "الأصغر ياخذ مساحة أقل. يحوّله خادم Plex وقت التحميل، فيتأخر شوي.")
+        }
+    }
+}
+
+enum DownloadQuality {
+    /// The original, then the smaller copies that are smaller than it.
+    static func choices(for item: PlexItem) -> [PlaybackQuality] {
+        let bitrate = item.media.first?.bitrate ?? .max
+        let smaller: [PlaybackQuality] = [.kbps8000, .kbps4000, .kbps2000, .kbps1500, .kbps750]
+        return [.original] + smaller.filter { ($0.maxBitrateKbps ?? 0) < bitrate }
+    }
+
+    static func label(_ quality: PlaybackQuality, item: PlexItem, perEpisode: Bool) -> String {
+        let name = quality == .original ? "الأصلي" : quality.title
+        guard !perEpisode, let size = Downloads.estimatedSize(item, quality: quality) else { return name }
+        let text = ArabicFormat.digits(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+        return "\(name) — \(quality == .original ? "" : "حوالي ")\(text)"
     }
 }
 
@@ -165,12 +203,14 @@ struct DownloadsView: View {
         let size = { (n: Int64) in ArabicFormat.digits(ByteCountFormatter.string(fromByteCount: n, countStyle: .file)) }
         switch entry.state {
         case .done:
-            Text(size(entry.total)).font(.caption).foregroundStyle(.secondary)
+            Text(size(entry.total) + (entry.quality.flatMap(PlaybackQuality.init(rawValue:)).map { " • " + $0.title } ?? " • الأصلي"))
+                .font(.caption).foregroundStyle(.secondary)
         case .downloading, .waiting:
             VStack(alignment: .leading, spacing: 4) {
                 ProgressView(value: entry.fraction).tint(Theme.accent)
                     .environment(\.layoutDirection, .leftToRight)
-                Text("\(size(entry.written)) من \(entry.total > 0 ? size(entry.total) : "…")")
+                Text("\(size(entry.written)) من \(entry.total > 0 ? (entry.estimated ? "حوالي " : "") + size(entry.total) : "…")"
+                     + (entry.quality.flatMap(PlaybackQuality.init(rawValue:)).map { " • " + $0.title } ?? ""))
                     .font(.caption).foregroundStyle(.secondary)
             }
         case .failed:

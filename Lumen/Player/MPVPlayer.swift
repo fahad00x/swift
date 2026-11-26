@@ -312,6 +312,17 @@ final class MPVPlayer {
     }
 
     /// Text subtitles move up while the controls show (and back down after).
+    /// mpv sizes its picture to the layer only when its video output is set up. After the screen
+    /// turns (iPad) it keeps drawing at the old size: choosing the video track again sets the
+    /// output up at the new size (a blink of black).
+    func refreshOutputSize() {
+        guard let track = string("vid"), track != "no" else { return }
+        setString("vid", "no")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            self?.setString("vid", track)
+        }
+    }
+
     func setSubtitleLifted(_ lifted: Bool) { setString("sub-margin-y", lifted ? "210" : "60") }
 
     func selectAudio(_ id: Int) { setString("aid", "\(id)") }

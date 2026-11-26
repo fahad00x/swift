@@ -71,6 +71,16 @@ final class MobilePlayerViewController: UIViewController {
         CATransaction.commit()
     }
 
+    /// Turned (iPad), or a new window size: mpv draws at the new size once the turn is over.
+    override func viewWillTransition(to size: CGSize, with coordinator: any UIViewControllerTransitionCoordinator) {
+        super.viewWillTransition(to: size, with: coordinator)
+        coordinator.animate(alongsideTransition: nil) { [weak self] _ in
+            self?.view.setNeedsLayout()
+            self?.view.layoutIfNeeded()
+            self?.session.player.refreshOutputSize()
+        }
+    }
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         if !Self.isPad {
@@ -596,7 +606,7 @@ final class PlaybackManager {
         let session = PlayerSession(item: item, client: client, player: mpv)
         if localFile != nil {
             let key = item.ratingKey
-            session.sidecarURL = { stream in stream.key.flatMap { Downloads.shared.localSubtitle(key, streamKey: $0) } }
+            session.sidecarURL = { stream in Downloads.shared.localSubtitle(key, stream: stream) }
         }
         // The session stops it on close, or when the quality panel replaces it.
         session.transcodeSessionID = plan.isTranscode ? plan.sessionID : nil

@@ -20,6 +20,8 @@ struct DetailView: View {
     @State private var subtitleSelection = -1
     @State private var shownStreams: (audio: Int, subtitle: Int) = (-1, -1)
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @State private var downloadingSeason: PlexItem?
+    @State private var downloadingEpisode: PlexItem?
 
     private var metrics: Metrics { Metrics(sizeClass) }
 
@@ -74,6 +76,14 @@ struct DetailView: View {
             }
         }
         .ignoresSafeArea(edges: .top)
+        .downloadQualityDialog(isPresented: Binding(get: { downloadingSeason != nil }, set: { if !$0 { downloadingSeason = nil } }),
+                               item: playTarget ?? entry, perEpisode: true) { quality in
+            if let season = downloadingSeason { Task { await Downloads.shared.download(season, client: client, quality: quality) } }
+        }
+        .downloadQualityDialog(isPresented: Binding(get: { downloadingEpisode != nil }, set: { if !$0 { downloadingEpisode = nil } }),
+                               item: downloadingEpisode ?? entry) { quality in
+            if let episode = downloadingEpisode { Task { await Downloads.shared.download(episode, client: client, quality: quality) } }
+        }
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.hidden, for: .navigationBar)
         .task(id: entry.id) {
@@ -194,7 +204,7 @@ struct DetailView: View {
         }
         if item.isShow, let season = seasons.first(where: { $0.ratingKey == selectedSeasonKey }) {
             Button {
-                Task { await Downloads.shared.download(season, client: client) }
+                downloadingSeason = season
             } label: {
                 Label("تحميل \(seasonTitle(season))", systemImage: "arrow.down.circle")
             }
@@ -246,7 +256,7 @@ struct DetailView: View {
                         }
                         if Downloads.shared.entry(episode.ratingKey) == nil {
                             Button {
-                                Task { await Downloads.shared.download(episode, client: client) }
+                                downloadingEpisode = episode
                             } label: { Label("تحميل الحلقة", systemImage: "arrow.down.circle") }
                         } else {
                             Button(role: .destructive) { Downloads.shared.delete(episode.ratingKey) } label: {

@@ -28,6 +28,25 @@ struct Metrics {
     var logoHeight: CGFloat { isWide ? 130 : 90 }
 }
 
+/// iOS Settings' row: a coloured rounded square with a white symbol, and the title.
+struct SettingsIcon: View {
+    let title: String
+    let icon: String
+    let color: Color
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 30, height: 30)
+                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(color.gradient))
+            Text(title)
+                .foregroundStyle(.primary)
+        }
+    }
+}
+
 extension View {
     /// Centres the content in a readable column on a wide iPad (forms, sign-in).
     func readableColumn(_ metrics: Metrics) -> some View {
@@ -90,6 +109,7 @@ struct PosterCard: View {
 
     @Environment(ShowNews.self) private var news: ShowNews?
     @Environment(\.showsNewsMarks) private var marksNews
+    @Environment(ProfileStore.self) private var store
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -127,10 +147,32 @@ struct PosterCard: View {
             }
         }
         .artworkStatus(item)
+        .overlay {
+            if let cornerText {
+                // Physical top-left (an RTL `.topLeading` would be the right).
+                ZStack(alignment: .topLeading) {
+                    Color.clear
+                    CornerBadge(text: cornerText)
+                }
+                .environment(\.layoutDirection, .leftToRight)
+                .allowsHitTesting(false)
+            }
+        }
         .overlay(alignment: .bottom) {
             if marksNews, let info = news?.of(item) { NewsMark(info: info, showBar: item.isShow) }
         }
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    /// Like the Apple TV: a show's unwatched-episode count, or ✓ once watched.
+    private var cornerText: String? {
+        if item.isShow || item.isSeason {
+            guard let leaves = item.leafCount, leaves > 0 else { return nil }
+            let remaining = leaves - store.watchedEpisodeCount(under: item.ratingKey)
+            return remaining > 0 ? ArabicFormat.digits(remaining) : "✓"
+        }
+        if item.isPlayable, store.state(for: item.ratingKey)?.watched == true { return "✓" }
+        return nil
     }
 
     private var subtitle: String? {
@@ -272,6 +314,21 @@ struct PosterGrid: View {
             }
         }
         .padding(.horizontal, metrics.margin)
+    }
+}
+
+/// Small box in the top corner (physical top-left, as on the Apple TV): a count or ✓.
+private struct CornerBadge: View {
+    let text: String
+    var body: some View {
+        Text(text)
+            .font(.caption.weight(.bold))
+            .foregroundStyle(.white)
+            .frame(minWidth: 22, minHeight: 22)
+            .padding(.horizontal, 4)
+            .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Color.black.opacity(0.68)))
+            .padding(6)
+            .environment(\.layoutDirection, .leftToRight)
     }
 }
 

@@ -39,12 +39,8 @@ struct ArtworkStatusOverlay: View {
     @Environment(ProfileStore.self) private var store
 
     static let orange = Color(red: 1.0, green: 0.58, blue: 0.0)
-    #if os(tvOS)
-    /// Apple TV: no unwatched triangle (posters show a count / ✓ box instead).
+    /// No unwatched triangle: posters show a count / ✓ box instead (Apple TV and iPhone alike).
     static let showsTriangle = false
-    #else
-    static let showsTriangle = true
-    #endif
 
     var body: some View {
         let progress = store.progress(of: item)

@@ -651,7 +651,8 @@ final class PlayerSession {
     private func addExternalSubtitles() {
         let chosen = preferredStreams.subtitle?.id
         for stream in item.subtitleStreams {
-            guard let key = stream.key, let url = sidecarURL?(stream) ?? client.url(key, includeToken: true) else { continue }
+            // A downloaded copy can also carry the file's own subtitles as files of their own.
+            guard let url = sidecarURL?(stream) ?? stream.key.flatMap({ client.url($0, includeToken: true) }) else { continue }
             player.addSubtitle(url, title: stream.title ?? stream.displayTitle, language: stream.languageCode,
                                select: stream.id == chosen)
         }

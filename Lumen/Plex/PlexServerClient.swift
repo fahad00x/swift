@@ -463,6 +463,30 @@ final class PlexServerClient: Sendable {
         return PlaybackPlan(url: url, isTranscode: true, sessionID: session)
     }
 
+    /// A smaller copy to save on the device: Plex converts the file (H.264/HEVC, AAC/AC3 in MKV,
+    /// subtitles kept) and serves it as one file while it converts.
+    func downloadPlan(for item: PlexItem, quality: PlaybackQuality) -> PlaybackPlan? {
+        guard let kbps = quality.maxBitrateKbps, let resolution = quality.resolution else {
+            return item.primaryPart?.key.flatMap(directURL(partKey:)).map { PlaybackPlan(url: $0, isTranscode: false, sessionID: "") }
+        }
+        let session = UUID().uuidString
+        var q: [(String, String)] = [
+            ("path", "/library/metadata/\(item.ratingKey)"),
+            ("mediaIndex", "0"), ("partIndex", "0"),
+            ("protocol", "http"), ("copyts", "1"),
+            ("directPlay", "0"), ("directStream", "1"), ("directStreamAudio", "1"),
+            ("videoQuality", "100"), ("maxVideoBitrate", "\(kbps)"), ("videoResolution", resolution),
+            ("subtitles", "auto"), ("audioBoost", "100"),
+            ("location", isLocal ? "lan" : "wan"),
+            ("session", session), ("X-Plex-Session-Identifier", session),
+            ("X-Plex-Client-Profile-Extra",
+             "add-transcode-target(type=videoProfile&context=streaming&protocol=http&container=mkv&videoCodec=h264,hevc&audioCodec=aac,ac3,eac3&subtitleCodec=ass,srt)"),
+        ]
+        q += PlexClientInfo.queryItems
+        guard let url = url("/video/:/transcode/universal/start", q, includeToken: true) else { return nil }
+        return PlaybackPlan(url: url, isTranscode: true, sessionID: session)
+    }
+
     func directURL(partKey: String) -> URL? {
         url(partKey, PlexClientInfo.queryItems, includeToken: true)
     }
