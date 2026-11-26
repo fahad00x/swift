@@ -22,6 +22,10 @@ struct DetailView: View {
     @State private var subtitleSelection = -1
     @State private var shownStreams: (audio: Int, subtitle: Int) = (-1, -1)
     @Environment(\.horizontalSizeClass) private var sizeClass
+    /// Set when titles open as a card (iPad in landscape); nil inside the card and in portrait.
+    @Environment(\.presentDetail) private var presentDetail
+    @Environment(\.dismiss) private var dismiss
+    @State private var onScreen = false
     @State private var downloadingSeason: PlexItem?
     @State private var downloadingEpisode: PlexItem?
     /// A show's page: «الحلقات», «المزيد من العناوين المشابهة» or «الممثلين والطاقم».
@@ -97,6 +101,15 @@ struct DetailView: View {
             // What's saved on disk first (instant), then the server.
             await PlexResponseCache.$policy.withValue(.cacheOnly) { await load() }
             await load()
+        }
+        // Opened full screen in portrait, then turned to landscape: the page becomes the card.
+        // Only the page on top (not one covered by another title opened from it).
+        .onAppear { onScreen = true }
+        .onDisappear { onScreen = false }
+        .onChange(of: presentDetail != nil) { _, cards in
+            guard cards, onScreen, let presentDetail else { return }
+            dismiss()
+            presentDetail(entry)
         }
         .onReceive(NotificationCenter.default.publisher(for: .plexPlaybackDidEnd)) { _ in
             Task { await load() }
