@@ -108,7 +108,7 @@ enum DownloadQuality {
     static func label(_ quality: PlaybackQuality, item: PlexItem, perEpisode: Bool) -> String {
         let name = quality == .original ? "الأصلي" : quality.title
         guard !perEpisode, let size = Downloads.estimatedSize(item, quality: quality) else { return name }
-        let text = ArabicFormat.digits(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+        let text = ArabicFormat.fileSize(size)
         return "\(name) — \(quality == .original ? "" : "حوالي ")\(text)"
     }
 }
@@ -153,9 +153,9 @@ struct DownloadsView: View {
     }
 
     private var spaceText: String {
-        let used = ByteCountFormatter.string(fromByteCount: downloads.usedBytes, countStyle: .file)
-        let free = Downloads.freeBytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
-        return ArabicFormat.digits("التنزيلات تاخذ \(used)" + (free.map { "، والمتبقي على الجهاز \($0)" } ?? ""))
+        let used = ArabicFormat.fileSize(downloads.usedBytes)
+        let free = Downloads.freeBytes.map { ArabicFormat.fileSize($0) }
+        return "التنزيلات تاخذ \(used)" + (free.map { "، والمتبقي على الجهاز \($0)" } ?? "")
     }
 
     private func row(_ entry: DownloadEntry) -> some View {
@@ -200,7 +200,7 @@ struct DownloadsView: View {
 
     @ViewBuilder
     private func status(_ entry: DownloadEntry) -> some View {
-        let size = { (n: Int64) in ArabicFormat.digits(ByteCountFormatter.string(fromByteCount: n, countStyle: .file)) }
+        let size = { (n: Int64) in ArabicFormat.fileSize(n) }
         switch entry.state {
         case .done:
             Text(size(entry.total) + (entry.quality.flatMap(PlaybackQuality.init(rawValue:)).map { " • " + $0.title } ?? " • الأصلي"))

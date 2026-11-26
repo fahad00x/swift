@@ -49,8 +49,6 @@ enum PlaybackQuality: String, CaseIterable, Identifiable, Hashable {
     /// «الأصلي», «1080p – 8 Mbps», «480p – 0.75 Mbps».
     var title: String {
         guard let kbps = maxBitrateKbps else { return "الأصلي" }
-        let mbps = Double(kbps) / 1000
-        let number = mbps == mbps.rounded() ? String(Int(mbps)) : String(format: mbps < 1 ? "%.2g" : "%.1f", mbps)
-        return "\u{2068}\(height) – \(number) Mbps\u{2069}"
+        return ArabicFormat.isolated("\(height) – " + ArabicFormat.bitrate(kbps: kbps))
     }
 }

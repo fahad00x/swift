@@ -26,6 +26,34 @@ enum ArabicFormat {
         String(s.map { c in c.wholeNumberValue.map { arabicDigits[$0] } ?? c })
     }
 
+    // MARK: File sizes and bitrates
+
+    /// «5.93 GB», «921 MB»: sizes stay in English (digits and unit, decimal units like the
+    /// Files app), isolated so they keep their order inside an Arabic line.
+    static func fileSize(_ bytes: Int64) -> String {
+        let units = ["KB", "MB", "GB", "TB"]
+        var value = Double(max(0, bytes)) / 1000
+        var unit = 0
+        while value >= 1000, unit < units.count - 1 { value /= 1000; unit += 1 }
+        return isolated(englishNumber(value) + " " + units[unit])
+    }
+
+    /// «8.3 Mbps», «750 Kbps»: in English like sizes.
+    static func bitrate(kbps: Int) -> String {
+        kbps < 1000 ? isolated("\(kbps) Kbps") : isolated(englishNumber(Double(kbps) / 1000) + " Mbps")
+    }
+
+    /// Three significant digits at most, without trailing zeros: 5.93, 61.3, 921, 8.
+    private static func englishNumber(_ value: Double) -> String {
+        let decimals = value < 10 ? 2 : (value < 100 ? 1 : 0)
+        var text = String(format: "%.\(decimals)f", value)
+        if text.contains(".") {
+            while text.hasSuffix("0") { text.removeLast() }
+            if text.hasSuffix(".") { text.removeLast() }
+        }
+        return text
+    }
+
     // MARK: Text composition
 
     /// Separator between parts of a line ("٢٠٢٦  •  ٥٨د"). A bullet with spaces: the middle dot

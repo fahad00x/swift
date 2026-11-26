@@ -333,8 +333,8 @@ struct DetailView: View {
         if let hdr = target.dynamicRangeBadge { video.append(hdr) }
         var file: [String] = []
         if let container = (part?.container ?? media?.container)?.uppercased() { file.append(container) }
-        if let size = part?.size { file.append(ArabicFormat.digits(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))) }
-        if let bitrate = media?.bitrate { file.append(ArabicFormat.digits(String(format: "%.1f", Double(bitrate) / 1000)) + " Mbps") }
+        if let size = part?.size { file.append(ArabicFormat.fileSize(Int64(size))) }
+        if let bitrate = media?.bitrate { file.append(ArabicFormat.bitrate(kbps: bitrate)) }
 
         return VStack(alignment: .leading, spacing: 8) {
             Text("معلومات الملف").font(.title3.weight(.bold))

@@ -487,7 +487,7 @@ struct SettingsView: View {
         .task { await measure() }
         Section {
             LabeledContent("التنزيلات",
-                           value: ArabicFormat.digits(ByteCountFormatter.string(fromByteCount: Downloads.shared.usedBytes, countStyle: .file)))
+                           value: ArabicFormat.fileSize(Downloads.shared.usedBytes))
         } footer: {
             Text("تحذفها من تبويب «التنزيلات».")
         }
@@ -604,9 +604,7 @@ struct SettingsView: View {
 
     private static func bytes(_ size: Int?) -> String {
         guard let size else { return "…" }
-        let mb = Double(size) / 1_048_576
-        return mb >= 1024 ? ArabicFormat.digits(String(format: "%.1f", mb / 1024)) + " ج.ب"
-                          : ArabicFormat.digits(Int(mb.rounded())) + " م.ب"
+        return ArabicFormat.fileSize(Int64(size))
     }
 
     private func measure() async {
