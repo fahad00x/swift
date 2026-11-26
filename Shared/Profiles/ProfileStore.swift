@@ -157,14 +157,17 @@ final class ProfileStore {
         profiles.removeAll { $0.id == profile.id }
         dirty.removeValue(forKey: profile.recordName)
         pendingDeletes.insert(profile.recordName)
-        // Its states and list items are deleted on the server by the `deleteSelf` reference.
+        // Its states and list items go too, each one (records don't cascade with the profile:
+        // CloudKit caps that at 750 per record).
         for (name, state) in states where state.profileID == profile.id {
             states.removeValue(forKey: name)
             dirty.removeValue(forKey: name)
+            pendingDeletes.insert(name)
         }
         for (name, entry) in list where entry.profileID == profile.id {
             list.removeValue(forKey: name)
             dirty.removeValue(forKey: name)
+            pendingDeletes.insert(name)
         }
         if activeProfileID == profile.id { activeProfileID = nil; refreshSnapshot() }
         changed()

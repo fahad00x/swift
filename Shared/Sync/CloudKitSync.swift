@@ -56,8 +56,9 @@ enum CloudSyncError: LocalizedError {
 /// - Custom zone `LumenProfiles` (not the default zone), so it can later be shared with another
 ///   iCloud account through a zone-wide `CKShare`.
 /// - `Profile` record per profile; `MediaState` and `WatchlistItem` records point to their profile
-///   with a `profile` reference (`deleteSelf`, so deleting a profile deletes its data) and as
-///   their `parent` (needed for sharing hierarchies).
+///   with a `profile` reference (no cascade: CloudKit caps `deleteSelf` references at 750 per
+///   record; a deleted profile's records are deleted one by one) and as their `parent` (needed
+///   for sharing hierarchies).
 /// - Conflicts: last writer wins, by each record's `modifiedAt` (merged in `ProfileStore`);
 ///   uploads overwrite the server copy (`.allKeys`) after the latest changes have been pulled.
 actor CloudKitSync {
@@ -510,11 +511,17 @@ enum RecordMapper {
         }
     }
 
-    /// `profile` reference (cascade delete) + `parent` (sharing hierarchy) + plain profile id.
+    /// `profile` reference + `parent` (sharing hierarchy) + plain profile id.
+    ///
+    /// The reference doesn't delete with the profile (`.none`): CloudKit allows only 750
+    /// `deleteSelf` references to one record, and a profile with a long history has more
+    /// («Limit exceeded for number of owning references to single record»). Deleting a profile
+    /// deletes its records one by one instead (`ProfileStore.delete`). Records saved before
+    /// keep their old reference until they're saved again; that's harmless.
     private static func link(_ r: CKRecord, profileID: String, zoneID: CKRecordZone.ID) {
         let parentID = CKRecord.ID(recordName: "profile-\(profileID)", zoneID: zoneID)
         r["profileID"] = profileID as NSString
-        r["profile"] = CKRecord.Reference(recordID: parentID, action: .deleteSelf)
+        r["profile"] = CKRecord.Reference(recordID: parentID, action: .none)
         r.setParent(parentID)
     }
 
