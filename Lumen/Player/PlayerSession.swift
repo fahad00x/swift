@@ -650,11 +650,21 @@ final class PlayerSession {
 
     private func addExternalSubtitles() {
         let chosen = preferredStreams.subtitle?.id
+        let ratingKey = item.ratingKey
         for stream in item.subtitleStreams {
             // A downloaded copy can also carry the file's own subtitles as files of their own.
             guard let url = sidecarURL?(stream) ?? stream.key.flatMap({ client.url($0, includeToken: true) }) else { continue }
-            player.addSubtitle(url, title: stream.title ?? stream.displayTitle, language: stream.languageCode,
-                               select: stream.id == chosen)
+            let add = { [player] (source: URL) in
+                player.addSubtitle(source, title: stream.title ?? stream.displayTitle, language: stream.languageCode,
+                                   select: stream.id == chosen)
+            }
+            guard VisualOrderSubtitle.applies(to: stream) else { add(url); continue }
+            // Arabic SRT: read it first, in case it is written for left-to-right players.
+            Task { [weak self] in
+                let source = await VisualOrderSubtitle.prepared(url, streamID: stream.id)
+                guard let self, self.item.ratingKey == ratingKey else { return }
+                add(source)
+            }
         }
     }
 
@@ -675,5 +685,63 @@ final class PlayerSession {
         } else {
             player.selectSubtitle(nil)
         }
+    }
+}
+
+/// Many Arabic SRT files are written for players that lay every line out left to right: the
+/// punctuation at the end of a sentence is typed at its start («!مستقبل مشرق للجميع») and the
+/// dialogue dash at its end («ماذا؟ -»). mpv lays Arabic lines out right to left, which flips that
+/// punctuation to the wrong side. Such a file gets a left-to-right mark (U+200E) at the start of
+/// each Arabic line, so it shows the way it was written. Correctly written files are left as they are.
+enum VisualOrderSubtitle {
+    private static let rtlLanguages: Set<String> = ["ar", "ara", "fa", "fas", "per", "he", "heb", "iw", "ur", "urd"]
+
+    static func applies(to stream: PlexStream) -> Bool {
+        guard let language = stream.languageCode?.lowercased(), rtlLanguages.contains(language) else { return false }
+        let codec = stream.codec?.lowercased()
+        return codec == "srt" || codec == "subrip"
+    }
+
+    /// A local copy with the marks when the file is written in visual order; else `url` itself.
+    static func prepared(_ url: URL, streamID: Int) async -> URL {
+        guard let data = try? await URLSession.shared.data(from: url).0,
+              let text = decode(data), isVisualOrder(text) else { return url }
+        let marked = text.components(separatedBy: "\n")
+            .map { hasRTL($0) ? "\u{200E}" + $0 : $0 }
+            .joined(separator: "\n")
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("subtitles", isDirectory: true)
+        let file = folder.appendingPathComponent("\(streamID).srt")
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try Data(marked.utf8).write(to: file, options: .atomic)
+            return file
+        } catch {
+            return url
+        }
+    }
+
+    private static func decode(_ data: Data) -> String? {
+        if let text = String(data: data, encoding: .utf8) { return text }
+        let arabic = CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.windowsArabic.rawValue))
+        return String(data: data, encoding: String.Encoding(rawValue: arabic))
+    }
+
+    /// Arabic lines whose sentence punctuation sits at the start (or whose dash sits at the end)
+    /// outnumber those written the usual way.
+    static func isVisualOrder(_ text: String) -> Bool {
+        let punctuation = Set(".!?,:;…\"")
+        var visual = 0, logical = 0
+        for raw in text.components(separatedBy: .newlines) {
+            let line = raw.replacingOccurrences(of: "<[^>]*>|\\{[^}]*\\}", with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespaces)
+            guard hasRTL(line), let first = line.first, let last = line.last else { continue }
+            if punctuation.contains(first) || line.hasSuffix(" -") { visual += 1 }
+            if punctuation.contains(last) || line.hasPrefix("- ") { logical += 1 }
+        }
+        return visual >= 3 && visual > logical * 2
+    }
+
+    private static func hasRTL(_ line: String) -> Bool {
+        line.unicodeScalars.contains { (0x0590...0x08FF).contains($0.value) || (0xFB1D...0xFEFC).contains($0.value) }
     }
 }
