@@ -264,20 +264,23 @@ struct MobilePlayerControls: View {
 
                 Spacer()
 
-                HStack(spacing: wide ? 80 : 56) {
+                // Each button sits on a dark circle, so it stays visible over a bright scene
+                // (the gradient leaves the middle of the picture clear).
+                HStack(spacing: wide ? 56 : 36) {
                     Button { session.seek(by: -skip) } label: {
-                        Image(systemName: "gobackward.\(Int(skip))").font(.system(size: wide ? 40 : 34))
+                        Image(systemName: "gobackward.\(Int(skip))").font(.system(size: wide ? 34 : 28))
+                            .centerControl(diameter: wide ? 76 : 64)
                     }
                     Button { session.togglePause() } label: {
-                        Image(systemName: session.isPaused ? "play.fill" : "pause.fill").font(.system(size: wide ? 60 : 50))
-                            .frame(width: 70)
+                        Image(systemName: session.isPaused ? "play.fill" : "pause.fill").font(.system(size: wide ? 46 : 38))
+                            .centerControl(diameter: wide ? 104 : 88)
                     }
                     Button { session.seek(by: skip) } label: {
-                        Image(systemName: "goforward.\(Int(skip))").font(.system(size: wide ? 40 : 34))
+                        Image(systemName: "goforward.\(Int(skip))").font(.system(size: wide ? 34 : 28))
+                            .centerControl(diameter: wide ? 76 : 64)
                     }
                 }
                 .environment(\.layoutDirection, .leftToRight)
-                .shadow(color: .black.opacity(0.35), radius: 8)
 
                 Spacer()
 
@@ -708,5 +711,16 @@ final class PlaybackManager {
         var top = window?.rootViewController
         while let presented = top?.presentedViewController { top = presented }
         return top
+    }
+}
+
+private extension View {
+    /// A player button in the middle of the screen: a dark translucent circle behind the icon
+    /// and a soft shadow, readable over bright and dark scenes alike.
+    func centerControl(diameter: CGFloat) -> some View {
+        frame(width: diameter, height: diameter)
+            .background(Circle().fill(.black.opacity(0.4)))
+            .contentShape(Circle())
+            .shadow(color: .black.opacity(0.5), radius: 10)
     }
 }
