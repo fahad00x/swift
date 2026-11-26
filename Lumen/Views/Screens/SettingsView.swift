@@ -49,6 +49,7 @@ struct SettingsView: View {
     }
 
     @Environment(AppSession.self) private var session
+    @State private var showDolbySpike = false // SPIKE
     @Environment(ProfileStore.self) private var store
     @Environment(SidebarPrefs.self) private var sidebarPrefs
     @Environment(\.contentFilter) private var filter
@@ -111,6 +112,9 @@ struct SettingsView: View {
             }
             .navigationDestination(isPresented: $showHomeRows) {
                 HomeRowsEditor(client: client)
+            }
+            .navigationDestination(isPresented: $showDolbySpike) {
+                DolbySpikeView(client: client) // SPIKE
             }
         }
         .fullScreenCover(item: $editing) { profile in
@@ -409,6 +413,9 @@ struct SettingsView: View {
             }
             SettingsInfo("النظام", value: ArabicFormat.digits("tvOS \(UIDevice.current.systemVersion)"))
             SettingsInfo("المشغّل", value: engine == .mpv ? "MPV" : "AVPlayer")
+        }
+        SettingsCard("تجربة Dolby (مؤقت)") {
+            SettingsRow("تجربة Dolby Vision و Atmos", arrow: true) { showDolbySpike = true } // SPIKE
         }
         SettingsCard("المصادر والتراخيص") {
             license("MPV / MPVKit", "مشغّل الفيديو، بترخيص GPL.")
