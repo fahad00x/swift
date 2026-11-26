@@ -40,6 +40,29 @@ struct CustomHomeRow: Codable, Hashable, Sendable {
     var criteria: FilterCriteria?
 }
 
+/// Whose rows: Home's, or one library's «مقترح» (by `LibraryScope.id`).
+enum RowsTarget: Hashable, Sendable {
+    case home
+    case library(String)
+
+    func layout(_ settings: ProfileSettings?) -> [HomeRowConfig]? {
+        switch self {
+        case .home: return settings?.homeRows
+        case .library(let id): return settings?.libraryRows?[id]
+        }
+    }
+
+    func set(_ rows: [HomeRowConfig]?, in settings: inout ProfileSettings) {
+        switch self {
+        case .home: settings.homeRows = rows
+        case .library(let id):
+            var all = settings.libraryRows ?? [:]
+            all[id] = rows
+            settings.libraryRows = all.isEmpty ? nil : all
+        }
+    }
+}
+
 /// A row as Settings lists it: its family and title.
 struct HomeRowInfo: Hashable, Sendable {
     let id: String

@@ -70,6 +70,8 @@ struct LibraryView: View {
     @State private var filterModel = LibraryFilterModel()
     @State private var banner: [BannerItem] = []
     @State private var rows: [Shelf] = []
+    /// Rows the profile added to this library's «مقترح».
+    @State private var customRows: [Shelf] = []
     @State private var loaded = false
     @FocusState private var bannerFocus: HeroBanner.Control?
 
@@ -92,7 +94,7 @@ struct LibraryView: View {
                         if rows.isEmpty && loaded {
                             ContentUnavailableView("لا توجد عناصر", systemImage: "tray").frame(maxWidth: .infinity)
                         }
-                        ForEach(rows.shown(to: store, news: news, filter: filter, section: scope.section.key)) { shelf in
+                        ForEach(arrangedRows) { shelf in
                             PageRow(id: shelf.id) {
                                 ShelfView(shelf: shelf, client: client)
                                     .environment(\.marksNewEpisodes, shelf.id == "continue")
@@ -111,6 +113,9 @@ struct LibraryView: View {
             }
         }
         .task { await load() }
+        .task(id: customSignature) { await loadCustomRows() }
+        // The rows editor lists what this library built.
+        .onChange(of: rowInfos, initial: true) { _, infos in HomeRowCatalog.shared.libraries[scope.id] = infos }
         .onAppear { if loaded { Task { await load(cached: false) } } }
         .onReceive(NotificationCenter.default.publisher(for: .plexPlaybackDidEnd)) { _ in
             Task { await load(cached: false) }
@@ -126,6 +131,30 @@ struct LibraryView: View {
             await PlexResponseCache.$policy.withValue(.cacheOnly) { await fetch() }
         }
         await fetch()
+    }
+
+    private var target: RowsTarget { .library(scope.id) }
+    private var layout: [HomeRowConfig]? { target.layout(store.activeProfile?.settings) }
+
+    /// The library's rows (as the app built them) and the ones the profile added.
+    private var baseRows: [Shelf] {
+        rows.shown(to: store, news: news, filter: filter, section: scope.section.key) + customRows
+    }
+
+    /// Fixed / dynamic / removed rows, as the profile arranged this library.
+    private var arrangedRows: [Shelf] { HomeLayout.arrange(baseRows, id: \.id, layout: layout) }
+
+    private var rowInfos: [HomeRowInfo] { baseRows.map { HomeRowInfo(id: $0.id, title: $0.title) } }
+
+    /// Changes when the rows the profile added change (not when one only moves).
+    private var customSignature: String {
+        (layout ?? []).filter { $0.custom != nil && !$0.hidden }.map(\.id).sorted().joined(separator: ",") + "|" + filter.signature
+    }
+
+    private func loadCustomRows() async {
+        let shown = Set(rows.flatMap { $0.items.map(\.ratingKey) })
+        let added = await CustomHomeRows.load(layout, client: client, filter: filter, store: store, exclude: shown)
+        customRows = added.map { Shelf(id: $0.id, title: $0.title, kind: .poster, items: $0.items) }
     }
 
     private func fetch() async {

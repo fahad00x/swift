@@ -35,10 +35,13 @@ struct LibraryFilterGrid: View {
     private static let page = 60
     /// «حفظ كصف»: what the alert says (the row's title, or that it's already there).
     @State private var savedRow: SavedRow?
+    /// «حفظ كصف»: Home or this library's «مقترح».
+    @State private var askingWhere = false
 
     private struct SavedRow: Identifiable {
         let title: String
         let isNew: Bool
+        let home: Bool
         var id: String { title }
     }
 
@@ -72,8 +75,8 @@ struct LibraryFilterGrid: View {
                             model.criteria = FilterCriteria()
                         } label: { Text("مسح الكل") }
                             .buttonStyle(FilterTextStyle(accent: true))
-                        Button { saveAsRow() } label: {
-                            Label("حفظ كصف في الرئيسية", systemImage: "rectangle.stack.badge.plus")
+                        Button { askingWhere = true } label: {
+                            Label("حفظ كصف", systemImage: "rectangle.stack.badge.plus")
                         }
                         .buttonStyle(FilterTextStyle(accent: false))
                     }
@@ -126,12 +129,19 @@ struct LibraryFilterGrid: View {
             // (Not under a details page: it would take the focus from it.)
             if empty, open == nil, (shell?.pushedPages ?? 0) == 0 { focused = fields.first }
         }
+        .confirmationDialog("وين تحفظ الصف؟", isPresented: $askingWhere, titleVisibility: .visible) {
+            Button("الرئيسية") { saveAsRow(.home) }
+            Button("«مقترح» في \(scope.title)") { saveAsRow(.library(scope.id)) }
+            Button("إلغاء", role: .cancel) {}
+        }
         .alert(item: $savedRow) { row in
-            Alert(title: Text(row.isNew ? "انضاف للرئيسية" : "الصف موجود في الرئيسية"),
-                  message: Text(row.isNew
-                                ? "«\(row.title)»: آخر الرئيسية، ومحتواه يتغيّر كل يوم. ترتّبه من الإعدادات ← صفوف الرئيسية."
-                                : "«\(row.title)»"),
-                  dismissButton: .default(Text("حسناً")))
+            let place = row.home ? "الرئيسية" : "«مقترح» في \(scope.title)"
+            let settings = row.home ? "صفوف الرئيسية" : "صفوف المكتبات"
+            return Alert(title: Text(row.isNew ? "انضاف إلى \(place)" : "الصف موجود في \(place)"),
+                         message: Text(row.isNew
+                                       ? "«\(row.title)»: في الآخر، ومحتواه يتغيّر كل يوم. ترتّبه من الإعدادات ← \(settings)."
+                                       : "«\(row.title)»"),
+                         dismissButton: .default(Text("حسناً")))
         }
         .fullScreenCover(item: $open) { field in
             FilterPanel(field: field, model: model, movies: scope.section.type == "movie")
@@ -150,23 +160,32 @@ struct LibraryFilterGrid: View {
         .focused($focused, equals: field)
     }
 
-    /// The choices as a row of Home, named after them: «كوميديا، التقييم ٧ وأعلى في الأفلام».
-    private func saveAsRow() {
+    /// The choices as a row of Home or of this library's «مقترح», named after them:
+    /// «كوميديا، التقييم ٧ وأعلى في الأفلام».
+    private func saveAsRow(_ target: RowsTarget) {
         let criteria = model.criteria
-        let existing = store.activeProfile?.settings?.homeRows?.first {
+        let home = target == .home
+        let existing = target.layout(store.activeProfile?.settings)?.first {
             $0.custom?.kind == .filter && $0.custom?.scope == scope.id && $0.custom?.criteria == criteria
         }
         if let existing {
-            savedRow = SavedRow(title: existing.title ?? "", isNew: false)
+            show(SavedRow(title: existing.title ?? "", isNew: false, home: home))
             return
         }
         let parts = fields.compactMap(value).joined(separator: "، ")
-        let title = "\(parts) في \(scope.rowName)"
+        // In the library itself its name says nothing.
+        let title = home ? "\(parts) في \(scope.rowName)" : parts
         let row = HomeRowConfig(id: "custom-\(UUID().uuidString)", title: title,
                                 custom: CustomHomeRow(kind: .filter, section: scope.section.key,
                                                       scope: scope.id, criteria: criteria))
-        store.updateSettings { $0.homeRows = HomeLayout.adding(row, current: HomeRowCatalog.shared.rows, layout: $0.homeRows) }
-        savedRow = SavedRow(title: title, isNew: true)
+        let current = HomeRowCatalog.shared.rows(of: target)
+        store.updateSettings { target.set(HomeLayout.adding(row, current: current, layout: target.layout($0)), in: &$0) }
+        show(SavedRow(title: title, isNew: true, home: home))
+    }
+
+    /// Once the question has closed.
+    private func show(_ row: SavedRow) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { savedRow = row }
     }
 
     /// What's chosen in a filter, in short; nil when nothing is.

@@ -77,6 +77,8 @@ struct ProfileSettings: Codable, Hashable, Sendable {
     var continueHidden: [String: Date]?
     /// Home's rows as the profile arranged them (nil: as the app builds them). `HomeLayout`.
     var homeRows: [HomeRowConfig]?
+    /// A library's «مقترح» rows as the profile arranged them, by library tab (`LibraryScope.id`).
+    var libraryRows: [String: [HomeRowConfig]]?
 
     /// Device keys these mirror (the players read them from UserDefaults).
     static let autoSkipIntroKey = "playback.autoSkipIntro"

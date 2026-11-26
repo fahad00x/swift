@@ -112,10 +112,19 @@ enum RowRotation {
     }
 }
 
-/// The rows Home built last (before the profile's arrangement), for «صفوف الرئيسية».
+/// The rows Home and each library built last (before the profile's arrangement), for the rows editor.
 @MainActor
 @Observable
 final class HomeRowCatalog {
     static let shared = HomeRowCatalog()
     var rows: [HomeRowInfo] = []
+    /// A library's «مقترح» rows, by `LibraryScope.id`.
+    var libraries: [String: [HomeRowInfo]] = [:]
+
+    func rows(of target: RowsTarget) -> [HomeRowInfo] {
+        switch target {
+        case .home: return rows
+        case .library(let id): return libraries[id] ?? []
+        }
+    }
 }

@@ -1,10 +1,13 @@
 import SwiftUI
 
-/// Settings → المستخدم → «صفوف الرئيسية»: the profile's Home rows in order. Each row: move up or
+/// Settings → المستخدم → «صفوف الرئيسية» (or a library's «مقترح»): the profile's rows in order. Each row: move up or
 /// down (it then keeps its place), fixed / dynamic, remove; removed rows can come back; and new
 /// rows: a library's newest titles, one of its genres, a collection, or «قائمتي».
 struct HomeRowsEditor: View {
     let client: PlexServerClient
+    var target: RowsTarget = .home
+    /// The library, for `.library` (its rows are added from it only).
+    var scope: LibraryScope?
 
     @Environment(ProfileStore.self) private var store
     @Environment(\.contentFilter) private var filter
@@ -12,13 +15,20 @@ struct HomeRowsEditor: View {
     @State private var choosing: ChoiceList?
     @State private var confirmReset = false
 
-    private var layout: [HomeRowConfig]? { store.activeProfile?.settings?.homeRows }
-    private var entries: [HomeRowConfig] { HomeLayout.entries(current: catalog.rows, layout: layout) }
+    private var layout: [HomeRowConfig]? { target.layout(store.activeProfile?.settings) }
+    /// What Home / the library built, without an added row that's gone from the arrangement
+    /// (removed or reset, still on the page until it reloads).
+    private var current: [HomeRowInfo] {
+        let kept = Set((layout ?? []).filter { $0.custom != nil }.map(\.id))
+        return catalog.rows(of: target).filter { !$0.id.hasPrefix("custom-") || kept.contains($0.id) }
+    }
+    private var entries: [HomeRowConfig] { HomeLayout.entries(current: current, layout: layout) }
+    private var isHome: Bool { target == .home }
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 40) {
-                Text("صفوف الرئيسية")
+                Text(isHome ? "صفوف الرئيسية" : "مقترح \(scope?.title ?? "")")
                     .font(.system(size: 52, weight: .bold))
                     .padding(.horizontal, 24)
 
@@ -30,7 +40,8 @@ struct HomeRowsEditor: View {
                 }
 
                 SettingsCard {
-                    SettingsRow("إضافة صف", detail: "أضيف مؤخراً، نوع، مجموعة، أو قائمتي", arrow: true) { chooseKind() }
+                    SettingsRow("إضافة صف", detail: isHome ? "أضيف مؤخراً، نوع، مجموعة، أو قائمتي" : "أضيف مؤخراً، نوع، أو مجموعة",
+                                arrow: true) { chooseKind() }
                     if layout != nil {
                         SettingsRow("إرجاع الترتيب الأصلي", destructive: true) { confirmReset = true }
                     }
@@ -40,7 +51,7 @@ struct HomeRowsEditor: View {
                 if !removed.isEmpty {
                     SettingsCard("محذوفة من الرئيسية") {
                         ForEach(removed) { entry in
-                            SettingsRow(name(entry), value: "إرجاع") { change { HomeLayout.restoring(entry.id, current: catalog.rows, layout: $0) } }
+                            SettingsRow(name(entry), value: "إرجاع") { change { HomeLayout.restoring(entry.id, current: current, layout: $0) } }
                         }
                     }
                 }
@@ -53,10 +64,11 @@ struct HomeRowsEditor: View {
         .background(Color(white: 0.07).ignoresSafeArea())
         .fullScreenCover(item: $choosing) { ChoicePanel(list: $0) }
         .alert("إرجاع الترتيب الأصلي؟", isPresented: $confirmReset) {
-            Button("إرجاع", role: .destructive) { store.updateSettings { $0.homeRows = nil } }
+            Button("إرجاع", role: .destructive) { store.updateSettings { target.set(nil, in: &$0) } }
             Button("إلغاء", role: .cancel) {}
         } message: {
-            Text("ترجع الرئيسية مثل ما يبنيها التطبيق، وتنحذف الصفوف اللي أضفتها.")
+            Text(isHome ? "ترجع الرئيسية مثل ما يبنيها التطبيق، وتنحذف الصفوف اللي أضفتها."
+                        : "يرجع «مقترح» مثل ما يبنيه التطبيق، وتنحذف الصفوف اللي أضفتها.")
         }
     }
 
@@ -75,7 +87,7 @@ struct HomeRowsEditor: View {
     }
 
     private func change(_ edit: ([HomeRowConfig]?) -> [HomeRowConfig]) {
-        store.updateSettings { $0.homeRows = edit($0.homeRows) }
+        store.updateSettings { target.set(edit(target.layout($0)), in: &$0) }
     }
 
     // MARK: One row
@@ -85,14 +97,14 @@ struct HomeRowsEditor: View {
         let at = shown.firstIndex { $0.id == entry.id } ?? 0
         var options: [(String, () -> Void)] = []
         if at > 0 {
-            options.append(("نقل لأعلى", { change { HomeLayout.moving(entry.id, by: -1, current: catalog.rows, layout: $0) } }))
+            options.append(("نقل لأعلى", { change { HomeLayout.moving(entry.id, by: -1, current: current, layout: $0) } }))
         }
         if at < shown.count - 1 {
-            options.append(("نقل لأسفل", { change { HomeLayout.moving(entry.id, by: 1, current: catalog.rows, layout: $0) } }))
+            options.append(("نقل لأسفل", { change { HomeLayout.moving(entry.id, by: 1, current: current, layout: $0) } }))
         }
         options.append(entry.pinned
-            ? ("خلّه ديناميكي ✨", { change { HomeLayout.settingPinned(entry.id, false, current: catalog.rows, layout: $0) } })
-            : ("تثبيت في مكانه 📌", { change { HomeLayout.settingPinned(entry.id, true, current: catalog.rows, layout: $0) } }))
+            ? ("خلّه ديناميكي ✨", { change { HomeLayout.settingPinned(entry.id, false, current: current, layout: $0) } })
+            : ("تثبيت في مكانه 📌", { change { HomeLayout.settingPinned(entry.id, true, current: current, layout: $0) } }))
         options.append(("حذف من الرئيسية", { remove(entry) }))
         choosing = ChoiceList(title: name(entry), options: options.map(\.0), selected: nil) { options[$0].1() }
     }
@@ -100,21 +112,21 @@ struct HomeRowsEditor: View {
     private func remove(_ entry: HomeRowConfig) {
         // «قائمتي» on Home is its own setting.
         if entry.id == "mylist" { store.updateSettings { $0.myListOnHome = false } }
-        change { HomeLayout.hiding(entry.id, current: catalog.rows, layout: $0) }
+        change { HomeLayout.hiding(entry.id, current: current, layout: $0) }
     }
 
     // MARK: Adding
 
     private func chooseKind() {
         var kinds: [(String, () -> Void)] = [
-            ("أضيف مؤخراً في مكتبة", { chooseLibrary { add(recent: $0) } }),
-            ("نوع من مكتبة (كوميديا، رعب…)", { chooseLibrary { chooseGenre(in: $0) } }),
+            ("أضيف مؤخراً\(isHome ? " في مكتبة" : "")", { chooseLibrary { add(recent: $0) } }),
+            ("نوع\(isHome ? " من مكتبة" : "") (كوميديا، رعب…)", { chooseLibrary { chooseGenre(in: $0) } }),
             ("مجموعة", { chooseLibrary { chooseCollection(in: $0) } }),
         ]
-        if store.activeProfile?.settings?.myListOnHome != true {
+        if isHome, store.activeProfile?.settings?.myListOnHome != true {
             kinds.append(("قائمتي", {
                 store.updateSettings { $0.myListOnHome = true }
-                change { HomeLayout.restoring("mylist", current: catalog.rows, layout: $0) }
+                change { HomeLayout.restoring("mylist", current: current, layout: $0) }
             }))
         }
         choosing = ChoiceList(title: "إضافة صف", options: kinds.map(\.0), selected: nil) { kinds[$0].1() }
@@ -126,6 +138,8 @@ struct HomeRowsEditor: View {
     }
 
     private func chooseLibrary(then: @escaping (PlexDirectory) -> Void) {
+        // A library's own rows come from it.
+        if let scope, !isHome { return then(scope.section) }
         let libraries = filter.sections.filter(\.isVideoLibrary)
         guard !libraries.isEmpty else { return }
         next(ChoiceList(title: "من أي مكتبة؟", options: libraries.map(\.title), selected: nil) { then(libraries[$0]) })
@@ -163,6 +177,6 @@ struct HomeRowsEditor: View {
     }
 
     private func add(_ row: HomeRowConfig) {
-        change { HomeLayout.adding(row, current: catalog.rows, layout: $0) }
+        change { HomeLayout.adding(row, current: current, layout: $0) }
     }
 }

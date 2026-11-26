@@ -72,6 +72,8 @@ struct SettingsView: View {
     @State private var versionTaps = HiddenTapCounter()
     @State private var showDiagnostics = false
     @State private var showHomeRows = false
+    /// A library's «مقترح» rows being arranged.
+    @State private var libraryRows: LibraryScope?
     @State private var confirmSignOut = false
     @State private var importing = false
     @State private var confirmUndo = false
@@ -111,6 +113,9 @@ struct SettingsView: View {
             }
             .navigationDestination(isPresented: $showHomeRows) {
                 HomeRowsEditor(client: client)
+            }
+            .navigationDestination(item: $libraryRows) { scope in
+                HomeRowsEditor(client: client, target: .library(scope.id), scope: scope)
             }
         }
         .fullScreenCover(item: $editing) { profile in
@@ -214,6 +219,7 @@ struct SettingsView: View {
             }
             SettingsCard("الرئيسية") {
                 SettingsRow("صفوف الرئيسية", detail: "الترتيب، ثابت أو ديناميكي، الإضافة والحذف", arrow: true) { showHomeRows = true }
+                SettingsRow("صفوف المكتبات", detail: "نفسها لتبويب «مقترح» في كل مكتبة", arrow: true) { chooseLibraryRows() }
                 SettingsSwitch("إظهار «قائمتي» في الرئيسية", detail: "بعد متابعة المشاهدة مباشرة", isOn: TVMyListView.onHome(store))
                 choice("ترتيب متابعة المشاهدة",
                        selection: Binding(get: { store.activeProfile?.settings?.continueNewFirst ?? false },
@@ -427,6 +433,15 @@ struct SettingsView: View {
     }
 
     // MARK: Values
+
+    private func chooseLibraryRows() {
+        let scopes = filter.scopes.filter(\.section.isVideoLibrary)
+        guard !scopes.isEmpty else { return }
+        choosing = ChoiceList(title: "صفوف أي مكتبة؟", options: scopes.map(\.title), selected: nil) { index in
+            // Once the list has closed.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { libraryRows = scopes[index] }
+        }
+    }
 
     private func choice<Value: Hashable>(_ title: String, detail: String? = nil, selection: Binding<Value>,
                                          options: [(String, Value)]) -> some View {
