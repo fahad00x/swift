@@ -10,6 +10,7 @@ struct HomeView: View {
     @State private var isRefreshing = false
     @State private var shownSignature: String?
     @Environment(ShowNews.self) private var news: ShowNews?
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
         BrowseStack(client: client) {
@@ -42,6 +43,7 @@ struct HomeView: View {
                 .padding(.bottom, 30)
             }
             .ignoresSafeArea(edges: feed.featured.isEmpty ? [] : .top)
+            .topScrim(after: feed.featured.isEmpty ? 4 : Metrics(sizeClass).heroHeight * 0.6)
             .overlay {
                 if isLoading && feed.isEmpty { LoadingView() }
             }

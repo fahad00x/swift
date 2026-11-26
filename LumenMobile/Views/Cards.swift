@@ -527,3 +527,46 @@ extension View {
         modifier(ItemContextMenu(item: item, client: client))
     }
 }
+
+// MARK: - Top scrim
+
+extension View {
+    /// A dark fade behind the status bar and the floating tab bar, shown once the scroll view is
+    /// past `offset` points: rows scrolling up fade out under the bar instead of being cut off
+    /// behind it. Never over the banner at the top. Before iOS 18 (no scroll position), always on.
+    func topScrim(after offset: CGFloat) -> some View {
+        modifier(TopScrim(threshold: offset))
+    }
+}
+
+private struct TopScrim: ViewModifier {
+    let threshold: CGFloat
+    @State private var shown = false
+
+    func body(content: Content) -> some View {
+        Group {
+            if #available(iOS 18.0, *) {
+                content.onScrollGeometryChange(for: Bool.self) { geo in
+                    geo.contentOffset.y + geo.contentInsets.top > threshold
+                } action: { _, past in
+                    withAnimation(.easeInOut(duration: 0.25)) { shown = past }
+                }
+            } else {
+                content.onAppear { shown = true }
+            }
+        }
+        .overlay(alignment: .top) {
+            GeometryReader { geo in
+                LinearGradient(stops: [
+                    .init(color: .black.opacity(0.92), location: 0),
+                    .init(color: .black.opacity(0.75), location: 0.55),
+                    .init(color: .clear, location: 1),
+                ], startPoint: .top, endPoint: .bottom)
+                .frame(height: geo.safeAreaInsets.top + 28)
+                .ignoresSafeArea(edges: .top)
+            }
+            .opacity(shown ? 1 : 0)
+            .allowsHitTesting(false)
+        }
+    }
+}
