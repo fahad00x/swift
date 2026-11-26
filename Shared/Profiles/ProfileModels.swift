@@ -75,6 +75,8 @@ struct ProfileSettings: Codable, Hashable, Sendable {
     var continueNewFirst: Bool?
     /// Show / movie → when it was removed from Continue Watching (back once watched after).
     var continueHidden: [String: Date]?
+    /// Home's rows as the profile arranged them (nil: as the app builds them). `HomeLayout`.
+    var homeRows: [HomeRowConfig]?
 
     /// Device keys these mirror (the players read them from UserDefaults).
     static let autoSkipIntroKey = "playback.autoSkipIntro"

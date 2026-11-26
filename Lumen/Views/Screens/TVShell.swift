@@ -489,7 +489,8 @@ struct HomeView: View {
             out.insert(Shelf(id: "mylist", title: "قائمتي", kind: .poster, items: myList),
                        at: out.first?.id == "continue" ? 1 : 0)
         }
-        return out
+        // Fixed / dynamic / removed rows, as the profile arranged them.
+        return HomeLayout.arrange(out, id: \.id, layout: store.activeProfile?.settings?.homeRows)
     }
 
     private func loadMyList() async {
