@@ -12,8 +12,11 @@ struct LibraryGridView: View {
     @State private var loadedOnce = false
     @State private var serverOffset = 0
     @State private var exhausted = false
-    /// «تصفّح» (the server's pages) or «فلترة» (choices read on the device).
-    @State private var filtering = false
+    /// «مقترح» (rows, as on the Apple TV), «تصفّح» (the server's pages) or «فلترة» (choices read
+    /// on the device).
+    enum Tab: Hashable { case suggested, browse, filter }
+    @State private var tab: Tab = .suggested
+    private var filtering: Bool { tab == .filter }
     /// Kept with the page, so the choices stay when switching back and forth.
     @State private var filterModel = LibraryFilterModel()
     /// Sorted by name: where each letter starts, for the bar on the side.
@@ -27,20 +30,25 @@ struct LibraryGridView: View {
     var body: some View {
         ScrollViewReader { proxy in
         ScrollView {
-            Picker("العرض", selection: $filtering) {
-                Text("تصفّح").tag(false)
-                Text("فلترة").tag(true)
+            Picker("العرض", selection: $tab) {
+                Text("مقترح").tag(Tab.suggested)
+                Text("تصفّح").tag(Tab.browse)
+                Text("فلترة").tag(Tab.filter)
             }
             .pickerStyle(.segmented)
-            .frame(maxWidth: 360)
+            .frame(maxWidth: 420)
             .padding(.horizontal, Metrics(sizeClass).margin)
             .padding(.top, 4)
             .id("top")
 
-            if filtering {
+            switch tab {
+            case .suggested:
+                LibrarySuggestedSection(client: client, scope: scope)
+                    .padding(.vertical, 8)
+            case .filter:
                 LibraryFilterSection(client: client, scope: scope, model: filterModel)
                     .padding(.vertical, 8)
-            } else {
+            case .browse:
                 browse
                     // Room for the letter bar.
                     .padding(.trailing, showsLetters ? 14 : 0)
@@ -60,7 +68,7 @@ struct LibraryGridView: View {
         .navigationTitle(scope.title)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                if !filtering {
+                if tab == .browse {
                     Menu {
                         Picker("الترتيب", selection: $sort) {
                             ForEach(LibrarySort.allCases) { Text($0.title).tag($0) }

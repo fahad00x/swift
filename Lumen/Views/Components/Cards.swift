@@ -3,25 +3,6 @@ import SwiftUI
 // Apple TV media cards in the style of Apple's TV app: artwork only (no text under posters),
 // a few status overlays, and a lift-and-glow focus (scale, soft shadow, light glass rim).
 
-enum CardKind {
-    /// 2:3 poster, ~6.3 across the screen.
-    case poster
-    /// 16:9 Continue Watching card (episode still / movie art), title below it.
-    case landscape
-
-    var size: CGSize {
-        switch self {
-        case .poster: return CGSize(width: 260, height: 390)
-        case .landscape: return CGSize(width: 440, height: 248)
-        }
-    }
-
-    static let cornerRadius: CGFloat = 13
-    static let spacing: CGFloat = 40
-    /// Side margin of rows, grids and banners (the sidebar is hidden while closed).
-    static let inset: CGFloat = 80
-}
-
 // MARK: - Landscape (Continue Watching)
 
 /// 16:9 artwork: the episode's own still (or the movie's art), with a clear orange progress
@@ -430,19 +411,6 @@ private struct FocusReporter: View {
 }
 
 // MARK: - Rows
-
-struct Shelf: Identifiable {
-    let id: String
-    let title: String
-    let kind: CardKind
-    let items: [PlexItem]
-    /// Top 10 style: large rank numbers on the cards.
-    var ranked = false
-    /// ratingKey → clear logo path.
-    var logos: [String: String] = [:]
-    /// Optional second header line in smaller grey (the library, «جديد هذا الأسبوع»…).
-    var subtitle: String?
-}
 
 /// Horizontally scrolling row. Starts on the reading side (right in Arabic), leaves room
 /// for the focused card to grow without covering the title, and remembers the last

@@ -101,6 +101,8 @@ targets:
       - path: Lumen/Player/PlayerSession.swift
       - path: Lumen/Player/PlaybackQuality.swift
       - path: Lumen/Player/NowPlayingController.swift
+      # A library's «مقترح» rows, the same as the Apple TV's.
+      - path: Lumen/Views/Home/TVFeed.swift
       - path: Lumen/Resources
     entitlements:
       path: LumenMobile/LumenMobile.entitlements
