@@ -33,8 +33,11 @@ FLOOR_A = (255, 184, 48)
 FLOOR_B = (255, 205, 90)
 SS = 4  # supersampling factor
 
-X0, X1, X2 = 318, 524, 770
-YT, YB, YH = 150, 868, 662
+# The mark's box is shifted so the letter sits in the optical center:
+# side margins nearly equal, nudged a touch high because the floor ribbon makes it bottom-heavy.
+DX, DY = -55, -12
+X0, X1, X2 = 318 + DX, 524 + DX, 770 + DX
+YT, YB, YH = 150 + DY, 868 + DY, 662 + DY
 VERT = [(X0, YT + 70), (X1, YT), (X1, YB), (X0, YB)]
 FLOOR = [(X0, YB), (X1, YH), (X2 + 70, YH), (X2, YB)]
 
