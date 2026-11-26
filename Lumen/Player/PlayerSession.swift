@@ -351,6 +351,14 @@ final class PlayerSession {
         store.chooseAudio(item.mediaInfo, streamID: stream?.id, language: stream?.languageCode ?? track.language)
     }
 
+    /// iPhone / iPad: text subtitles under the picture: applied now and for every file after.
+    private(set) var subtitlesBelow = PlaybackSettings.subtitlesBelow
+    func setSubtitlesBelow(_ below: Bool) {
+        subtitlesBelow = below
+        PlaybackSettings.subtitlesBelow = below
+        player.setSubtitlesBelow(below)
+    }
+
     /// Look of styled subtitles: applied now and for every file after.
     private(set) var subtitleLook = PlaybackSettings.subtitleLook
     func setSubtitleLook(_ look: SubtitleLook) {

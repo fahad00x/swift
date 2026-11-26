@@ -270,6 +270,7 @@ enum PlaybackSettings {
     static let skipSecondsKey = "playback.skipSeconds"
     static let subtitleSizeKey = "playback.subtitleSize"
     static let subtitleLookKey = "playback.subtitleLook"
+    static let subtitlesBelowKey = "playback.subtitlesBelowPicture"
     static let defaultBitrate = 1_000_000
     static let defaultSkip = 10
     static let defaultSubtitleSize = 44
@@ -293,6 +294,13 @@ enum PlaybackSettings {
     static var subtitleSize: Int {
         let v = UserDefaults.standard.integer(forKey: subtitleSizeKey)
         return v == 0 ? defaultSubtitleSize : v
+    }
+
+    /// iPhone / iPad: text subtitles in the black band under the picture when there is one
+    /// (upright screen, or a film wider than the screen), not over the picture.
+    static var subtitlesBelow: Bool {
+        get { UserDefaults.standard.bool(forKey: subtitlesBelowKey) }
+        set { UserDefaults.standard.set(newValue, forKey: subtitlesBelowKey) }
     }
 
     static var subtitleLook: SubtitleLook {

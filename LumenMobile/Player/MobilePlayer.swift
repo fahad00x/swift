@@ -434,6 +434,18 @@ struct MobilePlayerControls: View {
                         } label: { Text(look.title) }
                     }
                 }
+                // In the black band under the picture (upright, or a film wider than the screen).
+                Text("المكان")
+                    .font(.footnote.weight(.semibold))
+                    .opacity(0.6)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 10)
+                PlayerPanelRow(selected: !session.subtitlesBelow) {
+                    session.setSubtitlesBelow(false)
+                } label: { Text("على الصورة") }
+                PlayerPanelRow(selected: session.subtitlesBelow) {
+                    session.setSubtitlesBelow(true)
+                } label: { Text("تحت الصورة") }
             case .audio:
                 ForEach(session.audioTracks) { track in
                     PlayerPanelRow(selected: track.isSelected) {
@@ -598,6 +610,7 @@ final class PlaybackManager {
         config.fastProfile = PlaybackSettings.fastProfile
         config.subtitleLook = PlaybackSettings.subtitleLook
         config.subtitleSize = PlaybackSettings.subtitleSize
+        config.subtitlesBelow = PlaybackSettings.subtitlesBelow
         guard let mpv = MPVPlayer(layer: layer, configuration: config) else {
             await playWithSystemPlayer(item, client: client, fromBeginning: fromBeginning)
             return

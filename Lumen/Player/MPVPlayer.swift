@@ -176,6 +176,8 @@ final class MPVPlayer {
         var fastProfile = false
         var subtitleSize = 44
         var subtitleLook = SubtitleLook.original
+        /// Text subtitles in the black band under the picture (see `setSubtitlesBelow`).
+        var subtitlesBelow = false
         var preferredLanguages = ["ara", "ar", "eng", "en"]
     }
 
@@ -185,6 +187,8 @@ final class MPVPlayer {
     private var handle: OpaquePointer?
     private let queue = DispatchQueue(label: "lumen.mpv.events", qos: .userInitiated)
     private var retainedSelf: Unmanaged<MPVPlayer>?
+    /// Where text subtitles sit; read and changed on `queue` only.
+    private var subtitleLayout: (below: Bool, lifted: Bool, size: Int) = (false, false, 44)
 
     static let observed: [(String, mpv_format)] = [
         ("time-pos", MPV_FORMAT_DOUBLE),
@@ -194,11 +198,15 @@ final class MPVPlayer {
         ("track-list/count", MPV_FORMAT_INT64),
         ("aid", MPV_FORMAT_INT64),
         ("sid", MPV_FORMAT_INT64),
+        // Black band under the picture (OSD pixels): where «below the picture» subtitles go.
+        ("osd-dimensions/mb", MPV_FORMAT_DOUBLE),
+        ("osd-dimensions/h", MPV_FORMAT_DOUBLE),
     ]
 
     init?(layer: CAMetalLayer, configuration: Configuration) {
         guard let mpv = mpv_create() else { return nil }
         handle = mpv
+        subtitleLayout = (configuration.subtitlesBelow, false, configuration.subtitleSize)
 
         var layerRef = layer
         mpv_set_option(mpv, "wid", MPV_FORMAT_INT64, &layerRef)
@@ -241,6 +249,8 @@ final class MPVPlayer {
             ("sub-shadow-offset", "2"),
             ("sub-ass-override", Self.assOverride(configuration.subtitleLook)),
             ("sub-margin-y", "60"),
+            // Text subtitles may use the black bands (mpv's default, set for clarity).
+            ("sub-use-margins", "yes"),
             ("audio-channels", "auto-safe"),
             // On iOS / tvOS this only means a non-mixable audio session: by default mpv sets
             // MixWithOthers, and the system then never treats the app as Now Playing.
@@ -323,7 +333,41 @@ final class MPVPlayer {
         }
     }
 
-    func setSubtitleLifted(_ lifted: Bool) { setString("sub-margin-y", lifted ? "210" : "60") }
+    func setSubtitleLifted(_ lifted: Bool) {
+        queue.async { [weak self] in
+            self?.subtitleLayout.lifted = lifted
+            self?.placeSubtitles()
+        }
+    }
+
+    /// Text subtitles in the black band right under the picture, when there is room for two
+    /// lines there (upright iPhone / iPad, or a film wider than the screen); else as usual.
+    func setSubtitlesBelow(_ below: Bool) {
+        queue.async { [weak self] in
+            self?.subtitleLayout.below = below
+            self?.placeSubtitles()
+        }
+    }
+
+    /// Usually bottom-aligned, 60 up (210 over the controls while they show). Below the picture:
+    /// top-aligned just under its bottom edge, so one or two lines hang right under it whether
+    /// or not the controls show (they sit at the bottom of the screen). Margins are in 720-line
+    /// units of the whole screen, the bands included.
+    private func placeSubtitles() {
+        let layout = subtitleLayout
+        let height = double("osd-dimensions/h")
+        if layout.below, height > 0 {
+            let band = double("osd-dimensions/mb") / height * 720
+            // Room for two lines and a little space.
+            if band >= Double(layout.size) * 2.6 + 24 {
+                setString("sub-align-y", "top")
+                setString("sub-margin-y", "\(Int(720 - band + 10))")
+                return
+            }
+        }
+        setString("sub-align-y", "bottom")
+        setString("sub-margin-y", layout.lifted ? "210" : "60")
+    }
 
     func selectAudio(_ id: Int) { setString("aid", "\(id)") }
     func selectSubtitle(_ id: Int?) { setString("sid", id.map(String.init) ?? "no") }
@@ -433,6 +477,13 @@ final class MPVPlayer {
             while let mpv = self.handle, let event = mpv_wait_event(mpv, 0) {
                 let id = event.pointee.event_id
                 if id == MPV_EVENT_NONE { break }
+                // The picture's black bands changed (screen turned, new file): re-place subtitles.
+                if id == MPV_EVENT_PROPERTY_CHANGE, let data = event.pointee.data,
+                   String(cString: data.assumingMemoryBound(to: mpv_event_property.self).pointee.name)
+                    .hasPrefix("osd-dimensions") {
+                    self.placeSubtitles()
+                    continue
+                }
                 if let parsed = Self.parse(event.pointee) {
                     DispatchQueue.main.async { [weak self] in self?.onEvent?(parsed) }
                 }

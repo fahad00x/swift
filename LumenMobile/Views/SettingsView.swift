@@ -62,6 +62,7 @@ struct SettingsView: View {
     @AppStorage(PlaybackSettings.fastProfileKey) private var fastProfile = false
     @AppStorage(PlaybackSettings.skipSecondsKey) private var skipSeconds = PlaybackSettings.defaultSkip
     @AppStorage(PlaybackSettings.subtitleLookKey) private var subtitleLook: SubtitleLook = .original
+    @AppStorage(PlaybackSettings.subtitlesBelowKey) private var subtitlesBelow = false
     @AppStorage(PlaybackSettings.subtitleSizeKey) private var subtitleSize = PlaybackSettings.defaultSubtitleSize
     @Environment(\.contentFilter) private var filter
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -335,6 +336,9 @@ struct SettingsView: View {
             Picker(selection: $subtitleLook) {
                 ForEach(SubtitleLook.allCases) { Text($0.title).tag($0) }
             } label: { labelled("ترجمات ASS", "الترجمات المصمّمة") }
+            Toggle(isOn: $subtitlesBelow) {
+                labelled("الترجمة تحت الصورة", "في الشريط الأسود لما يكون الجهاز عمودي")
+            }
             Picker("حجم الخط", selection: $subtitleSize) {
                 ForEach(PlaybackSettings.subtitleSizes, id: \.size) { Text($0.title).tag($0.size) }
             }
