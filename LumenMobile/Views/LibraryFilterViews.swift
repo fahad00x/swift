@@ -37,6 +37,8 @@ struct LibraryFilterSection: View {
     @State private var open: FilterField?
     @State private var shown = Self.page
     private static let page = 60
+    /// «حفظ كصف»: what the alert says.
+    @State private var saved: (title: String, isNew: Bool, home: Bool)?
 
     private var movies: Bool { scope.section.type == "movie" }
 
@@ -58,6 +60,13 @@ struct LibraryFilterSection: View {
                 if !model.criteria.isEmpty {
                     Button("مسح الكل") { model.criteria = FilterCriteria() }
                         .font(.footnote.weight(.semibold))
+                    Menu {
+                        Button("في الرئيسية") { saveAsRow(.home) }
+                        Button("في «مقترح» \(scope.title)") { saveAsRow(.library(scope.id)) }
+                    } label: {
+                        Label("حفظ كصف", systemImage: "rectangle.stack.badge.plus")
+                            .font(.footnote.weight(.semibold))
+                    }
                 }
                 Spacer(minLength: 8)
                 Button { open = .order } label: {
@@ -91,10 +100,42 @@ struct LibraryFilterSection: View {
         }
         .onChange(of: model.criteria) { shown = Self.page }
         .onChange(of: model.order) { shown = Self.page }
+        .alert(saved.map { $0.isNew ? "انضاف إلى \(place($0.home))" : "الصف موجود في \(place($0.home))" } ?? "",
+               isPresented: Binding(get: { saved != nil }, set: { if !$0 { saved = nil } })) {
+            Button("حسناً", role: .cancel) {}
+        } message: {
+            if let saved {
+                Text(saved.isNew ? "«\(saved.title)»: في الآخر، ومحتواه يتغيّر كل يوم. نفس الصف في كل أجهزتك." : "«\(saved.title)»")
+            }
+        }
         .sheet(item: $open) { field in
             FilterSheet(field: field, model: model, movies: movies)
                 .presentationDetents(field == .genre || field == .year ? [.large] : [.medium, .large])
         }
+    }
+
+    private func place(_ home: Bool) -> String { home ? "الرئيسية" : "«مقترح» في \(scope.title)" }
+
+    /// The choices as a row of Home or of this library's «مقترح» (the same rows as the Apple
+    /// TV's), named after them: «كوميديا، التقييم ٧ وأعلى في الأفلام».
+    private func saveAsRow(_ target: RowsTarget) {
+        let criteria = model.criteria
+        let home = target == .home
+        if let existing = target.layout(store.activeProfile?.settings)?.first(where: {
+            $0.custom?.kind == .filter && $0.custom?.scope == scope.id && $0.custom?.criteria == criteria
+        }) {
+            saved = (existing.title ?? "", false, home)
+            return
+        }
+        let parts = FilterField.fields(movies: movies)
+            .compactMap { FilterSummary.value($0, model: model, movies: movies) }.joined(separator: "، ")
+        let title = home ? "\(parts) في \(scope.rowName)" : parts
+        let row = HomeRowConfig(id: "custom-\(UUID().uuidString)", title: title,
+                                custom: CustomHomeRow(kind: .filter, section: scope.section.key,
+                                                      scope: scope.id, criteria: criteria))
+        let current = HomeRowCatalog.shared.rows(of: target)
+        store.updateSettings { target.set(HomeLayout.adding(row, current: current, layout: target.layout($0)), in: &$0) }
+        saved = (title, true, home)
     }
 
     private func chip(_ field: FilterField) -> some View {

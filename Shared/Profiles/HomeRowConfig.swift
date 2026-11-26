@@ -190,11 +190,13 @@ enum HomeLayout {
         return list
     }
 
-    /// A new row (fixed) at the end of the shown ones.
+    /// A new row (fixed) at the end of the shown ones. When this device doesn't know the rows
+    /// yet (`current` empty: the page was never opened here) it's dynamic instead: an added row
+    /// comes after the app's rows, where a fixed one would take the first place.
     static func adding(_ row: HomeRowConfig, current: [HomeRowInfo], layout: [HomeRowConfig]?) -> [HomeRowConfig] {
         var list = entries(current: current, layout: layout)
         var entry = row
-        entry.pinned = true
+        entry.pinned = !current.isEmpty
         list.insert(entry, at: list.firstIndex(where: \.hidden) ?? list.count)
         return list
     }

@@ -12,6 +12,8 @@ struct HomeRowsPage: View {
     @State private var catalog = HomeRowCatalog.shared
     @State private var confirmReset = false
     @State private var picking: Picking?
+    /// Always editing (drag handles and ⊖); a binding so ⊖ can reveal its delete button.
+    @State private var editMode: EditMode = .active
 
     /// A list to choose a genre or a collection from (read from the server).
     private enum Picking: Identifiable {
@@ -89,7 +91,7 @@ struct HomeRowsPage: View {
                 }
             }
         }
-        .environment(\.editMode, .constant(.active))
+        .environment(\.editMode, $editMode)
         .navigationTitle("صفوف الرئيسية")
         .navigationBarTitleDisplayMode(.inline)
         .confirmationDialog("إرجاع الترتيب الأصلي؟", isPresented: $confirmReset, titleVisibility: .visible) {
