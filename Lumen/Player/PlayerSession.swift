@@ -113,7 +113,10 @@ final class PlayerSession {
     static let autoSkipDelay: Double = 4
     static let skipVisibleFor: Double = 7
     @ObservationIgnored private var skipPartID: String?
-    @ObservationIgnored private var skipSeenParts: Set<String> = []
+    /// Parts (episode + kind) that won't skip by themselves any more: already skipped, or a seek
+    /// by hand landed in them / left their countdown. Keyed by kind, not start time, as a part's
+    /// start can move while it plays (better markers arrive) and that mustn't cancel it.
+    @ObservationIgnored private var skipAutoDone: Set<String> = []
     @ObservationIgnored private var skipRearm = false
     @ObservationIgnored private var isSkipping = false
     /// Down from the skip button: it stays on screen but the click is the video's again.
@@ -353,12 +356,14 @@ final class PlayerSession {
     /// wherever it lands in a part.
     private func seekedByHand() {
         if skipAutoAt != nil { skipAutoAt = nil }
+        if let skipPartID { skipAutoDone.insert(skipPartID) }
         skipRearm = true
     }
 
     func performSkip() {
         guard let action = skipAction else { return }
         if skipAutoAt != nil { skipAutoAt = nil }
+        if let skipPartID { skipAutoDone.insert(skipPartID) }
         switch action {
         case .recap(let end), .intro(let end):
             isSkipping = true
@@ -657,21 +662,23 @@ final class PlayerSession {
         setSkipAction(action)
 
         // Came into the part, or a seek by hand landed in it: the button shows.
-        let partID = "\(item.ratingKey)-\(current.kind)-\(current.startMs)"
+        let partID = "\(item.ratingKey)-\(current.kind)"
         if partID != skipPartID || skipRearm {
-            let first = partID != skipPartID && !skipSeenParts.contains(partID) && !skipRearm
+            // Landing in it by hand means you want to watch it: no auto-skip for it from now on.
+            if skipRearm { skipAutoDone.insert(partID) }
             skipPartID = partID
             skipRearm = false
-            skipSeenParts.insert(partID)
             skipShownAt = position
-            // The first time only (seeking back into it means you want to watch it). It counts
-            // from the part's exact start, so nothing before it is cut (chapter buttons show
-            // a little early).
-            let auto = first && (UserDefaults.standard.object(forKey: PlaybackSettings.autoSkipIntroKey) as? Bool ?? true)
-            let autoAt = auto ? max(position, current.startSeconds) + Self.autoSkipDelay : nil
-            if autoAt != skipAutoAt { skipAutoAt = autoAt }
             setSkipVisible(true)
-            return
+        }
+        // Counts from the part's exact start, so nothing before it is cut (chapter buttons show
+        // a little early). Armed again if the part's start moves (only later, never sooner).
+        let autoOn = UserDefaults.standard.object(forKey: PlaybackSettings.autoSkipIntroKey) as? Bool ?? true
+        if autoOn, !skipAutoDone.contains(partID) {
+            let autoAt = max(skipShownAt, current.startSeconds) + Self.autoSkipDelay
+            if skipAutoAt == nil || autoAt > skipAutoAt! { skipAutoAt = autoAt }
+        } else if skipAutoAt != nil {
+            skipAutoAt = nil
         }
 
         if let autoAt = skipAutoAt, position >= autoAt, !isPaused {
