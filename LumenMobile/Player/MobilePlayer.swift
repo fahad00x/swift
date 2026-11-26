@@ -31,6 +31,11 @@ final class MobilePlayerViewController: UIViewController {
     override var preferredInterfaceOrientationForPresentation: UIInterfaceOrientation {
         Self.isPad ? (view.window?.windowScene?.interfaceOrientation ?? .landscapeRight) : .landscapeRight
     }
+    /// iPad: the lock button in the player (iPadOS 26). It belongs to this screen only, so leaving
+    /// the video lets the iPad turn again by itself.
+    let rotationLock = PlayerRotationLock()
+    @available(iOS 26.0, *)
+    override var prefersInterfaceOrientationLocked: Bool { Self.isPad && rotationLock.isLocked }
     override var prefersStatusBarHidden: Bool { true }
     override var prefersHomeIndicatorAutoHidden: Bool { true }
 
@@ -45,7 +50,11 @@ final class MobilePlayerViewController: UIViewController {
         if hdr { metalLayer.wantsExtendedDynamicRangeContent = true }
         view.layer.addSublayer(metalLayer)
 
-        let controls = MobilePlayerControls(session: session) { [weak self] in self?.close() }
+        if Self.isPad, #available(iOS 26.0, *) {
+            rotationLock.isAvailable = true
+            rotationLock.onChange = { [weak self] in self?.setNeedsUpdateOfPrefersInterfaceOrientationLocked() }
+        }
+        let controls = MobilePlayerControls(session: session, rotationLock: rotationLock) { [weak self] in self?.close() }
         overlayHost = UIHostingController(rootView: controls)
         overlayHost.view.backgroundColor = .clear
         addChild(overlayHost)
@@ -112,14 +121,25 @@ final class MobilePlayerViewController: UIViewController {
 
     private func close() {
         guard presentingViewController != nil, !isBeingDismissed else { return }
+        // The lock is this screen's only: the iPad turns again as soon as the video closes.
+        rotationLock.isLocked = false
         dismiss(animated: true)
     }
 }
 
 // MARK: - Controls
 
+/// The player's rotation lock (iPad): off each time a video opens.
+@Observable
+final class PlayerRotationLock {
+    var isAvailable = false
+    var isLocked = false { didSet { onChange?() } }
+    @ObservationIgnored var onChange: (() -> Void)?
+}
+
 struct MobilePlayerControls: View {
     let session: PlayerSession
+    let rotationLock: PlayerRotationLock
     let onClose: () -> Void
 
     /// «التقديم والترجيع» from Settings (5, 10, 15 or 30 s; each has its own symbol).
@@ -260,9 +280,22 @@ struct MobilePlayerControls: View {
                     if !session.skipStatus.isEmpty {
                         Text(session.skipStatus).font(.caption2).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
                     }
+                    // Top left (the end of the row in Arabic): lock the iPad's rotation.
+                    if rotationLock.isAvailable {
+                        Button { rotationLock.isLocked.toggle() } label: {
+                            Image(systemName: rotationLock.isLocked ? "lock.rotation" : "lock.open.rotation")
+                                .font(.title3.weight(.semibold))
+                                .foregroundStyle(rotationLock.isLocked ? Theme.accent : .white)
+                                .frame(width: 44, height: 44)
+                                .background(Circle().fill(.black.opacity(0.35)))
+                        }
+                        .accessibilityLabel(rotationLock.isLocked ? "إلغاء قفل الدوران" : "قفل الدوران")
+                    }
                 }
                 .padding(.horizontal, inset)
-                .padding(.top, wide ? 30 : 20)
+                // iPad: a little clear of the top edge of the screen, which iPadOS uses for its own
+                // gestures (Notification / Control Center).
+                .padding(.top, rotationLock.isAvailable ? 64 : (wide ? 30 : 20))
 
                 Spacer()
 
