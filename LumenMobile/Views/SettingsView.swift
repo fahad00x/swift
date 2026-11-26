@@ -49,7 +49,7 @@ struct SettingsView: View {
     }
 
     /// What a page opens (by value, so the pages inside can open theirs).
-    private enum Pushed: Hashable { case page(Page), browseLibraries, profileLibraries, importHistory, diagnostics, homeRows }
+    private enum Pushed: Hashable { case page(Page), browseLibraries, profileLibraries, importHistory, diagnostics, homeRows, libraryRows(LibraryScope) }
 
     @Environment(AppSession.self) private var session
     @Environment(ProfileStore.self) private var store
@@ -182,6 +182,8 @@ struct SettingsView: View {
             HomeDiagnosticsView(client: client)
         case .homeRows:
             HomeRowsPage(client: client)
+        case .libraryRows(let scope):
+            HomeRowsPage(client: client, target: .library(scope.id), scope: scope)
         case .importHistory:
             if let profile = store.activeProfile {
                 PlexImportPage(client: client, sections: filter.sections, profile: profile)
@@ -233,6 +235,19 @@ struct SettingsView: View {
             }
             Section("الرئيسية") {
                 row("صفوف الرئيسية", detail: "الترتيب، ثابت أو ديناميكي، الإضافة والحذف") { path.append(Pushed.homeRows) }
+                Menu {
+                    ForEach(filter.scopes.filter(\.section.isVideoLibrary)) { scope in
+                        Button(scope.title) { path.append(Pushed.libraryRows(scope)) }
+                    }
+                } label: {
+                    HStack {
+                        labelled("صفوف المكتبات", "نفسها لتبويب «مقترح» في كل مكتبة")
+                        Spacer()
+                        Image(systemName: "chevron.left").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .foregroundStyle(.primary)
                 Picker("ترتيب متابعة المشاهدة", selection: Binding(
                     get: { store.activeProfile?.settings?.continueNewFirst ?? false },
                     set: { on in store.updateSettings { $0.continueNewFirst = on } })) {

@@ -6,6 +6,10 @@ import SwiftUI
 /// new rows: a library's newest titles, one of its genres, a collection, or «قائمتي».
 struct HomeRowsPage: View {
     let client: PlexServerClient
+    /// Home, or one library's «مقترح» (Settings → «صفوف المكتبات»).
+    var target: RowsTarget = .home
+    /// The library, for `.library` (its rows are added from it only).
+    var scope: LibraryScope?
 
     @Environment(ProfileStore.self) private var store
     @Environment(\.contentFilter) private var filter
@@ -27,16 +31,21 @@ struct HomeRowsPage: View {
         }
     }
 
-    private var layout: [HomeRowConfig]? { store.activeProfile?.settings?.homeRows }
+    private var layout: [HomeRowConfig]? { target.layout(store.activeProfile?.settings) }
+    private var isHome: Bool { target == .home }
 
     /// What Home built, without an added row that's gone from the arrangement.
     private var current: [HomeRowInfo] {
         let kept = Set((layout ?? []).filter { $0.custom != nil }.map(\.id))
-        return catalog.rows.filter { !$0.id.hasPrefix("custom-") || kept.contains($0.id) }
+        return catalog.rows(of: target).filter { !$0.id.hasPrefix("custom-") || kept.contains($0.id) }
     }
 
     private var entries: [HomeRowConfig] { HomeLayout.entries(current: current, layout: layout) }
-    private var libraries: [PlexDirectory] { filter.sections.filter(\.isVideoLibrary) }
+    /// Where rows are added from: any library on Home, this one on a library's page.
+    private var libraries: [PlexDirectory] {
+        if let scope, !isHome { return [scope.section] }
+        return filter.sections.filter(\.isVideoLibrary)
+    }
 
     var body: some View {
         let shown = entries.filter { !$0.hidden }
@@ -67,6 +76,10 @@ struct HomeRowsPage: View {
             } footer: {
                 Text("📌 ثابت: يبقى في مكانه، والمحتوى داخله يتغيّر. ✨ ديناميكي: التطبيق يختار هل يظهر ووين. سحب الصف يخليه ثابت. نفس الترتيب في كل أجهزتك.")
             }
+            if shown.isEmpty && current.isEmpty && !isHome {
+                Text("افتح «مقترح» في \(scope?.title ?? "المكتبة") مرة عشان تطلع صفوفه هنا.")
+                    .foregroundStyle(.secondary)
+            }
 
             Section {
                 addMenu
@@ -76,7 +89,7 @@ struct HomeRowsPage: View {
             }
 
             if !removed.isEmpty {
-                Section("محذوفة من الرئيسية") {
+                Section(isHome ? "محذوفة من الرئيسية" : "محذوفة من «مقترح»") {
                     ForEach(removed) { entry in
                         Button {
                             restore(entry.id)
@@ -92,12 +105,13 @@ struct HomeRowsPage: View {
             }
         }
         .environment(\.editMode, $editMode)
-        .navigationTitle("صفوف الرئيسية")
+        .navigationTitle(isHome ? "صفوف الرئيسية" : "مقترح \(scope?.title ?? "")")
         .navigationBarTitleDisplayMode(.inline)
         .confirmationDialog("إرجاع الترتيب الأصلي؟", isPresented: $confirmReset, titleVisibility: .visible) {
-            Button("إرجاع", role: .destructive) { store.updateSettings { $0.homeRows = nil } }
+            Button("إرجاع", role: .destructive) { store.updateSettings { target.set(nil, in: &$0) } }
         } message: {
-            Text("ترجع الرئيسية مثل ما يبنيها التطبيق في كل أجهزتك، وتنحذف الصفوف اللي أضفتها.")
+            Text(isHome ? "ترجع الرئيسية مثل ما يبنيها التطبيق في كل أجهزتك، وتنحذف الصفوف اللي أضفتها."
+                        : "يرجع «مقترح» مثل ما يبنيه التطبيق في كل أجهزتك، وتنحذف الصفوف اللي أضفتها.")
         }
         .sheet(item: $picking) { pick in
             NavigationStack { picker(pick) }
@@ -118,7 +132,7 @@ struct HomeRowsPage: View {
     }
 
     private func change(_ edit: ([HomeRowConfig]?) -> [HomeRowConfig]) {
-        store.updateSettings { $0.homeRows = edit($0.homeRows) }
+        store.updateSettings { target.set(edit(target.layout($0)), in: &$0) }
     }
 
     /// A drag: one place at a time, so the row ends where it was dropped (and is fixed there).
@@ -129,23 +143,24 @@ struct HomeRowsPage: View {
         let id = shown[source].id
         let step = target > source ? 1 : -1
         let infos = current
+        let rowsTarget = self.target
         store.updateSettings { settings in
-            var rows = settings.homeRows
+            var rows = rowsTarget.layout(settings)
             for _ in 0..<abs(target - source) {
                 rows = HomeLayout.moving(id, by: step, current: infos, layout: rows)
             }
-            settings.homeRows = rows
+            rowsTarget.set(rows, in: &settings)
         }
     }
 
     private func remove(_ entry: HomeRowConfig) {
         // «قائمتي» on the Apple TV's Home is its own setting.
-        if entry.id == "mylist" { store.updateSettings { $0.myListOnHome = false } }
+        if isHome, entry.id == "mylist" { store.updateSettings { $0.myListOnHome = false } }
         change { HomeLayout.hiding(entry.id, current: current, layout: $0) }
     }
 
     private func restore(_ id: String) {
-        if id == "mylist" { store.updateSettings { $0.myListOnHome = true } }
+        if isHome, id == "mylist" { store.updateSettings { $0.myListOnHome = true } }
         change { HomeLayout.restoring(id, current: current, layout: $0) }
     }
 
